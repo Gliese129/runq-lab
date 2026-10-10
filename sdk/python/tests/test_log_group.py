@@ -5,10 +5,8 @@ Contract:
   the prefix; both pop on exit (CM exit / wrapped fn return).
 - Nesting joins with '/': log_group("a") inside log_group("b") →
   prefix "b/a".
-- log_metric, report's emitted key, and @epoch's
-  "epoch_time_seconds" all get the prefix.
-- report's HISTORY entries keep the unprefixed key names (hooks
-  shouldn't have to know about log_group).
+- log_metric and report's emitted keys get the prefix.
+- report's latest-metrics snapshot keeps the unprefixed key names.
 - Exception inside the CM/decorator still pops the prefix.
 - Validation: prefix must be a non-empty string, no '/' inside.
 - Backed by contextvars — concurrent tasks don't bleed prefixes.
@@ -19,7 +17,7 @@ import threading
 import pytest
 
 import runq
-from runq._report import _get_history_for_tests
+from runq._report import latest_report_metrics
 
 
 def _read_events(path):
@@ -161,14 +159,14 @@ def test_log_group_applies_to_report(clean_env, tmp_path, monkeypatch):
 
 
 def test_log_group_report_history_keeps_unprefixed_keys(clean_env, tmp_path, monkeypatch):
-    """Hooks see clean key names; prefix is an emission-only concept."""
+    """Prefix is an emission-only concept; the latest snapshot keeps clean keys."""
     monkeypatch.chdir(tmp_path)
     runq.context()
     with runq.log_group("train"):
         runq.report({"loss": 0.5}, step=1)
-    history = _get_history_for_tests()
-    assert "loss" in history[0]["metrics"]
-    assert "train/loss" not in history[0]["metrics"]
+    latest = latest_report_metrics()
+    assert "loss" in latest
+    assert "train/loss" not in latest
 
 
 # ---- thread isolation via contextvars ----

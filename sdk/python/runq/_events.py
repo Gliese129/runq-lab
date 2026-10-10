@@ -1,12 +1,10 @@
-"""Event emission — the SDK's jsonl writers and the three-file routing.
+"""Event emission — the SDK's jsonl writers.
 
-Three-file contract (RQ2-1): each event stream has its own file so the
-semantics split at the API boundary and downstream never disambiguates:
+File contract: each stream has its own file so the semantics split at the
+API boundary and downstream never disambiguates:
 
 - ``metrics.jsonl`` — pure per-step metric stream (``report`` /
   ``log_metric``); unbounded, summarized on ingest (+ pyramid).
-- ``events.jsonl`` — lifecycle plane: ``checkpoint`` / ``preempted`` /
-  ``loop_break`` and future lifecycle types.
 - ``results.jsonl`` — ``runq.record`` data plane; bounded facts,
   ingested in full (see :mod:`runq._record`).
 
@@ -75,18 +73,14 @@ def _append_jsonl_line(path, obj: dict, kind: str) -> None:
 
 
 def _append_event(event: dict) -> None:
-    """Route one SDK event to its file by type (three-file contract).
+    """Append one metric event to metrics.jsonl.
 
-    ``metric`` → metrics.jsonl; every other type (``checkpoint`` /
-    ``preempted`` / ``loop_break`` and future lifecycle events) →
-    events.jsonl. Result records never come through here — ``record``
-    writes via :func:`_append_result`.
+    Result records never come through here — ``record`` writes via
+    :func:`_append_result`.
     """
-    ctx = get_ctx()
-    if event.get("type") == "metric":
-        _append_jsonl_line(ctx.metrics_file, event, "metrics")
-    else:
-        _append_jsonl_line(ctx.events_file, event, "events")
+    if event.get("type") != "metric":
+        raise ValueError(f"runq: unsupported event type {event.get('type')!r}")
+    _append_jsonl_line(get_ctx().metrics_file, event, "metrics")
 
 
 def _append_result(record: dict) -> None:

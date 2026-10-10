@@ -240,20 +240,20 @@ import runq
 class Params:
     lr: float = 0.001
 
-cfg = Params()                       # sweep params merged in
-for step in runq.range(1000):        # preemption + early-stop aware
-    runq.log_metric("loss", train_step(cfg))
-    runq.safe_save("ckpt.pt", model.state_dict(), keep_last_n=3)
+cfg = Params()                       # sweep (ablation) params merged in
+for step in range(1000):
+    runq.report({"loss": train_step(cfg)}, step=step)
+runq.record({"acc": evaluate()}, split="val")   # axis-keyed result row
 ```
 
-Features: typed param auto-merge from sweeps, `log_metric()` (feeds
-`runq best`), atomic `safe_save()` checkpoints with ENOSPC freeze,
-cooperative preemption, early stopping with pluggable policies
-(`patience`, `threshold`, `convergence`). Works in daemon mode, file-only
-mode (HPC), or standalone with no runq infrastructure.
+Features: typed param auto-merge from sweeps, step metrics (`log_metric`,
+`report`, `log_group` prefixes), axis-keyed result records (`record`) that
+make ablation cells comparable, and a stable per-task `checkpoint_dir`.
+Early stopping and checkpoint retention stay in your training script. Works
+in daemon mode, file-only mode (HPC), or standalone with no runq
+infrastructure.
 
-SDK reference: [docs/sdk_reference.md](./docs/sdk_reference.md) ·
-Examples: `sdk/python/examples/`
+SDK reference: [docs/sdk_reference.md](./docs/sdk_reference.md)
 
 ## Scheduling and reliability
 

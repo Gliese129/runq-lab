@@ -133,36 +133,6 @@ def test_get_ctx_after_init(clean_env, tmp_path, monkeypatch):
     assert runq.get_ctx() is ctx
 
 
-# ---- safety factor / extra GB env parsing ----
-
-def test_safety_envs_parsed(clean_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("RUNQ_TASK_ID", "t1")
-    monkeypatch.setenv("RUNQ_TASK_DIR", str(tmp_path))
-    monkeypatch.setenv("RUNQ_METRICS_FILE", str(tmp_path / "metrics.jsonl"))
-    monkeypatch.setenv("RUNQ_SAFETY_FACTOR_PERCENT", "150")
-    monkeypatch.setenv("RUNQ_SAFETY_EXTRA_GB", "5")
-    ctx = runq.context()
-    assert ctx.safety_factor_percent == 150
-    assert ctx.safety_extra_gb == 5
-
-
-def test_safety_envs_default_when_unset(clean_env, tmp_path, monkeypatch):
-    """daemon doesn't set these in manual mode → SDK defaults apply."""
-    monkeypatch.chdir(tmp_path)
-    ctx = runq.context()
-    assert ctx.safety_factor_percent == 110
-    assert ctx.safety_extra_gb == 0
-
-
-def test_safety_envs_garbage_falls_back_to_default(clean_env, tmp_path, monkeypatch):
-    monkeypatch.setenv("RUNQ_TASK_ID", "t1")
-    monkeypatch.setenv("RUNQ_TASK_DIR", str(tmp_path))
-    monkeypatch.setenv("RUNQ_METRICS_FILE", str(tmp_path / "metrics.jsonl"))
-    monkeypatch.setenv("RUNQ_SAFETY_FACTOR_PERCENT", "not-a-number")
-    ctx = runq.context()
-    assert ctx.safety_factor_percent == 110  # fell back to default
-
-
 # ---- dir creation ----
 
 def test_checkpoint_dir_auto_created(clean_env, tmp_path, monkeypatch):

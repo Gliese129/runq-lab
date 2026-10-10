@@ -158,7 +158,7 @@ runq clean --older-than 720h # delete finished tasks + artifacts (IRREVERSIBLE)
 |---|---|
 | `~/.runq/config.yaml` | Global config + HPC targets |
 | `~/.local/share/runq/runq.db` | Client queue/projection state (override the root with `RUNQ_DATA_DIR`) |
-| `<working_dir>/.runq/<note>-<job_id>/<task_id>/` | Per-task workspace: log, params.json, metrics.jsonl, results.jsonl, events.jsonl, checkpoints/ |
+| `<working_dir>/.runq/<note>-<job_id>/<task_id>/` | Per-task workspace: log, params.json, metrics.jsonl, results.jsonl, checkpoints/ |
 
 The job directory starts with your `note`, so `ls .runq/` reads like an
 experiment log. Don't parse these paths in scripts — use `--json` output.

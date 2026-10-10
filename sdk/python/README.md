@@ -23,10 +23,17 @@ pip install -e "./sdk/python[dev]"     # for pytest
 import runq
 
 ctx = runq.context()
-runq.log_metric("loss", 0.42, step=epoch)
+lr = ctx.params.get("lr", 1e-3)          # ablation values from the sweep
+
+with runq.log_group("train"):
+    runq.report({"loss": loss}, step=step)   # → train/loss in metrics.jsonl
+runq.record({"acc": acc}, seed=ctx.seed, split="val")  # axis-keyed result row
 ```
 
-See `demo/l2c/stage2_sdk_design.md` for the full API design.
+Checkpoints go under `ctx.checkpoint_dir` (`<task_dir>/checkpoints`, stable
+across retries, so a `resume.extra_args` restart can find them). runq does not
+manage checkpoint lifecycle or early stopping — those belong to your training
+script.
 
 ## Three modes
 
@@ -37,18 +44,3 @@ Detected automatically at `runq.context()`:
 - `manual` — running outside runq (no `RUNQ_TASK_ID`); useful for local debugging
 
 `ctx.mode` exposes which mode is active.
-
-## Stage 2 status
-
-This is incremental — Tier A first, Tier B/C as we go.
-
-- [x] **Step 1**: package skeleton + `context()` + tri-mode + `log_metric`
-- [ ] Step 2: `transport.py` (unix socket HTTP client)
-- [ ] Step 3: `safe_save` core (path resolution + TOCTOU + freeze)
-- [ ] Step 4: `safe_save` decorator + size walker
-- [ ] Step 5: `safe_save` manifest + keep_last_n / keep_best
-- [ ] Step 6: `report` + `Decision` + `@early_stop`
-- [ ] Step 7: YAML early_stop policies
-- [ ] Step 8: `loop` + `@epoch` + `@log_group`
-- [ ] Step 9: wandb integration (L3)
-- [ ] Step 10: daemon-side preflight (Go side, parallel track)

@@ -1,46 +1,13 @@
-"""Tests for runq.report — Decision dataclass, jsonl emission, step writeback.
-
-The hook-orchestration tests live in `test_early_stop.py`. These tests
-focus on report()'s mechanical contract: writes metrics to jsonl,
-appends to history, maintains ctx.current_step.
-
-Most tests here run with ZERO hooks registered — they exercise only
-the no-hook path of `_run_early_stop_hooks`, which still has to
-return a non-stop Decision. The hook-core tests in
-test_early_stop.py exercise registration + short-circuit.
-"""
+"""Tests for runq.report — jsonl emission, step writeback, latest metrics."""
 import json
-from dataclasses import FrozenInstanceError
-
 import pytest
 
 import runq
-from runq._report import _get_history_for_tests
+from runq._report import latest_report_metrics
 
 
 def _read_events(path):
     return [json.loads(line) for line in path.read_text().splitlines()]
-
-
-# ---- Decision dataclass shape ------------------------------------
-
-def test_decision_frozen_default(clean_env, tmp_path, monkeypatch):
-    """Decision is a frozen dataclass — mutation raises FrozenInstanceError."""
-    monkeypatch.chdir(tmp_path)
-    runq.context()
-    d = runq.report({"loss": 0.5})
-    assert isinstance(d, runq.Decision)
-    assert d.should_stop is False
-    assert d.reason is None
-    with pytest.raises(FrozenInstanceError):
-        d.should_stop = True  # type: ignore[misc]
-
-
-def test_decision_default_fields():
-    """Decision() should be constructable with no args (sane defaults)."""
-    d = runq.Decision()
-    assert d.should_stop is False
-    assert d.reason is None
 
 
 # ---- report() basic mechanics ------------------------------------
@@ -71,11 +38,10 @@ def test_report_multiple_metrics_writes_one_event_each(clean_env, tmp_path, monk
 
 
 def test_report_empty_metrics_writes_no_events(clean_env, tmp_path, monkeypatch):
-    """report({}) is a valid 'just poll the hooks' call."""
+    """report({}) is valid and emits nothing."""
     monkeypatch.chdir(tmp_path)
     runq.context()
-    d = runq.report({})
-    assert d.should_stop is False
+    runq.report({})
     metrics_file = tmp_path / "runq_metrics.jsonl"
     # Either no file or zero events.
     if metrics_file.exists():
@@ -140,38 +106,22 @@ def test_report_and_log_metric_share_step_view(clean_env, tmp_path, monkeypatch)
     ]
 
 
-# ---- history ------------------------------------------------------
+# ---- latest metrics ------------------------------------------------
 
-def test_report_appends_to_history(clean_env, tmp_path, monkeypatch):
+def test_report_returns_none(clean_env, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runq.context()
+    assert runq.report({"loss": 0.5}, step=1) is None
+
+
+def test_latest_report_metrics_is_last_call_and_a_copy(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
     runq.report({"loss": 0.5}, step=1)
-    runq.report({"loss": 0.4}, step=2)
-    runq.report({"loss": 0.3}, step=3)
-    h = _get_history_for_tests()
-    assert [entry["step"] for entry in h] == [1, 2, 3]
-    assert [entry["metrics"]["loss"] for entry in h] == [0.5, 0.4, 0.3]
-
-
-def test_report_history_entry_is_copy_not_alias(clean_env, tmp_path, monkeypatch):
-    """Hook mutation of the metrics dict must not poison history."""
-    monkeypatch.chdir(tmp_path)
-    runq.context()
-    metrics = {"loss": 0.5}
-    runq.report(metrics, step=1)
-    metrics["loss"] = 9999.0  # post-hoc mutation of the caller's dict
-    h = _get_history_for_tests()
-    assert h[0]["metrics"]["loss"] == 0.5  # history kept the original
-
-
-# ---- Decision return value (no hooks registered) -----------------
-
-def test_report_no_hooks_returns_continue(clean_env, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    runq.context()
-    d = runq.report({"loss": 0.5}, step=1)
-    assert d.should_stop is False
-    assert d.reason is None
+    metrics = {"loss": 0.4}
+    runq.report(metrics, step=2)
+    metrics["loss"] = 9999.0  # caller mutation must not poison the snapshot
+    assert latest_report_metrics() == {"loss": 0.4}
 
 
 # ---- value coercion ----------------------------------------------

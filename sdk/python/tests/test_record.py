@@ -1,6 +1,6 @@
 """Tests for runq.record — results.jsonl format, leniency semantics.
 
-record() is pure data emission: no early-stop hooks, no ctx.current_step
+record() is pure data emission: no ctx.current_step
 writeback. Its leniency doctrine (drop invalid keys individually, never
 raise) is the contract the Go-side ingest relies on — every case here
 mirrors a clause of the RQ2-1 alignment (#6).
@@ -217,21 +217,7 @@ def test_record_invalid_explicit_step_not_substituted(clean_env, tmp_path, monke
     assert "step" not in r["axes"]
 
 
-# ---- purity: no hooks, no ctx writeback ----
-
-def test_record_does_not_run_early_stop_hooks(clean_env, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    runq.context()
-    fired = []
-
-    @runq.early_stop
-    def hook(history, current):
-        fired.append(1)
-        return True
-
-    runq.record({"acc": 0.9}, model="a")
-    assert fired == []
-
+# ---- purity: no ctx writeback ----
 
 def test_record_does_not_touch_current_step(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

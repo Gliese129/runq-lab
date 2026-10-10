@@ -67,20 +67,13 @@ class Context:
     task_dir: Path | None = None
     checkpoint_dir: Path | None = None
     metrics_file: Path | None = None
-    # Three-file contract (RQ2-1): results.jsonl (runq.record data plane)
-    # and events.jsonl (lifecycle plane) live NEXT TO metrics.jsonl. Both
-    # are derived from metrics_file rather than env-injected, so an older
-    # daemon that only sets RUNQ_METRICS_FILE still yields correct paths.
+    # results.jsonl (runq.record data plane) lives NEXT TO metrics.jsonl;
+    # derived from metrics_file rather than env-injected, so an older
+    # daemon that only sets RUNQ_METRICS_FILE still yields the right path.
     results_file: Path | None = None
-    events_file: Path | None = None
 
     # daemon-only fields
     socket_path: str | None = None
-
-    # SDK contract: daemon always injects these, so we read them with a
-    # default for the manual mode (where there's no daemon).
-    safety_factor_percent: int = 110
-    safety_extra_gb: int = 0
 
     # Loaded from RUNQ_PARAMS_FILE (or local params.json in manual mode).
     params: dict = field(default_factory=dict)
@@ -91,24 +84,14 @@ class Context:
     # - ``report(metrics, step=N)`` — explicit step writes back here.
     # - ``log_metric(..., step=N)`` — explicit step writes back here too,
     #   so the two helpers stay in sync.
-    # - ``loop()`` (step 8) — yields & sets per iteration.
     #
     # When None, log_metric / report write step=None to jsonl. There is
-    # NO auto-increment counter (unlike the early step 1 implementation);
-    # if you want incrementing steps without loop(), pass step explicitly.
+    # NO auto-increment counter: pass step explicitly when you want one.
     current_step: int | None = None
 
     # Deterministic seed derived from task_id. Different per task in the
     # same sweep, but reproducible across reruns of the same task.
     seed: int = 0
-
-    # ---- step-8 loop coordination ----
-    #
-    # Most-recent Decision returned by ``runq.report``. Read by
-    # ``runq.loop()`` after each iteration to decide whether to break.
-    # ``Any`` to dodge a forward ref to ``_report.Decision`` (would
-    # require a TYPE_CHECKING-only import dance).
-    _last_decision: Any | None = None
 
     # ---- convenience accessors ----
 
@@ -241,17 +224,6 @@ def _load_params(path: Path | None) -> dict:
     return data
 
 
-def _int_env(name: str, default: int) -> int:
-    """Parse an int env var with a default. Returns default on parse error."""
-    raw = os.environ.get(name)
-    if raw is None or raw == "":
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
-
-
 def context() -> Context:
     """Initialize the runq SDK context.
 
@@ -268,8 +240,7 @@ def context() -> Context:
 
     * ``daemon`` — talks to a runq daemon over a unix socket.
     * ``no_daemon`` — HPC mode; daemon not reachable. Writes jsonl
-      locally, ``safe_save`` will raise ``RunqDiskFullError`` on disk
-      pressure instead of freezing.
+      locally.
     * ``manual`` — user is running their script directly without runq.
       jsonl goes to ``./runq_metrics.jsonl``, task IDs are local UUIDs,
       no daemon comm. Useful for IDE debugging.
@@ -290,7 +261,6 @@ def context() -> Context:
         checkpoint_dir: Path | None = None
         metrics_file: Path | None = Path.cwd() / "runq_metrics.jsonl"
         results_file: Path | None = Path.cwd() / "runq_results.jsonl"
-        events_file: Path | None = Path.cwd() / "runq_events.jsonl"
         local_params = Path.cwd() / "params.json"
         params = _load_params(local_params) if local_params.exists() else {}
     else:
@@ -306,7 +276,6 @@ def context() -> Context:
         # Siblings of metrics.jsonl (see Context field comment). The daemon's
         # reap reads the same fixed names via workspace.ResultsPath/EventsPath.
         results_file = metrics_file.with_name("results.jsonl") if metrics_file else None
-        events_file = metrics_file.with_name("events.jsonl") if metrics_file else None
         params_file = env.get("RUNQ_PARAMS_FILE")
         params = _load_params(Path(params_file)) if params_file else {}
 
@@ -319,10 +288,7 @@ def context() -> Context:
         checkpoint_dir=checkpoint_dir,
         metrics_file=metrics_file,
         results_file=results_file,
-        events_file=events_file,
         socket_path=env.get("RUNQ_SOCKET_PATH"),
-        safety_factor_percent=_int_env("RUNQ_SAFETY_FACTOR_PERCENT", 110),
-        safety_extra_gb=_int_env("RUNQ_SAFETY_EXTRA_GB", 0),
         params=ParamDict(params),
         seed=int(hashlib.sha256(task_id.encode()).hexdigest(), 16) % (2**32),
     )
@@ -333,15 +299,6 @@ def context() -> Context:
         _ctx.metrics_file.parent.mkdir(parents=True, exist_ok=True)
     if _ctx.checkpoint_dir is not None:
         _ctx.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-    # Step 7: if the user's job config carried an ``early_stopping:``
-    # block, build the matching built-in policy and register it.
-    # Done LAST so all ctx fields are populated by the time the policy
-    # factories run.
-    # Local import to keep _context.py free of a circular dep with
-    # _policies → _report → _context.
-    from . import _policies
-    _policies.maybe_register_from_params(_ctx)
 
     return _ctx
 

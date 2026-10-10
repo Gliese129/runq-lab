@@ -87,8 +87,7 @@ Each task gets a workspace under `<working_dir>/.runq/<note>-<job_id>/<task_id>/
 params.json       — exact parameters for this task
 metrics.jsonl     — metric stream (log_metric / report)
 results.jsonl     — result records (runq.record)
-events.jsonl      — lifecycle events (checkpoint, preempt, loop_break)
-checkpoints/      — saved checkpoints (safe_save)
+checkpoints/      — RUNQ_CHECKPOINT_DIR; your script writes here (stable across retries)
 run.sh            — HPC only: generated wrapper script
 status.json       — HPC only: self-reported status
 ```

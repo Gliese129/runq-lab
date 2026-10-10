@@ -3,9 +3,9 @@
 Why a separate module
 ---------------------
 ``_events`` (log_metric) and ``_report`` (report) both need to read the
-current prefix when assembling jsonl events. ``_loop`` defines
+current prefix when assembling jsonl events. ``_log_group`` defines
 ``log_group`` which writes the prefix. Putting the state in either
-caller would create a cycle (``_events`` ↔ ``_loop``). A tiny standalone
+caller would create a cycle (``_events`` ↔ ``_log_group``). A tiny standalone
 module avoids the headache and keeps the responsibility crisp.
 
 Stack-of-strings semantics

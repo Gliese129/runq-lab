@@ -326,14 +326,10 @@ func (b *Backend) buildRunScript(t submitplan.PlannedTask, plan submitplan.Plan)
 		env[k] = v
 	}
 	// Shared RUNQ_* contract; HPC adds RUNQ_NO_DAEMON and sets no socket.
-	// Safety uses the same defaults as the daemon scheduler (110%, 0 GB).
-	// Even without freeze, the SDK's pre-flight disk check catches low-disk
-	// early and raises RunqDiskFullError instead of letting the save hit
-	// ENOSPC mid-write.
 	for k, v := range workspace.BaseEnv(workspace.Identity{
 		TaskID: t.TaskID, JobID: plan.JobID, Project: plan.Project, TaskDir: t.TaskDir,
 		SweepKeys: plan.SweepKeys, JobNote: plan.Note,
-	}, workspace.Safety{FactorPercent: 110}) {
+	}) {
 		env[k] = v
 	}
 	// A runqd-backed target injects RUNQ_SOCKET_PATH into the child process, so

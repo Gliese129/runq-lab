@@ -34,13 +34,6 @@ func ResultsPath(dir string) string {
 	return path.Join(dir, "results.jsonl")
 }
 
-// EventsPath is the lifecycle plane (checkpoint / preempted / loop_break),
-// split out of metrics.jsonl so the metric stream stays pure. Old tasks'
-// mixed metrics.jsonl is still ingested tolerantly — zero migration.
-func EventsPath(dir string) string {
-	return path.Join(dir, "events.jsonl")
-}
-
 // PyramidPath is the multi-resolution metrics index built next to
 // metrics.jsonl by `runq metrics-index build` (pyramid.go, this package).
 func PyramidPath(dir string) string {

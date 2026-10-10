@@ -173,6 +173,5 @@ By default task workspaces live under `<working_dir>/.runq/`. Set
 | `params.json` | the exact sweep-expanded parameters |
 | `metrics.jsonl` | per-step metric stream (SDK `report` / `log_metric`) — feeds `best`/`collect` |
 | `results.jsonl` | result records (SDK `record(metrics, **axes)`) — feeds `runq results` and the dashboard results view |
-| `events.jsonl` | lifecycle events (checkpoint / preempted / loop_break, written by the SDK) |
-| `checkpoints/` | checkpoint dir (SDK `safe_save` resolves relative paths here) |
+| `checkpoints/` | `RUNQ_CHECKPOINT_DIR` — your script writes checkpoints here; stable across retries |
 | `run.sh` / `status.json` | HPC only: generated wrapper + self-reported status |

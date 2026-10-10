@@ -116,17 +116,15 @@ def test_wandb_like_metric_returns_latest_report(clean_env, tmp_path, monkeypatc
 
 
 def test_wandb_like_metric_returns_copy(clean_env, tmp_path, monkeypatch):
-    """Caller mutation of the returned dict must not poison history."""
-    from runq._report import history_snapshot
+    """Caller mutation of the returned dict must not poison the snapshot."""
+    from runq._report import latest_report_metrics
     monkeypatch.chdir(tmp_path)
     ctx = runq.context()
     runq.report({"loss": 0.5}, step=1)
     m = ctx.wandb_like_metric
     m["loss"] = 9999.0
     m["new"] = "injected"
-    # History stays clean.
-    hist = history_snapshot()
-    assert hist[0]["metrics"] == {"loss": 0.5}
+    assert latest_report_metrics() == {"loss": 0.5}
 
 
 def test_wandb_like_metric_splat_pattern(clean_env, tmp_path, monkeypatch):

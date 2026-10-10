@@ -14,7 +14,6 @@ package workspace
 
 import (
 	"os"
-	"strconv"
 	"strings"
 )
 
@@ -28,18 +27,10 @@ type Identity struct {
 	JobNote   string   // job note (for WANDB_RUN_GROUP)
 }
 
-// Safety carries the disk self-freeze parameters the SDK reads to size its
-// pre-checkpoint headroom check. Always emitted so the SDK never needs fallback
-// defaults — a missing value would be a backend bug.
-type Safety struct {
-	FactorPercent int
-	ExtraGB       int
-}
-
 // BaseEnv returns the shared RUNQ_* variables. It does NOT set RUNQ_SOCKET_PATH or
 // RUNQ_NO_DAEMON. RUNQ_WANDB_CONFIG_FILE is only set when the file exists, so the
 // SDK can treat its presence as a binary "wandb configured" signal.
-func BaseEnv(id Identity, safety Safety) map[string]string {
+func BaseEnv(id Identity) map[string]string {
 	env := make(map[string]string, 10)
 	env["RUNQ_TASK_ID"] = id.TaskID
 	env["RUNQ_JOB_ID"] = id.JobID
@@ -56,9 +47,6 @@ func BaseEnv(id Identity, safety Safety) map[string]string {
 			env["RUNQ_WANDB_CONFIG_FILE"] = wandbCfg
 		}
 	}
-
-	env["RUNQ_SAFETY_FACTOR_PERCENT"] = strconv.Itoa(safety.FactorPercent)
-	env["RUNQ_SAFETY_EXTRA_GB"] = strconv.Itoa(safety.ExtraGB)
 
 	if len(id.SweepKeys) > 0 {
 		env["RUNQ_SWEEP_KEYS"] = strings.Join(id.SweepKeys, ",")
