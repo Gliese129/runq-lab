@@ -5,11 +5,9 @@ import (
 	"database/sql"
 )
 
-// Ingest file identifiers for file_ingest marks (three-file contract, RQ2-1).
-const (
-	IngestFileResults = "results"
-	IngestFileEvents  = "events"
-)
+// IngestFileResults identifies results.jsonl in file_ingest marks. (The
+// "events" file id is gone with lifecycle-event ingest; old rows are inert.)
+const IngestFileResults = "results"
 
 // MaxResultRecordsPerTask caps how many result records one task may ingest.
 // The cap is a MISUSE guard, not capacity planning: the record contract is
@@ -142,27 +140,6 @@ func (s *Store) ApplyResultsIngestDelta(ctx context.Context, taskID string, rebu
 	mark.Dropped = priorDropped + int64(parsedTotal-insertN)
 	if _, err := tx.ExecContext(ctx, upsertFileIngestSQL,
 		taskID, IngestFileResults, mark.Size, mark.Offset, boolToInt(mark.Final), mark.Dropped); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// ApplyEventsIngestDelta commits one incremental pass over events.jsonl:
-// checkpoint upserts + the mark in one transaction. No rebuild delete —
-// checkpoints are a task-lifetime event log, and
-// the (task_id, step) newer-ts upsert makes full re-reads idempotent.
-func (s *Store) ApplyEventsIngestDelta(ctx context.Context, taskID string,
-	ckpts []CheckpointRow, mark FileIngestMark) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := insertCheckpointsTx(ctx, tx, ckpts); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, upsertFileIngestSQL,
-		taskID, IngestFileEvents, mark.Size, mark.Offset, boolToInt(mark.Final), mark.Dropped); err != nil {
 		return err
 	}
 	return tx.Commit()

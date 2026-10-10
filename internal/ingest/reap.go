@@ -31,22 +31,19 @@ type Target struct {
 // Result summarizes what was ingested from the task's SDK output files.
 // Counts are informational; no decision logic depends on them.
 type Result struct {
-	MetricCount     int
-	CheckpointCount int
-	ResultCount     int // result records parsed from results.jsonl (pre-cap)
+	MetricCount int
+	ResultCount int // result records parsed from results.jsonl (pre-cap)
 }
 
-// SDK three-file contract (RQ2-1) — each stream has its own file so the
-// semantics split at the API boundary and ingest never disambiguates:
+// SDK file contract — each stream has its own file so the semantics split
+// at the API boundary and ingest never disambiguates:
 //
 //	metrics.jsonl — {"type":"metric","key":"loss","value":0.42,"step":100,"ts":...}
-//	events.jsonl  — {"type":"checkpoint","path":"...","size_bytes":1024,"step":100,"is_best":true,"ts":...}
-//	                (+ "preempted" / "loop_break": flight-recorder only, no DB rows)
 //	results.jsonl — {"ts":...,"axes":{"model":"a","step":2000},"metrics":{"math":24.8}}
 //
-// OLD tasks' mixed metrics.jsonl (pre-split SDKs wrote checkpoint events
-// there too) stays fully supported: the metrics collector still dispatches
-// checkpoint lines. Zero migration.
+// Lifecycle events (checkpoint / preempted / loop_break, written by SDKs
+// before v0.6.0 to events.jsonl or a mixed metrics.jsonl) are no longer
+// ingested; old lines are skipped as unknown types.
 //
 // `task_id` / `job_id` are NOT in the SDK payload. The caller supplies them
 // through Target, keeping the SDK ignorant of internal DB schemas.
@@ -55,14 +52,6 @@ type metricEvent struct {
 	Value float64 `json:"value"`
 	Step  *int64  `json:"step"`
 	TS    int64   `json:"ts"`
-}
-
-type checkpointEvent struct {
-	Path      string `json:"path"`
-	SizeBytes int64  `json:"size_bytes"`
-	Step      *int64 `json:"step"`
-	IsBest    bool   `json:"is_best"`
-	TS        int64  `json:"ts"`
 }
 
 // NOTE: the legacy ReapOutputs (markless full-file reap) is GONE. Its
@@ -76,8 +65,6 @@ type checkpointEvent struct {
 //     compatibility), bad JSON lines warn + skip.
 //   - Reap MUST NOT propagate errors that would change a task's terminal
 //     status: verdict-path callers treat returned errors as warn-only.
-//   - disk_low events fall through to "unknown type": the SDK-driven
-//     freeze model handles them at runtime via /internal/freeze-self.
 
 // collector performs the STREAMING REDUCTION over metrics.jsonl lines.
 // Raw metric points are never stored (a chatty 3-day task is 10M+ points):
@@ -88,7 +75,6 @@ type collector struct {
 	path   string
 	lineN  int
 	aggs   map[string]*store.MetricSummaryRow
-	ckpts  []store.CheckpointRow
 	result Result
 }
 
@@ -129,22 +115,6 @@ func (c *collector) line(lineBytes []byte) {
 			agg.Count++
 		}
 		c.result.MetricCount++
-	case "checkpoint":
-		var e checkpointEvent
-		if err := json.Unmarshal(lineBytes, &e); err != nil {
-			logger.Warnf("reap %s line %d: parse checkpoint event failed: %v", c.path, c.lineN, err)
-			return
-		}
-		c.ckpts = append(c.ckpts, store.CheckpointRow{
-			TaskID:    c.target.TaskID,
-			JobID:     c.target.JobID,
-			Path:      e.Path,
-			SizeBytes: e.SizeBytes,
-			Step:      e.Step,
-			IsBest:    e.IsBest,
-			TS:        e.TS,
-		})
-		c.result.CheckpointCount++
 	default:
 		logger.Debugf("reap %s line %d: unknown event type %q (skipped)", c.path, c.lineN, t.Type)
 	}
@@ -157,53 +127,6 @@ func (c *collector) summaryRows() []store.MetricSummaryRow {
 		rows = append(rows, *a)
 	}
 	return rows
-}
-
-// eventsCollector handles events.jsonl (lifecycle plane): checkpoint events
-// become rows; preempted / loop_break are flight-recorder entries with no
-// DB consumers (post-mortem evidence read from the file itself) — skipped.
-// A stray metric event here is a contract violation, NOT summarized: doing
-// so could double-count against metrics.jsonl.
-type eventsCollector struct {
-	target Target
-	path   string
-	lineN  int
-	ckpts  []store.CheckpointRow
-	count  int
-}
-
-func (c *eventsCollector) line(lineBytes []byte) {
-	c.lineN++
-	if len(lineBytes) == 0 {
-		return
-	}
-	var t struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(lineBytes, &t); err != nil {
-		logger.Warnf("reap %s line %d: parse type discriminator failed: %v", c.path, c.lineN, err)
-		return
-	}
-	switch t.Type {
-	case "checkpoint":
-		var e checkpointEvent
-		if err := json.Unmarshal(lineBytes, &e); err != nil {
-			logger.Warnf("reap %s line %d: parse checkpoint event failed: %v", c.path, c.lineN, err)
-			return
-		}
-		c.ckpts = append(c.ckpts, store.CheckpointRow{
-			TaskID:    c.target.TaskID,
-			JobID:     c.target.JobID,
-			Path:      e.Path,
-			SizeBytes: e.SizeBytes,
-			Step:      e.Step,
-			IsBest:    e.IsBest,
-			TS:        e.TS,
-		})
-		c.count++
-	default:
-		logger.Debugf("reap %s line %d: event type %q not ingested (skipped)", c.path, c.lineN, t.Type)
-	}
 }
 
 // resultLine maps one results.jsonl line. Axes/metrics stay raw JSON —
@@ -342,7 +265,7 @@ func scanIncremental(fsys rfs.FS, path string, markSize, markOffset int64, final
 }
 
 // ReapIncremental ingests the bytes appended to the task's SDK output files
-// (metrics.jsonl / results.jsonl / events.jsonl) since the last pass, each
+// (metrics.jsonl / results.jsonl) since the last pass, each
 // under its own (size, parsed_offset) mark. final marks the terminal pass:
 // tails are consumed and every mark is frozen — settled tasks are never
 // stat'ed again. Per-file failures don't block the other files; errors are
@@ -356,8 +279,7 @@ func ReapIncremental(ctx context.Context, st *store.Store, target Target, final 
 	var res Result
 	merr := reapMetricsFile(ctx, st, target, fsys, final, &res)
 	rerr := reapResultsFile(ctx, st, target, fsys, final, &res)
-	eerr := reapEventsFile(ctx, st, target, fsys, final, &res)
-	return res, errors.Join(merr, rerr, eerr)
+	return res, errors.Join(merr, rerr)
 }
 
 func reapMetricsFile(ctx context.Context, st *store.Store, target Target, fsys rfs.FS, final bool, res *Result) error {
@@ -383,16 +305,15 @@ func reapMetricsFile(ctx context.Context, st *store.Store, target Target, fsys r
 	if sc.skip {
 		return nil
 	}
-	// ONE transaction: rebuild delete + summary merges + checkpoints + the
+	// ONE transaction: rebuild delete + summary merges + the
 	// mark. "Counted" and "accounted" are inseparable — a crash between
 	// them would replay this delta next pass and inflate count/sum.
 	if err := st.ApplyIngestDelta(ctx, target.TaskID, sc.rebuild,
-		c.summaryRows(), c.ckpts,
+		c.summaryRows(),
 		store.IngestMark{Size: sc.size, Offset: sc.consumed, Final: final}); err != nil {
 		return err
 	}
 	res.MetricCount += c.result.MetricCount
-	res.CheckpointCount += c.result.CheckpointCount
 	return nil
 }
 
@@ -425,38 +346,5 @@ func reapResultsFile(ctx context.Context, st *store.Store, target Target, fsys r
 		return err
 	}
 	res.ResultCount += c.parsed
-	return nil
-}
-
-func reapEventsFile(ctx context.Context, st *store.Store, target Target, fsys rfs.FS, final bool, res *Result) error {
-	mark, err := st.GetFileIngestMark(ctx, target.TaskID, store.IngestFileEvents)
-	if err != nil {
-		return err
-	}
-	if mark.Final {
-		return nil
-	}
-	path := workspace.EventsPath(target.Dir)
-	c := eventsCollector{target: target, path: path}
-	sc, err := scanIncremental(fsys, path, mark.Size, mark.Offset, final, c.line)
-	if err != nil {
-		return err
-	}
-	if sc.missing {
-		if final {
-			_ = st.SetFileIngestMark(ctx, target.TaskID, store.IngestFileEvents, store.FileIngestMark{Final: true})
-		}
-		return nil
-	}
-	if sc.skip {
-		return nil
-	}
-	// Rebuild needs no delete: checkpoints re-insert idempotently via the
-	// (task_id, step) newer-ts upsert (task-lifetime event log doctrine).
-	if err := st.ApplyEventsIngestDelta(ctx, target.TaskID, c.ckpts,
-		store.FileIngestMark{Size: sc.size, Offset: sc.consumed, Final: final}); err != nil {
-		return err
-	}
-	res.CheckpointCount += c.count
 	return nil
 }

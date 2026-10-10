@@ -438,12 +438,9 @@ type CleanPreviewItem struct {
 	Action     CleanAction `json:"action"` // what will be cleaned
 	Orphan     bool        `json:"orphan"` // true if task dir is missing from disk
 
-	// Size preview — from the LEDGER, not the filesystem: checkpoint stats
-	// come from the checkpoints table, metrics size from the ingest mark.
-	// Zero SSH round trips at selection time; the FS is only touched after
-	// the user confirms.
-	CkptFiles    int   `json:"ckpt_files"`
-	CkptBytes    int64 `json:"ckpt_bytes"`
+	// Size preview — from the LEDGER (metrics ingest mark), not the
+	// filesystem: zero SSH round trips at selection time; the FS is only
+	// touched after the user confirms.
 	MetricsBytes int64 `json:"metrics_bytes"`
 }
 

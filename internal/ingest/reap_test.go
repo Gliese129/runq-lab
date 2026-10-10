@@ -52,6 +52,8 @@ func writeMetricsFile(t *testing.T, taskDir string, lines []string) {
 	}
 }
 
+// A legacy checkpoint line (pre-v0.6.0 SDK, mixed metrics.jsonl) is skipped
+// without disturbing metric ingest.
 func TestReapNormal(t *testing.T) {
 	taskDir := t.TempDir()
 	writeMetricsFile(t, taskDir, []string{
@@ -67,26 +69,10 @@ func TestReapNormal(t *testing.T) {
 	if res.MetricCount != 1 {
 		t.Errorf("MetricCount = %d, want 1", res.MetricCount)
 	}
-	if res.CheckpointCount != 1 {
-		t.Errorf("CheckpointCount = %d, want 1", res.CheckpointCount)
-	}
 
 	got, _ := st.ListMetricSummaries(context.Background(), "j1", "loss")
 	if len(got) != 1 || got[0].Min != 0.42 || got[0].Max != 0.42 || got[0].Count != 1 {
 		t.Errorf("summary row mismatch: %+v", got)
-	}
-	ckpts, _ := st.ListCheckpoints(context.Background(), "t1")
-	if len(ckpts) != 1 {
-		t.Fatalf("checkpoint row count = %d, want 1: %+v", len(ckpts), ckpts)
-	}
-	if !ckpts[0].IsBest {
-		t.Errorf("checkpoint is_best = false, want true: %+v", ckpts[0])
-	}
-	if ckpts[0].SizeBytes != 1024 {
-		t.Errorf("checkpoint size_bytes = %d, want 1024 (verifies size_bytes JSON tag)", ckpts[0].SizeBytes)
-	}
-	if ckpts[0].TaskID != "t1" || ckpts[0].JobID != "j1" {
-		t.Errorf("checkpoint task/job not filled from context: %+v", ckpts[0])
 	}
 }
 
@@ -151,7 +137,7 @@ func TestReapMissingFile(t *testing.T) {
 	if err != nil {
 		t.Errorf("missing file should be silent, got %v", err)
 	}
-	if res.MetricCount != 0 || res.CheckpointCount != 0 {
+	if res.MetricCount != 0 {
 		t.Errorf("missing file should yield zero result, got %+v", res)
 	}
 }

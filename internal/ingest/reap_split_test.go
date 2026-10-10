@@ -1,7 +1,7 @@
 package ingest
 
 // Tests for the three-file ingest (RQ2-1): results.jsonl → result_records
-// (capped, dropped-tallied), events.jsonl → checkpoints, and the marks that
+// (capped, dropped-tallied) and the marks that
 // make each file's re-read exactly-once. metrics.jsonl behavior (including
 // the legacy mixed-file tolerance) is covered by reap_test.go.
 
@@ -184,61 +184,10 @@ func TestReapResultsMalformedLines(t *testing.T) {
 	}
 }
 
-func TestReapEventsCheckpoints(t *testing.T) {
-	taskDir := t.TempDir()
-	writeTaskFile(t, workspace.EventsPath(taskDir), []string{
-		`{"type":"checkpoint","path":"/ckpt-1","size_bytes":1024,"step":100,"is_best":false,"ts":1}`,
-		`{"type":"preempted","step":101,"ts":2}`,
-		`{"type":"loop_break","name":"range","reason":"plateau","ts":3}`,
-		`{"type":"checkpoint","path":"/ckpt-2","size_bytes":2048,"step":200,"is_best":true,"ts":4}`,
-	})
-	st := openMemoryStoreAndSeed(t, "t1", "j1", taskDir)
-
-	res, err := ReapIncremental(context.Background(), st, Target{TaskID: "t1", JobID: "j1", Dir: taskDir}, false)
-	if err != nil {
-		t.Fatalf("ReapIncremental: %v", err)
-	}
-	if res.CheckpointCount != 2 {
-		t.Errorf("CheckpointCount = %d, want 2 (preempted/loop_break are flight-recorder only)", res.CheckpointCount)
-	}
-	ckpts, _ := st.ListCheckpoints(context.Background(), "t1")
-	if len(ckpts) != 2 {
-		t.Fatalf("checkpoint rows = %d, want 2: %+v", len(ckpts), ckpts)
-	}
-	if !ckpts[1].IsBest || ckpts[1].SizeBytes != 2048 {
-		t.Errorf("checkpoint fields mismatch: %+v", ckpts[1])
-	}
-}
-
-func TestReapEventsStrayMetricNotSummarized(t *testing.T) {
-	// A metric event in events.jsonl is a contract violation; summarizing it
-	// could double-count against metrics.jsonl. It must be skipped.
-	taskDir := t.TempDir()
-	writeTaskFile(t, workspace.EventsPath(taskDir), []string{
-		`{"type":"metric","key":"loss","value":0.1,"step":1,"ts":1}`,
-	})
-	st := openMemoryStoreAndSeed(t, "t1", "j1", taskDir)
-
-	res, err := ReapIncremental(context.Background(), st, Target{TaskID: "t1", JobID: "j1", Dir: taskDir}, false)
-	if err != nil {
-		t.Fatalf("ReapIncremental: %v", err)
-	}
-	if res.MetricCount != 0 {
-		t.Errorf("MetricCount = %d, want 0", res.MetricCount)
-	}
-	sums, _ := st.ListMetricSummaries(context.Background(), "j1", "")
-	if len(sums) != 0 {
-		t.Errorf("stray metric produced summaries: %+v", sums)
-	}
-}
-
-func TestReapAllThreeFilesOnePass(t *testing.T) {
+func TestReapMetricsAndResultsOnePass(t *testing.T) {
 	taskDir := t.TempDir()
 	writeMetricsFile(t, taskDir, []string{
 		`{"type":"metric","key":"loss","value":0.42,"step":100,"ts":1}`,
-	})
-	writeTaskFile(t, workspace.EventsPath(taskDir), []string{
-		`{"type":"checkpoint","path":"/p","size_bytes":1,"step":100,"is_best":false,"ts":2}`,
 	})
 	writeTaskFile(t, workspace.ResultsPath(taskDir), []string{
 		`{"ts":3,"axes":{"model":"a"},"metrics":{"acc":0.9}}`,
@@ -249,8 +198,8 @@ func TestReapAllThreeFilesOnePass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReapIncremental: %v", err)
 	}
-	if res.MetricCount != 1 || res.CheckpointCount != 1 || res.ResultCount != 1 {
-		t.Errorf("counts = %+v, want 1/1/1", res)
+	if res.MetricCount != 1 || res.ResultCount != 1 {
+		t.Errorf("counts = %+v, want 1/1", res)
 	}
 }
 
@@ -264,7 +213,7 @@ func TestReapFinalFreezesAllMarks(t *testing.T) {
 	if _, err := ReapIncremental(context.Background(), st, target, true); err != nil {
 		t.Fatalf("final reap: %v", err)
 	}
-	for _, file := range []string{store.IngestFileResults, store.IngestFileEvents} {
+	for _, file := range []string{store.IngestFileResults} {
 		mark, err := st.GetFileIngestMark(context.Background(), "t1", file)
 		if err != nil {
 			t.Fatalf("GetFileIngestMark(%s): %v", file, err)

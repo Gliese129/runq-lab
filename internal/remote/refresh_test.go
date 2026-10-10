@@ -218,8 +218,6 @@ func TestPreHandoffSubmittingSkipsAllIngestionVariants(t *testing.T) {
 					"{\"type\":\"metric\",\"key\":\"old_loss\",\"value\":9,\"step\":1,\"ts\":1}\n")
 				writeFile(t, filepath.Join(dir, "results.jsonl"),
 					"{\"ts\":1,\"axes\":{\"attempt\":\"old\"},\"metrics\":{\"score\":9}}\n")
-				writeFile(t, filepath.Join(dir, "events.jsonl"),
-					"{\"type\":\"checkpoint\",\"path\":\"old.pt\",\"size_bytes\":9,\"step\":1,\"ts\":1}\n")
 
 				b := &Backend{Cfg: &config.TargetConfig{}, Store: st, FS: newTestFSFromRunner(nopRunner)}
 				if err := variant.run(context.Background(), b, jobID); err != nil {
@@ -232,7 +230,7 @@ func TestPreHandoffSubmittingSkipsAllIngestionVariants(t *testing.T) {
 				if got.Status != "submitting" || got.StatusSource != phase.source || got.RetryCount != 1 {
 					t.Fatalf("old status evidence changed pre-handoff intent: %#v", got)
 				}
-				var summaries, results, checkpoints, metricMarks, fileMarks int
+				var summaries, results, metricMarks, fileMarks int
 				for _, check := range []struct {
 					name string
 					dest *int
@@ -240,7 +238,6 @@ func TestPreHandoffSubmittingSkipsAllIngestionVariants(t *testing.T) {
 				}{
 					{"summaries", &summaries, `SELECT COUNT(*) FROM metric_summary WHERE task_id = ?`},
 					{"results", &results, `SELECT COUNT(*) FROM result_records WHERE task_id = ?`},
-					{"checkpoints", &checkpoints, `SELECT COUNT(*) FROM checkpoints WHERE task_id = ?`},
 					{"metric marks", &metricMarks, `SELECT COUNT(*) FROM metrics_ingest WHERE task_id = ?`},
 					{"file marks", &fileMarks, `SELECT COUNT(*) FROM file_ingest WHERE task_id = ?`},
 				} {
@@ -248,9 +245,9 @@ func TestPreHandoffSubmittingSkipsAllIngestionVariants(t *testing.T) {
 						t.Fatalf("count %s: %v", check.name, err)
 					}
 				}
-				if summaries != 0 || results != 0 || checkpoints != 0 || metricMarks != 0 || fileMarks != 0 {
-					t.Fatalf("pre-handoff evidence was ingested: summaries=%d results=%d checkpoints=%d metric_marks=%d file_marks=%d",
-						summaries, results, checkpoints, metricMarks, fileMarks)
+				if summaries != 0 || results != 0 || metricMarks != 0 || fileMarks != 0 {
+					t.Fatalf("pre-handoff evidence was ingested: summaries=%d results=%d metric_marks=%d file_marks=%d",
+						summaries, results, metricMarks, fileMarks)
 				}
 			})
 		}

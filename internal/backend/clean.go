@@ -105,8 +105,6 @@ func PerformClean(ctx context.Context, st *store.Store, fsFor func(store.TaskRow
 			Reason:       u.reason,
 			Action:       action,
 			Orphan:       u.reason == "orphan",
-			CkptFiles:    stat.CkptFiles,
-			CkptBytes:    stat.CkptBytes,
 			MetricsBytes: stat.MetricsBytes,
 		})
 	}
@@ -388,7 +386,7 @@ func cleanRemoteArtifacts(ctx context.Context, fsys rfs.FS, rows []store.TaskRow
 			}
 		}
 		st := stats[t.ID]
-		freed += st.CkptBytes + st.MetricsBytes
+		freed += st.MetricsBytes
 	}
 	const batch = 100
 	for start := 0; start < len(paths); start += batch {

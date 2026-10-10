@@ -122,8 +122,8 @@ CREATE TABLE IF NOT EXISTS result_records (
 CREATE INDEX IF NOT EXISTS idx_result_records_job  ON result_records(job_id);
 CREATE INDEX IF NOT EXISTS idx_result_records_task ON result_records(task_id);
 
--- Incremental ingest marks for the post-split SDK files (results.jsonl /
--- events.jsonl) — same (size, parsed_offset, final) semantics as
+-- Incremental ingest marks for the post-split SDK files (results.jsonl;
+-- "events" rows from pre-v0.6.0 are inert) — same (size, parsed_offset, final) semantics as
 -- metrics_ingest, generalized to one row per (task, file) so a future
 -- fourth file needs no new table. dropped_count persists the results cap's
 -- overflow tally (feeds the results endpoint's `truncated` flag).
@@ -137,17 +137,8 @@ CREATE TABLE IF NOT EXISTS file_ingest (
     PRIMARY KEY (task_id, file)
 );
 
-CREATE TABLE IF NOT EXISTS checkpoints (
-    task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    job_id      TEXT NOT NULL,
-    path        TEXT NOT NULL,
-    size_bytes  INTEGER,
-    step        INTEGER,
-    is_best     INTEGER NOT NULL DEFAULT 0,  -- SQLite has no native boolean
-    ts          INTEGER NOT NULL,
-    PRIMARY KEY (task_id, step)
-);
-CREATE INDEX IF NOT EXISTS idx_checkpoints_job ON checkpoints(job_id);
+-- (checkpoints table removed in v0.6.0 with SDK safe_save. Existing
+-- databases keep the dead table — upgrades stay non-destructive.)
 
 -- L4 freshness ledger: one row per (target, resource) recording the sync
 -- loop's last outcome. refreshed_at is a property of the DATA (the photo's

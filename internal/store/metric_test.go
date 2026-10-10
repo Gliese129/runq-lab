@@ -123,11 +123,6 @@ func TestIngestMarkRoundTrip(t *testing.T) {
 	if err := s.SetIngestMark(context.Background(), "t1", IngestMark{Size: 200, Offset: 200, Final: true}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := s.InsertCheckpointsBatch(context.Background(), []CheckpointRow{
-		{TaskID: "t1", JobID: "j1", Path: "/p/ckpt.pt", SizeBytes: 1024, Step: ptrInt64(1), TS: 1700000000},
-	}); err != nil {
-		t.Fatalf("checkpoint seed: %v", err)
-	}
 	m, _ = s.GetIngestMark(context.Background(), "t1")
 	if m.Size != 200 || m.Offset != 200 || !m.Final {
 		t.Errorf("mark = %+v", m)
@@ -160,12 +155,6 @@ func TestBeginTaskRetryPreservesTaskLifetimeIngest(t *testing.T) {
 	}}, 3, FileIngestMark{Size: 80, Offset: 80, Final: true}); err != nil {
 		t.Fatalf("seed results: %v", err)
 	}
-	if err := s.ApplyEventsIngestDelta(ctx, "t1", []CheckpointRow{{
-		TaskID: "t1", JobID: "j1", Path: "/p/ckpt.pt", SizeBytes: 1024,
-		Step: ptrInt64(1), TS: 10,
-	}}, FileIngestMark{Size: 60, Offset: 60, Final: true}); err != nil {
-		t.Fatalf("seed events: %v", err)
-	}
 
 	if err := s.BeginTaskRetry(ctx, "t1", 0, "gen-next"); err != nil {
 		t.Fatalf("begin retry: %v", err)
@@ -185,79 +174,12 @@ func TestBeginTaskRetryPreservesTaskLifetimeIngest(t *testing.T) {
 	if resultMark.Size != 80 || resultMark.Offset != 80 || resultMark.Final || resultMark.Dropped != 2 {
 		t.Fatalf("result mark after retry = %+v, want preserved state and final=false", resultMark)
 	}
-	eventMark, err := s.GetFileIngestMark(ctx, "t1", IngestFileEvents)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if eventMark.Size != 60 || eventMark.Offset != 60 || eventMark.Final {
-		t.Fatalf("event mark after retry = %+v, want preserved offset and final=false", eventMark)
-	}
 
 	summaries, _ := s.ListMetricSummaries(ctx, "j1", "loss")
 	results, _ := s.ListResultRecords(ctx, "j1")
-	checkpoints, _ := s.ListCheckpoints(ctx, "t1")
-	if len(summaries) != 1 || len(results) != 1 || len(checkpoints) != 1 {
-		t.Fatalf("retry erased task history: summaries=%d results=%d checkpoints=%d",
-			len(summaries), len(results), len(checkpoints))
-	}
-}
-
-func TestInsertCheckpointsBatch(t *testing.T) {
-	s, _ := Open(":memory:")
-	defer s.Close()
-	seedJobAndTask(t, s, "t1", "j1")
-
-	rows := []CheckpointRow{
-		{TaskID: "t1", JobID: "j1", Path: "/p/ckpt_1.pt", SizeBytes: 1024, Step: ptrInt64(1), IsBest: false, TS: 1700000000},
-		{TaskID: "t1", JobID: "j1", Path: "/p/ckpt_best.pt", SizeBytes: 2048, Step: ptrInt64(2), IsBest: true, TS: 1700000001},
-	}
-	if err := s.InsertCheckpointsBatch(context.Background(), rows); err != nil {
-		t.Fatalf("InsertCheckpointsBatch: %v", err)
-	}
-
-	got, err := s.ListCheckpoints(context.Background(), "t1")
-	if err != nil {
-		t.Fatalf("ListCheckpoints: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(got))
-	}
-	if !got[1].IsBest || got[0].IsBest {
-		t.Errorf("is_best mapped wrong: %+v", got)
-	}
-}
-
-func TestInsertCheckpointsBatchNewerTSWins(t *testing.T) {
-	s, _ := Open(":memory:")
-	defer s.Close()
-	seedJobAndTask(t, s, "t1", "j1")
-
-	step := ptrInt64(1)
-	if err := s.InsertCheckpointsBatch(context.Background(), []CheckpointRow{
-		{TaskID: "t1", JobID: "j1", Path: "/p/old.pt", SizeBytes: 1024, Step: step, IsBest: false, TS: 100},
-	}); err != nil {
-		t.Fatalf("insert old: %v", err)
-	}
-	if err := s.InsertCheckpointsBatch(context.Background(), []CheckpointRow{
-		{TaskID: "t1", JobID: "j1", Path: "/p/new.pt", SizeBytes: 2048, Step: step, IsBest: true, TS: 200},
-	}); err != nil {
-		t.Fatalf("insert newer: %v", err)
-	}
-	if err := s.InsertCheckpointsBatch(context.Background(), []CheckpointRow{
-		{TaskID: "t1", JobID: "j1", Path: "/p/stale.pt", SizeBytes: 4096, Step: step, IsBest: false, TS: 150},
-	}); err != nil {
-		t.Fatalf("insert stale: %v", err)
-	}
-
-	got, err := s.ListCheckpoints(context.Background(), "t1")
-	if err != nil {
-		t.Fatalf("ListCheckpoints: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("expected one checkpoint row after upserts, got %d: %+v", len(got), got)
-	}
-	if got[0].Path != "/p/new.pt" || got[0].SizeBytes != 2048 || !got[0].IsBest || got[0].TS != 200 {
-		t.Errorf("newer checkpoint did not win or stale row clobbered it: %+v", got[0])
+	if len(summaries) != 1 || len(results) != 1 {
+		t.Fatalf("retry erased task history: summaries=%d results=%d",
+			len(summaries), len(results))
 	}
 }
 
@@ -274,67 +196,16 @@ func TestMetricsCascadeDelete(t *testing.T) {
 	if err := s.SetIngestMark(context.Background(), "t1", IngestMark{Size: 10, Offset: 10}); err != nil {
 		t.Fatalf("set mark: %v", err)
 	}
-	if err := s.InsertCheckpointsBatch(context.Background(), []CheckpointRow{
-		{TaskID: "t1", JobID: "j1", Path: "/p", Step: ptrInt64(1), TS: 1},
-	}); err != nil {
-		t.Fatalf("insert checkpoint: %v", err)
-	}
 
 	if err := s.DeleteTask(context.Background(), "t1"); err != nil {
 		t.Fatalf("DeleteTask: %v", err)
 	}
 
-	var sc, ic, cc int
+	var sc, ic int
 	s.DB().QueryRow(`SELECT COUNT(*) FROM metric_summary WHERE task_id='t1'`).Scan(&sc)
 	s.DB().QueryRow(`SELECT COUNT(*) FROM metrics_ingest WHERE task_id='t1'`).Scan(&ic)
-	s.DB().QueryRow(`SELECT COUNT(*) FROM checkpoints WHERE task_id='t1'`).Scan(&cc)
-	if sc != 0 || ic != 0 || cc != 0 {
-		t.Errorf("ON DELETE CASCADE should have removed dependents; got summaries=%d, marks=%d, checkpoints=%d", sc, ic, cc)
-	}
-}
-
-func TestMaxCheckpointSize(t *testing.T) {
-	s, _ := Open(":memory:")
-	defer s.Close()
-	seedJobAndTask(t, s, "t1", "j1")
-
-	// Empty history → 0, no error.
-	got, err := s.MaxCheckpointSize(context.Background(), "t1")
-	if err != nil {
-		t.Fatalf("MaxCheckpointSize empty: %v", err)
-	}
-	if got != 0 {
-		t.Errorf("empty history should return 0, got %d", got)
-	}
-
-	// Insert three checkpoints, verify max wins (not last).
-	rows := []CheckpointRow{
-		{TaskID: "t1", JobID: "j1", Path: "/a", SizeBytes: 1000, Step: ptrInt64(1), TS: 1},
-		{TaskID: "t1", JobID: "j1", Path: "/b", SizeBytes: 5000, Step: ptrInt64(2), TS: 2},
-		{TaskID: "t1", JobID: "j1", Path: "/c", SizeBytes: 3000, Step: ptrInt64(3), TS: 3},
-	}
-	if err := s.InsertCheckpointsBatch(context.Background(), rows); err != nil {
-		t.Fatalf("InsertCheckpointsBatch: %v", err)
-	}
-
-	got, err = s.MaxCheckpointSize(context.Background(), "t1")
-	if err != nil {
-		t.Fatalf("MaxCheckpointSize: %v", err)
-	}
-	if got != 5000 {
-		t.Errorf("expected 5000 (max of {1000, 5000, 3000}), got %d", got)
-	}
-}
-
-func TestMaxCheckpointSizeUnknownTask(t *testing.T) {
-	s, _ := Open(":memory:")
-	defer s.Close()
-	got, err := s.MaxCheckpointSize(context.Background(), "nonexistent")
-	if err != nil {
-		t.Errorf("unknown task should return (0, nil), got err=%v", err)
-	}
-	if got != 0 {
-		t.Errorf("unknown task should return 0, got %d", got)
+	if sc != 0 || ic != 0 {
+		t.Errorf("ON DELETE CASCADE should have removed dependents; got summaries=%d, marks=%d", sc, ic)
 	}
 }
 

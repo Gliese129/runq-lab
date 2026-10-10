@@ -7,19 +7,6 @@ import (
 	"strings"
 )
 
-// CheckpointRow maps to one row in the `checkpoints` table.
-// Populated when daemon sees a `type=checkpoint` event in metrics.jsonl
-// (written by @runq.safe_save on the SDK side).
-type CheckpointRow struct {
-	TaskID    string
-	JobID     string
-	Path      string
-	SizeBytes int64
-	Step      *int64
-	IsBest    bool
-	TS        int64
-}
-
 // IngestMark is one task's incremental-ingest state (spec §8.1.4).
 // Zero value = never ingested.
 type IngestMark struct {
@@ -177,13 +164,13 @@ func mergeMetricSummariesTx(ctx context.Context, tx *sql.Tx, rows []MetricSummar
 }
 
 // ApplyIngestDelta commits one incremental-reap pass ATOMICALLY: optional
-// rebuild delete, summary merges, checkpoint inserts, and the ingest mark
+// rebuild delete, summary merges, and the ingest mark
 // land in ONE transaction. This is the double-count defense — "counted"
 // and "accounted" must be inseparable: a crash between merging a delta
 // and advancing the mark would replay the delta and inflate count/sum
 // (the exact disease that killed the markless full reap).
 func (s *Store) ApplyIngestDelta(ctx context.Context, taskID string, rebuild bool,
-	summaries []MetricSummaryRow, ckpts []CheckpointRow, mark IngestMark) error {
+	summaries []MetricSummaryRow, mark IngestMark) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -191,17 +178,11 @@ func (s *Store) ApplyIngestDelta(ctx context.Context, taskID string, rebuild boo
 	defer func() { _ = tx.Rollback() }()
 
 	if rebuild {
-		// Summaries only — checkpoints are a task-lifetime event log, and
-		// re-reading the rewritten file re-inserts
-		// its events idempotently via PK (task_id, step).
 		if _, err := tx.ExecContext(ctx, `DELETE FROM metric_summary WHERE task_id = ?`, taskID); err != nil {
 			return err
 		}
 	}
 	if err := mergeMetricSummariesTx(ctx, tx, summaries); err != nil {
-		return err
-	}
-	if err := insertCheckpointsTx(ctx, tx, ckpts); err != nil {
 		return err
 	}
 	final := 0
@@ -248,13 +229,11 @@ func (s *Store) ListMetricSummaries(ctx context.Context, jobID, key string) ([]M
 // TaskCleanStat is the ledger-known size preview for clean's TUI: what
 // deletion would free, WITHOUT touching the filesystem.
 type TaskCleanStat struct {
-	CkptFiles    int
-	CkptBytes    int64
 	MetricsBytes int64
 }
 
 // TaskCleanStats batch-fetches clean previews for the given task IDs
-// (chunked IN queries; checkpoints + ingest marks).
+// (chunked IN queries over ingest marks).
 func (s *Store) TaskCleanStats(ctx context.Context, taskIDs []string) (map[string]TaskCleanStat, error) {
 	out := make(map[string]TaskCleanStat, len(taskIDs))
 	const chunk = 500
@@ -264,26 +243,6 @@ func (s *Store) TaskCleanStats(ctx context.Context, taskIDs []string) (map[strin
 		args := make([]any, len(ids))
 		for i, id := range ids {
 			args[i] = id
-		}
-
-		rows, err := s.db.QueryContext(ctx,
-			`SELECT task_id, COUNT(*), COALESCE(SUM(size_bytes), 0)
-			 FROM checkpoints WHERE task_id IN (`+ph+`) GROUP BY task_id`, args...)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var id string
-			var st TaskCleanStat
-			if err := rows.Scan(&id, &st.CkptFiles, &st.CkptBytes); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			out[id] = st
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
 		}
 
 		mrows, err := s.db.QueryContext(ctx,
@@ -328,171 +287,4 @@ func (s *Store) MetricKeys(ctx context.Context, jobID string) ([]string, error) 
 		keys = append(keys, k)
 	}
 	return keys, rows.Err()
-}
-
-// InsertCheckpointsBatch inserts many CheckpointRow within one transaction.
-// INSERT OR IGNORE same as metrics — re-reaping must be idempotent.
-func (s *Store) InsertCheckpointsBatch(ctx context.Context, rows []CheckpointRow) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := insertCheckpointsTx(ctx, tx, rows); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// insertCheckpointsTx upserts checkpoint events: PK (task_id, step),
-// NEWER ts wins. A retry rerun re-saving the same step must update
-// size/path/is_best (the old OR IGNORE kept the stale row — conservative
-// for MaxCheckpointSize but wrong for LatestCheckpoint's thaw display);
-// the ts guard keeps out-of-order re-reads from clobbering newer facts,
-// which also preserves re-read idempotence.
-func insertCheckpointsTx(ctx context.Context, tx *sql.Tx, rows []CheckpointRow) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO checkpoints
-			(task_id, job_id, path, size_bytes, step, is_best, ts)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(task_id, step) DO UPDATE SET
-			path       = excluded.path,
-			size_bytes = excluded.size_bytes,
-			is_best    = excluded.is_best,
-			ts         = excluded.ts
-		WHERE excluded.ts >= checkpoints.ts`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, r := range rows {
-		isBest := 0
-		if r.IsBest {
-			isBest = 1
-		}
-		if _, err := stmt.ExecContext(ctx,
-			r.TaskID, r.JobID, r.Path, r.SizeBytes, nullStep(r.Step), isBest, r.TS,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// MaxCheckpointSize returns the largest size_bytes recorded for the task in
-// the checkpoints table, or 0 if the task has no checkpoint history (e.g. it
-// is not using the runq Python SDK's @runq.safe_save, or hasn't saved yet).
-//
-// Used by the scheduler to decide whether to include the task in a selective
-// freeze: tasks with no history are intentionally left running (no signal
-// they would fail), tasks whose max × safety_factor exceeds free bytes are
-// frozen.
-func (s *Store) MaxCheckpointSize(ctx context.Context, taskID string) (int64, error) {
-	var size sql.NullInt64
-	err := s.db.QueryRowContext(ctx,
-		`SELECT MAX(size_bytes) FROM checkpoints WHERE task_id = ?`, taskID,
-	).Scan(&size)
-	if err != nil {
-		return 0, err
-	}
-	if !size.Valid {
-		return 0, nil
-	}
-	return size.Int64, nil
-}
-
-// LatestCheckpoint returns the most recent checkpoint for the task (highest
-// step, or highest ts if step is null), or nil if none exists. Used by the
-// thaw handler to show "you just wrote X bytes" alongside blocked tasks.
-func (s *Store) LatestCheckpoint(ctx context.Context, taskID string) (*CheckpointRow, error) {
-	row := s.db.QueryRowContext(ctx,
-		`SELECT task_id, job_id, path, size_bytes, step, is_best, ts
-		 FROM checkpoints
-		 WHERE task_id = ?
-		 ORDER BY COALESCE(step, -1) DESC, ts DESC
-		 LIMIT 1`, taskID)
-	var (
-		c       CheckpointRow
-		step    sql.NullInt64
-		isBest  int
-		sizeRaw sql.NullInt64
-	)
-	if err := row.Scan(&c.TaskID, &c.JobID, &c.Path, &sizeRaw, &step, &isBest, &c.TS); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, err
-	}
-	c.SizeBytes = sizeRaw.Int64
-	if step.Valid {
-		v := step.Int64
-		c.Step = &v
-	}
-	c.IsBest = isBest != 0
-	return &c, nil
-}
-
-// TotalCheckpointSize returns SUM(size_bytes) over all checkpoints recorded
-// for the task — the cumulative bytes this task has written to its ckpt
-// dir. Used by the thaw handler to rank "disk hogs" when listing mount mates.
-// Returns 0 if the task has no checkpoint history.
-func (s *Store) TotalCheckpointSize(ctx context.Context, taskID string) (int64, error) {
-	var total sql.NullInt64
-	err := s.db.QueryRowContext(ctx,
-		`SELECT SUM(size_bytes) FROM checkpoints WHERE task_id = ?`, taskID,
-	).Scan(&total)
-	if err != nil {
-		return 0, err
-	}
-	if !total.Valid {
-		return 0, nil
-	}
-	return total.Int64, nil
-}
-
-// ListCheckpoints returns all checkpoints for a task, ordered by step.
-func (s *Store) ListCheckpoints(ctx context.Context, taskID string) ([]CheckpointRow, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT task_id, job_id, path, size_bytes, step, is_best, ts
-		 FROM checkpoints WHERE task_id = ? ORDER BY step ASC`, taskID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []CheckpointRow
-	for rows.Next() {
-		var (
-			c       CheckpointRow
-			step    sql.NullInt64
-			isBest  int
-			sizeRaw sql.NullInt64
-		)
-		if err := rows.Scan(&c.TaskID, &c.JobID, &c.Path, &sizeRaw, &step, &isBest, &c.TS); err != nil {
-			return nil, err
-		}
-		c.SizeBytes = sizeRaw.Int64
-		if step.Valid {
-			v := step.Int64
-			c.Step = &v
-		}
-		c.IsBest = isBest != 0
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-// nullStep converts *int64 to sql.NullInt64 for nullable step columns.
-func nullStep(s *int64) sql.NullInt64 {
-	if s == nil {
-		return sql.NullInt64{}
-	}
-	return sql.NullInt64{Int64: *s, Valid: true}
 }

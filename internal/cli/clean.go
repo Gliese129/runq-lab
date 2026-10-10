@@ -161,12 +161,10 @@ func runClean(cmd *cobra.Command, args []string) error {
 type cleanJobGroup struct {
 	jobID   string
 	tasks   []backend.CleanPreviewItem
-	ckptN   int
-	ckptB   int64
 	metricB int64
 }
 
-func (g cleanJobGroup) bytes() int64 { return g.ckptB + g.metricB }
+func (g cleanJobGroup) bytes() int64 { return g.metricB }
 
 // cleanPickerFlow walks project → job (or Clear All) → confirmation and
 // returns the exact task-ID set to delete.
@@ -187,8 +185,6 @@ func cleanPickerFlow(preview []backend.CleanPreviewItem, olderThan *time.Time) (
 			byProject[proj][p.JobID] = g
 		}
 		g.tasks = append(g.tasks, p)
-		g.ckptN += p.CkptFiles
-		g.ckptB += p.CkptBytes
 		g.metricB += p.MetricsBytes
 	}
 
@@ -232,8 +228,8 @@ func cleanPickerFlow(preview []backend.CleanPreviewItem, olderThan *time.Time) (
 	lines = append(lines, fmt.Sprintf("Clear All  (%d tasks, %s)", totalTasks, humanBytes(totalBytes)))
 	for _, g := range groups {
 		note := jobNoteOf(g)
-		lines = append(lines, fmt.Sprintf("%-10s %-20s ckpt: %d files %s; metrics: %s; %d tasks",
-			shortID(g.jobID), note, g.ckptN, humanBytes(g.ckptB), humanBytes(g.metricB), len(g.tasks)))
+		lines = append(lines, fmt.Sprintf("%-10s %-20s metrics: %s; %d tasks",
+			shortID(g.jobID), note, humanBytes(g.metricB), len(g.tasks)))
 	}
 	idx, ok := selectOne(fmt.Sprintf("Delete from %s — pick a job, or Clear All", project), lines)
 	if !ok {
@@ -317,7 +313,7 @@ func printCleanPreview(items []backend.CleanPreviewItem) {
 			finished = " finished=" + time.Unix(*p.FinishedAt, 0).Format("2006-01-02 15:04")
 		}
 		size := ""
-		if b := p.CkptBytes + p.MetricsBytes; b > 0 {
+		if b := p.MetricsBytes; b > 0 {
 			size = " ~" + humanBytes(b)
 		}
 		fmt.Printf("  %s  %-8s  (%s)%s%s  reason=%s%s\n",
