@@ -120,7 +120,7 @@ readiness with `runqd health`.
 # 1. Start services
 runqd serve                 # on the GPU host (normally via systemd)
 runq target add local       # opt this client into local execution
-runq daemon start -d        # client daemon (background)
+runq serve -d        # client daemon (background)
 
 # 2. Set up a project
 cd ~/experiments/resnet50

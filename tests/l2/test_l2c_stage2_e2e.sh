@@ -149,7 +149,7 @@ task_ids_for_job() {
 
 stop_daemon() {
   set +e
-  "${RUNQ_CMD[@]}" daemon stop >/dev/null 2>&1
+  "${RUNQ_CMD[@]}" serve stop >/dev/null 2>&1
   set -e
 }
 
@@ -275,7 +275,7 @@ build_runq() {
 }
 
 start_daemon() {
-  run_log daemon_start "${RUNQ_CMD[@]}" daemon start --detach
+  run_log daemon_start "${RUNQ_CMD[@]}" serve -d
   for _ in $(seq 1 80); do
     [[ -S "${RUNQ_SOCKET}" ]] && [[ -f "${DB_PATH}" ]] && return 0
     sleep 0.25

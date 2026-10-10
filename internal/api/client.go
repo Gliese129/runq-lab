@@ -68,14 +68,14 @@ func DiagnoseDaemon(socketPath, pidPath string) string {
 		return fmt.Sprintf("error reading PID file: %v", err)
 	}
 	if pid == 0 {
-		return "runq daemon is not running.\nStart it with: runq daemon start"
+		return "runq service is not running.\nStart it with: runq serve -d"
 	}
 	if utils.IsProcessAlive(pid, startTime) {
-		return fmt.Sprintf("daemon process (PID %d) exists but is not responding.\nTry: runq daemon restart", pid)
+		return fmt.Sprintf("runq service (PID %d) exists but is not responding.\nTry: runq serve restart", pid)
 	}
 	_ = os.Remove(pidPath)
 	_ = os.Remove(socketPath)
-	return fmt.Sprintf("stale PID file detected (PID %d no longer running), cleaned up.\nStart with: runq daemon start", pid)
+	return fmt.Sprintf("stale PID file detected (PID %d no longer running), cleaned up.\nStart with: runq serve -d", pid)
 }
 
 // Client talks to an HTTP service over a Unix socket.

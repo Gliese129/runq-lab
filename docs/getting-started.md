@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/Gliese129/runq-lab/main/install.sh 
 ```bash
 runq target add local       # explicit: a fresh client has no implicit executor
 runqd serve                 # Linux execution host; normally use systemd
-runq daemon start -d
+runq serve -d
 ```
 
 `runq` owns experiment intent, targets, and the optional dashboard. `runqd`

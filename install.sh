@@ -191,11 +191,11 @@ if [ "$start_daemon" = "1" ]; then
     || die "runq was installed, but the data directory ${data_dir} could not be created"
   if "${install_dir}/runq" status --json >/dev/null 2>&1; then
     say "Restarting the runq client daemon to activate the installed build..."
-    "${install_dir}/runq" daemon restart \
+    "${install_dir}/runq" serve restart \
       || die "runq was installed, but the existing client daemon could not be restarted"
   else
     say "Starting runq daemon in the background..."
-    "${install_dir}/runq" daemon start -d \
+    "${install_dir}/runq" serve -d \
       || die "runq was installed, but the daemon could not be started"
   fi
 

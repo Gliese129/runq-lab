@@ -215,7 +215,7 @@ submit_many_jobs() {
 }
 
 start_daemon() {
-  run_log daemon_start "${RUNQ_CMD[@]}" daemon start --detach
+  run_log daemon_start "${RUNQ_CMD[@]}" serve -d
   for _ in $(seq 1 40); do
     [[ -S "${RUNQ_SOCKET}" ]] && return 0
     sleep 0.25
@@ -225,7 +225,7 @@ start_daemon() {
 
 stop_daemon() {
   set +e
-  "${RUNQ_CMD[@]}" daemon stop >/dev/null 2>&1
+  "${RUNQ_CMD[@]}" serve stop >/dev/null 2>&1
   set -e
 }
 

@@ -10,7 +10,7 @@
   "status.disconnected": "未接続",
   "status.connected": "接続済み",
   "status.daemon_down": "デーモンが起動していません",
-  "status.daemon_down_hint": "次のコマンドで起動: runq daemon start --detach",
+  "status.daemon_down_hint": "次のコマンドで起動: runq serve -d",
   "status.gpu_off": "GPUモニター無効",
   "status.task.pending": "待機中",
   "status.task.running": "実行中",

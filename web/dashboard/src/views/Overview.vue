@@ -9,7 +9,7 @@
             <div class="text-body-2 font-weight-medium">{{ t(conn.statusKey.value) }}</div>
             <div v-if="conn.daemonDown.value" class="text-caption d-flex align-center ga-1">
               <span>{{ t('status.daemon_down_hint') }}</span>
-              <code class="px-1">runq daemon start --detach</code>
+              <code class="px-1">runq serve -d</code>
             </div>
             <div v-else class="text-caption">{{ conn.lastError.value }}</div>
           </div>

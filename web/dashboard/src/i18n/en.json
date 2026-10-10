@@ -8,7 +8,7 @@
   "status.disconnected": "Disconnected",
   "status.connected": "Connected",
   "status.daemon_down": "Daemon not running",
-  "status.daemon_down_hint": "Start it with: runq daemon start --detach",
+  "status.daemon_down_hint": "Start it with: runq serve -d",
   "status.gpu_off": "GPU monitor off",
   "status.task.pending": "Pending",
   "status.task.running": "Running",

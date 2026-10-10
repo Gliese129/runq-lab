@@ -53,8 +53,9 @@ There is no re-registration step.
 
 | Command | What it does |
 |---|---|
-| `runq daemon start [-d]` | Start the cross-platform client/dashboard daemon (`-d` = background); local targets require an independently started `runqd` endpoint |
-| `runq daemon stop / restart` | Stop / restart the client daemon (restart always backgrounds) |
+| `runq serve [-d]` | Start the runq service — dashboard + CLI backend (`-d` = background; not runqd); local targets require an independently started `runqd` endpoint |
+| `runq serve stop / restart` | Stop / restart the runq service (restart always backgrounds) |
+| `runq serve status` | Running or not, plus data dir, socket, log and access-log paths |
 | `runq doctor` | Static self-check of this machine, with fixes |
 
 With no configured targets, the client daemon still starts and serves status,

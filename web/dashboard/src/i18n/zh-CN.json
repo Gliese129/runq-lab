@@ -10,7 +10,7 @@
   "status.disconnected": "未连接",
   "status.connected": "已连接",
   "status.daemon_down": "守护进程未运行",
-  "status.daemon_down_hint": "请运行启动：runq daemon start --detach",
+  "status.daemon_down_hint": "请运行启动：runq serve -d",
   "status.gpu_off": "GPU 监控已关闭",
   "status.task.pending": "等待中",
   "status.task.running": "运行中",

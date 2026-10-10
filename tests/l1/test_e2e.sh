@@ -264,7 +264,7 @@ write_report() {
 cleanup() {
   set +e
   if [[ ${KEEP_RUNQ_E2E:-0} != "1" && ${#RUNQ_CMD[@]} -gt 0 ]]; then
-    timeout --kill-after=5s "${RUNQ_COMMAND_TIMEOUT}" "${RUNQ_CMD[@]}" daemon stop >/dev/null 2>&1 || true
+    timeout --kill-after=5s "${RUNQ_COMMAND_TIMEOUT}" "${RUNQ_CMD[@]}" serve stop >/dev/null 2>&1 || true
   fi
   if [[ ${RUNQ_CLEAN_DEFAULT_DATA_DIR:-1} == "1" ]]; then
     case "${RUNQ_DEFAULT_DATA_DIR}" in
@@ -314,7 +314,7 @@ t00_environment() {
 }
 
 t01_start_daemon() {
-  run_log T01_start "${RUNQ_CMD[@]}" daemon start --detach
+  run_log T01_start "${RUNQ_CMD[@]}" serve -d
   sleep 2
   [[ -S "${RUNQ_SOCKET}" ]]
   [[ -f "${RUNQ_DATA_DIR}/daemon.pid" ]]
@@ -330,13 +330,13 @@ t01_start_daemon() {
 }
 
 t02_duplicate_start() {
-  run_log T02_start "${RUNQ_CMD[@]}" daemon start --detach
+  run_log T02_start "${RUNQ_CMD[@]}" serve -d
   sleep 1
   run_log T02_status "${RUNQ_CMD[@]}" status
 }
 
 t03_stop_start_daemon() {
-  run_log T03_stop "${RUNQ_CMD[@]}" daemon stop
+  run_log T03_stop "${RUNQ_CMD[@]}" serve stop
   sleep 1
   [[ ! -S "${RUNQ_SOCKET}" ]]
   set +e
@@ -344,7 +344,7 @@ t03_stop_start_daemon() {
   local rc=$?
   set -e
   [[ ${rc} -ne 0 ]]
-  run_log T03_start "${RUNQ_CMD[@]}" daemon start --detach
+  run_log T03_start "${RUNQ_CMD[@]}" serve -d
   sleep 2
   [[ -S "${RUNQ_SOCKET}" ]]
 }
@@ -493,9 +493,9 @@ t23_pause_survives_daemon_restart() {
   [[ "${status_before}" == "paused" ]]
   [[ "${pending_before}" -gt 0 ]]
 
-  run_log T23_stop "${RUNQ_CMD[@]}" daemon stop
+  run_log T23_stop "${RUNQ_CMD[@]}" serve stop
   sleep 1
-  run_log T23_start "${RUNQ_CMD[@]}" daemon start --detach
+  run_log T23_start "${RUNQ_CMD[@]}" serve -d
   sleep 3
 
   status_after=$(sqlite_value "select status from jobs where id='${job}';")
@@ -626,7 +626,7 @@ t16_daemon_restart_recovery() {
   local job active_count terminal_count
   job=$(submit_job T16_submit job_restart_8tasks.yaml)
   sleep 2
-  run_log T16_restart "${RUNQ_CMD[@]}" daemon restart
+  run_log T16_restart "${RUNQ_CMD[@]}" serve restart
   sleep 3
   run_log T16_status "${RUNQ_CMD[@]}" status
   run_log T16_ps "${RUNQ_CMD[@]}" ps --job "${job}"
@@ -686,7 +686,7 @@ resolve_runq
 run_case T00 "environment has exactly four NVIDIA GPUs" t00_environment
 run_case T01 "daemon starts, socket and GPU inventory are visible" t01_start_daemon
 run_case T02 "duplicate daemon start keeps one responsive daemon" t02_duplicate_start
-run_case T03 "daemon stop cleans socket and daemon can restart" t03_stop_start_daemon
+run_case T03 "serve stop cleans socket and daemon can restart" t03_stop_start_daemon
 run_case T04 "project registration and show commands work" t04_project_register
 run_case T05 "dry-run expands sweep without enqueueing tasks" t05_dry_run
 run_case T06 "eight 1-GPU tasks complete across four cards" t06_1gpu_eight_tasks
@@ -703,7 +703,7 @@ run_case T12 "job kill terminates running and pending tasks" t12_kill_job
 run_case T13 "failed task auto-retries and ends failed" t13_auto_retry
 run_case T14 "manual task retry requeues failed task" t14_manual_retry
 run_case T15 "pause leaves running tasks alive and resume drains pending" t15_pause_resume
-run_case T16 "daemon restart recovers pending task state" t16_daemon_restart_recovery
+run_case T16 "serve restart recovers pending task state" t16_daemon_restart_recovery
 run_case T17 "unknown project is rejected without daemon crash" t17_unknown_project
 run_case T18 "malformed list sweep is rejected" t18_bad_list
 run_case T19 "gpus_per_task greater than four remains pending and can be killed" t19_too_many_gpus

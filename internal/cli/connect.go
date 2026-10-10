@@ -196,7 +196,7 @@ func notifyDaemonForward(ctx context.Context, name string) {
 	client := api.NewClient(getSocketPath())
 	resp, err := client.Do(ctx, http.MethodPost, "/api/v1/targets/"+url.PathEscape(name)+"/connect", nil)
 	if err != nil {
-		fmt.Println("Daemon not running — the socket forward will come up when it starts (`runq daemon start`).")
+		fmt.Println("runq service not running — the socket forward will come up when it starts (`runq serve -d`).")
 		return
 	}
 	defer resp.Body.Close()
@@ -206,7 +206,7 @@ func notifyDaemonForward(ctx context.Context, name string) {
 	case http.StatusConflict, http.StatusNotImplemented, http.StatusNotFound:
 		// 409: lane missing. 501/404: older daemon build without the
 		// endpoint. Either way a restart is what actually helps.
-		fmt.Println("Next: restart the daemon (`runq daemon restart`) to pick up this target and its socket forward.")
+		fmt.Println("Next: restart the service (`runq serve restart`) to pick up this target and its socket forward.")
 	default:
 		var e struct {
 			Error string `json:"error"`
