@@ -61,8 +61,11 @@ Targets are configured in `~/.runq/config.yaml`. You can switch between
 them per command (`-t name`), per session (`runq target use name`), or
 persistently.
 
-The same project and job YAML work on any target. Only the execution
-backend changes.
+A project may declare one authoritative `target` and multiple allowed
+`targets`. A submit to a non-source target first mirrors the paths selected by
+the source project's `.rsync`; `!pattern` excludes paths from that
+whitelist. This keeps project files single-source while allowing the same job
+YAML to run on several targets.
 
 ## Configuration priority
 

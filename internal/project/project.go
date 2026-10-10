@@ -105,7 +105,13 @@ type Config struct {
 	// path semantics — yaml sync, preflight, workspace layout — resolve
 	// on that machine, never on whichever machine happens to run the
 	// daemon. Empty = the local machine.
-	Target      string            `yaml:"target,omitempty" json:"target,omitempty"`
+	Target string `yaml:"target,omitempty" json:"target,omitempty"`
+	// Targets is the explicit set of compute targets this project may be
+	// submitted to. Target above is the single source of truth for the
+	// project tree; before a submit to any other member, runq mirrors the
+	// paths selected by <working_dir>/.rsync from Target to that member.
+	// Empty preserves the legacy single-target contract (Target only).
+	Targets     []string          `yaml:"targets,omitempty" json:"targets,omitempty"`
 	WorkingDir  string            `yaml:"working_dir" json:"working_dir"`
 	CmdTemplate string            `yaml:"command_template" json:"command_template"`
 	Environment map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`

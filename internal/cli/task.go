@@ -80,6 +80,9 @@ func runTaskRetry(cmd *cobra.Command, args []string) error {
 func init() {
 	taskRetryCmd.Flags().BoolVarP(&taskRetryYes, "yes", "y", false,
 		"skip the confirmation when the target config changed since submission")
+	// Output is always JSON; --json is accepted for parity with ps/status/kill
+	// so scripted callers can pass it uniformly.
+	taskShowCmd.Flags().Bool("json", true, "output raw JSON (always on; accepted for parity)")
 	taskCmd.AddCommand(taskShowCmd)
 	taskCmd.AddCommand(taskRetryCmd)
 	taskCmd.GroupID = groupManagement

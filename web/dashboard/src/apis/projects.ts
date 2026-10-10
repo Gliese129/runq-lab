@@ -21,4 +21,10 @@ export const projectsApi = {
 
   unarchive: (name: string) =>
     api.post<MessageResponse>(`/projects/${encodeURIComponent(name)}/unarchive`, {}),
+
+  sync: (name: string, sourceTarget: string, destinationTarget = '') =>
+    api.post<{ results: Array<{ source_target: string; destination_target: string; copied: number; deleted: number }> }>(
+      `/projects/${encodeURIComponent(name)}/sync`,
+      { source_target: sourceTarget, destination_target: destinationTarget },
+    ),
 }

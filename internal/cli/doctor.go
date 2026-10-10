@@ -24,7 +24,7 @@ import (
 // 但 Targets 节会显示每个 target 的状态：local runqd 走本机 socket
 // dial（本地 IPC），remote 读 daemon 的 /health 被动缓存（lane 干活时
 // 顺手记下的 lastContact，D6），并标注缓存年龄保持诚实。真的主动探测
-// 是 `runq config check --live` 的显式动作。按机器角色分节：
+// 是 `runq target check` 的显式动作。按机器角色分节：
 //
 //	client 节    永远显示——config、data dir/DB/logs、daemon socket、
 //	             targets（静态校验 + 状态）、ssh key 文件存在性
@@ -278,7 +278,7 @@ func doctorTargets(d *doctorChecks, cfg *config.GlobalConfig, dataDir string, da
 
 		switch {
 		case issues > 0:
-			d.check(false, "", fmt.Sprintf("%s: %d template issue(s) — details: `runq config check %s`", label, issues, t.Name))
+			d.check(false, "", fmt.Sprintf("%s: %d template issue(s) — details: `runq target check %s`", label, issues, t.Name))
 		case !ok:
 			d.check(false, "", fmt.Sprintf("%s: %s", label, status))
 		default:

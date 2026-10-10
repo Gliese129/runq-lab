@@ -347,8 +347,10 @@ export interface ProjectSummary {
 
 export interface ProjectConfig {
   project_name: string
-  /** compute target this project submits to (multi-target model) */
+  /** authoritative filesystem for the project tree */
   target?: string
+  /** targets this project may sync and submit to; target is always a member */
+  targets?: string[]
   working_dir: string
   command_template: string
   /** optional env file sourced before each task (backend: *string) */

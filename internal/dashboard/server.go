@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -42,6 +43,7 @@ type Server struct {
 	staticSource string
 	staticErr    error
 	utilsLogs    *utilsLogStore
+	accessLog    io.Writer // nil = no access log (see access_log.go)
 
 	// Background reconcile (HPC mode only): the ticker runs SchedulerProbe
 	// periodically so the frontend list endpoint is a pure DB read.
@@ -113,7 +115,7 @@ func NewServerWithAssets(be backend.Backend, cfg *config.GlobalConfig, assetsDir
 }
 
 func (s *Server) Handler() http.Handler {
-	return recoverMiddleware(corsMiddleware(versionGateMiddleware(s.mux)))
+	return accessLogMiddleware(s.accessLog, recoverMiddleware(corsMiddleware(versionGateMiddleware(s.mux))))
 }
 
 // versionGateMiddleware is the client-version guardrail: a runq client that
@@ -277,6 +279,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/projects/{name}/rename", s.handleRenameProject)
 	s.mux.HandleFunc("POST /api/v1/projects/{name}/archive", s.handleArchiveProject)
 	s.mux.HandleFunc("POST /api/v1/projects/{name}/unarchive", s.handleUnarchiveProject)
+	s.mux.HandleFunc("POST /api/v1/projects/{name}/sync", s.handleSyncProject)
 
 	// ── §5.4 Jobs（提交族 = plan → preview → submit，选项进 body）──────
 	s.mux.HandleFunc("POST /api/v1/jobs/plan", s.handlePlanJob) // 合并 dry-run + resolve-note
@@ -616,6 +619,38 @@ func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": fmt.Sprintf("project %q renamed to %q", oldName, newName),
 	})
+}
+
+// handleSyncProject performs an explicit project fan-out. source_target is a
+// one-shot truth override and is never persisted; an empty destination_target
+// mirrors to every other target declared by the project.
+func (s *Server) handleSyncProject(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeErrorStatus(w, http.StatusBadRequest, fmt.Errorf("project name is required"))
+		return
+	}
+	var body struct {
+		SourceTarget      string `json:"source_target"`
+		DestinationTarget string `json:"destination_target"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErrorStatus(w, http.StatusBadRequest, err)
+		return
+	}
+	syncer, ok := s.backend.(interface {
+		SyncProject(context.Context, string, string, string) ([]project.SyncResult, error)
+	})
+	if !ok {
+		writeError(w, fmt.Errorf("project sync: %w", backend.ErrNotSupported))
+		return
+	}
+	results, err := syncer.SyncProject(r.Context(), name, strings.TrimSpace(body.SourceTarget), strings.TrimSpace(body.DestinationTarget))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
 // targetScopedLister is MultiBackend's per-target list capability — the CLI's

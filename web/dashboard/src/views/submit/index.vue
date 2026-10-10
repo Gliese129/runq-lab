@@ -193,7 +193,8 @@ async function selectProject(name: string, preserveRows = false) {
   try {
     const cfg = await projectsApi.get(name)
     applyProjectConfig(cfg)
-    // The project's pinned target is where it submits (registry fact).
+    // Start on the source target; the identity bar may choose any declared
+    // destination and submit will sync the allow-listed tree first.
     target.value = cfg.target || config.currentTarget
     await refreshParamsFromProject(cfg)
   } catch {
@@ -395,6 +396,10 @@ async function submit(forceSkipPreflight = false) {
   submitting.value = true
   submitError.value = ''
   try {
+    const sourceTarget = newProject.source?.target || target.value
+    if (target.value !== sourceTarget) {
+      snack.info(t('submit.sync_notice', { source: sourceTarget, target: target.value }))
+    }
     const res = await jobsApi.submit(buildJobConfig(), {
       preflightEnabled: preflightEnabled.value,
       forceSkipPreflight,

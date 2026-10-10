@@ -108,6 +108,9 @@ func runJobResume(cmd *cobra.Command, args []string) error {
 func init() {
 	jobLsCmd.Flags().StringP("target", "t", "", "Filter jobs by compute target")
 	jobCmd.AddCommand(jobLsCmd)
+	// Output is always JSON; --json is accepted for parity with ps/status/kill
+	// so scripted callers can pass it uniformly.
+	jobShowCmd.Flags().Bool("json", true, "output raw JSON (always on; accepted for parity)")
 	jobCmd.AddCommand(jobShowCmd)
 	jobCmd.AddCommand(jobKillCmd)
 	jobCmd.AddCommand(jobPauseCmd)

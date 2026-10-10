@@ -50,6 +50,10 @@ func (l *LocalFS) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(path, perm)
 }
 
+// Remove is an optional FS extension used by project sync to delete stale
+// allow-listed files without exposing a broad recursive-delete primitive.
+func (l *LocalFS) Remove(path string) error { return os.Remove(path) }
+
 // ── Command ──
 
 func (l *LocalFS) Exec(ctx context.Context, cmd string, args ...string) (stdout, stderr []byte, exitCode int, err error) {

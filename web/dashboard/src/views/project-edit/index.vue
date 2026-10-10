@@ -91,6 +91,27 @@
             <v-icon size="12">mdi-server</v-icon>
             {{ t('projectEdit.home_target') }}: <code>{{ homeTarget }}</code>
           </div>
+          <v-select
+            v-model="projectTargets"
+            :items="config.targets.map(tgt => tgt.name)"
+            :label="t('projectEdit.sync_targets')"
+            :hint="t('projectEdit.sync_targets_hint')"
+            multiple chips closable-chips persistent-hint
+            variant="outlined" density="compact" class="mt-3"
+          />
+          <div v-if="!isCreating && projectTargets.length > 1" class="d-flex align-center ga-2 mt-2">
+            <v-select
+              v-model="forceSourceTarget"
+              :items="projectTargets"
+              :label="t('projectEdit.force_source')"
+              hide-details variant="outlined" density="compact"
+            />
+            <v-btn
+              color="warning" variant="tonal" size="small"
+              :loading="syncing" :disabled="!forceSourceTarget || targetsChanged"
+              @click="forceSync"
+            >{{ t('projectEdit.force_sync') }}</v-btn>
+          </div>
         </section>
 
         <!-- ── Source ── -->
@@ -365,6 +386,10 @@ const isCreating = computed(() => !props.project)
 // script parse, .env detection, conda envs and the file browser must read
 // the machine the project lives on. Create mode picks explicitly.
 const createTarget = ref('')
+const projectTargets = ref<string[]>([])
+const baselineTargets = ref('[]')
+const forceSourceTarget = ref('')
+const syncing = ref(false)
 const homeTarget = computed(() =>
   isCreating.value
     ? (createTarget.value || config.currentTarget)
@@ -406,11 +431,13 @@ const baselineParams = ref('[]')
 function markClean() {
   baseline.value = fieldSnapshot()
   baselineParams.value = JSON.stringify(form.params)
+  baselineTargets.value = JSON.stringify(projectTargets.value)
 }
 function fieldChanged(k: FieldKey): boolean {
   return String(form[k] ?? '') !== baseline.value[k]
 }
 const paramsChanged = computed(() => JSON.stringify(form.params) !== baselineParams.value)
+const targetsChanged = computed(() => JSON.stringify(projectTargets.value) !== baselineTargets.value)
 
 const FIELD_LABEL_KEYS: Record<FieldKey, string> = {
   name: 'projectEdit.field_name',
@@ -429,6 +456,7 @@ const changedLabels = computed(() => {
   const out: string[] = []
   for (const k of FIELD_KEYS) if (fieldChanged(k)) out.push(t(FIELD_LABEL_KEYS[k]))
   if (paramsChanged.value) out.push(t('projectEdit.field_params'))
+  if (targetsChanged.value) out.push(t('projectEdit.sync_targets'))
   return [...new Set(out)]
 })
 const dirty = computed(() => changedLabels.value.length > 0)
@@ -448,7 +476,7 @@ const RAIL_IDS = ['identity', 'source', 'environment', 'defaults', 'params'] as 
 function secId(s: string): string { return `pe-sec-${s}` }
 const activeSection = ref(secId('identity'))
 const railSections = computed(() => [
-  { id: secId('identity'), label: t('projectEdit.section_identity'), changed: fieldChanged('name') },
+  { id: secId('identity'), label: t('projectEdit.section_identity'), changed: fieldChanged('name') || targetsChanged.value },
   { id: secId('source'), label: t('projectEdit.section_source'), changed: fieldChanged('workDir') || fieldChanged('cmd') || fieldChanged('setupCmd') },
   { id: secId('environment'), label: t('projectEdit.section_environment'), changed: fieldChanged('envText') || fieldChanged('envType') || fieldChanged('envPath') || fieldChanged('envName') },
   { id: secId('defaults'), label: t('projectEdit.section_defaults'), changed: fieldChanged('gpus') || fieldChanged('maxRetry') || fieldChanged('jobName') },
@@ -506,6 +534,8 @@ onBeforeRouteLeave(async () => {
 onMounted(async () => {
   if (!props.project) {
     createTarget.value = config.currentTarget
+    projectTargets.value = [config.currentTarget]
+    forceSourceTarget.value = config.currentTarget
     return
   }
   try {
@@ -519,6 +549,8 @@ onMounted(async () => {
 
 function applyProjectConfig(cfg: ProjectConfig) {
   source.value = cfg
+  projectTargets.value = [...(cfg.targets?.length ? cfg.targets : [cfg.target || config.currentTarget])]
+  forceSourceTarget.value = cfg.target || projectTargets.value[0] || ''
   form.name = cfg.project_name
   form.workDir = cfg.working_dir
   form.cmd = cfg.command_template
@@ -571,6 +603,7 @@ async function save() {
   try {
     const payload = buildProjectPayload(form, source.value)
     if (isCreating.value) payload.target = homeTarget.value
+    payload.targets = [...new Set([homeTarget.value, ...projectTargets.value])]
     const name = form.name.trim()
     if (isCreating.value) {
       await projectsApi.create(payload)
@@ -586,6 +619,38 @@ async function save() {
     form.error = e?.message || t('common.error')
   } finally {
     saving.value = false
+  }
+}
+
+watch(createTarget, target => {
+  if (target && !projectTargets.value.includes(target)) projectTargets.value.unshift(target)
+  forceSourceTarget.value = target
+})
+watch(projectTargets, targets => {
+  const sourceTarget = homeTarget.value
+  if (sourceTarget && !targets.includes(sourceTarget)) projectTargets.value = [sourceTarget, ...targets]
+  if (!targets.includes(forceSourceTarget.value)) forceSourceTarget.value = sourceTarget
+}, { deep: true })
+
+async function forceSync() {
+  if (!props.project || !forceSourceTarget.value) return
+  const ok = await confirm.confirm({
+    title: t('projectEdit.force_sync'),
+    body: t('projectEdit.force_sync_confirm', { target: forceSourceTarget.value }),
+    confirmText: t('projectEdit.force_sync'),
+    danger: true,
+  })
+  if (!ok) return
+  syncing.value = true
+  try {
+    const { results } = await projectsApi.sync(props.project, forceSourceTarget.value)
+    const copied = results.reduce((n, result) => n + result.copied, 0)
+    const deleted = results.reduce((n, result) => n + result.deleted, 0)
+    snack.success(t('projectEdit.sync_done', { targets: results.length, copied, deleted }))
+  } catch (e: any) {
+    form.error = e?.message || t('common.error')
+  } finally {
+    syncing.value = false
   }
 }
 

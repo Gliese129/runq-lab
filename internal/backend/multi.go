@@ -54,6 +54,9 @@ type MultiBackend struct {
 	// (RQ-65); kept here so lanes added at runtime get the same wiring
 	// assembly-time lanes got.
 	registry *project.Registry
+	// projectSyncMu serializes project-tree mirrors. A submit must never read
+	// a destination while another fan-out is halfway through replacing it.
+	projectSyncMu sync.Mutex
 }
 
 // BeginRoutingUpdate excludes routed operations while the reconciler changes
@@ -1322,11 +1325,154 @@ func (m *MultiBackend) ResumeJob(ctx context.Context, jobID string) error {
 func (m *MultiBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts SubmitOptions) (string, int, error) {
 	m.routingMu.RLock()
 	defer m.routingMu.RUnlock()
-	be, err := m.resolve(opts.Target)
+	target := opts.Target
+	if target == "" {
+		target = m.defaultName()
+	}
+	be, err := m.resolve(target)
 	if err != nil {
 		return "", 0, err
 	}
+	projectCfg, err := m.registry.Get(ctx, cfg.Project)
+	if err != nil {
+		return "", 0, err
+	}
+	if err := m.validateProjectTargets(projectCfg); err != nil {
+		return "", 0, err
+	}
+	if err := m.validateProjectTarget(projectCfg, target); err != nil {
+		return "", 0, err
+	}
+	sourceTarget := projectSourceTarget(projectCfg)
+	if target != sourceTarget {
+		m.projectSyncMu.Lock()
+		_, syncErr := m.syncProjectTo(projectCfg, sourceTarget, target)
+		m.projectSyncMu.Unlock()
+		if syncErr != nil {
+			return "", 0, fmt.Errorf("sync project %q from %q to %q: %w", cfg.Project, sourceTarget, target, syncErr)
+		}
+	}
+	opts.Target = target
 	return be.SubmitJob(ctx, cfg, opts)
+}
+
+// SyncProject mirrors one project's allow-listed tree. sourceTarget is a
+// one-shot truth override; it never changes project.target. Empty destination
+// fans out to every other target declared by the project.
+func (m *MultiBackend) SyncProject(ctx context.Context, name, sourceTarget, destinationTarget string) ([]project.SyncResult, error) {
+	m.routingMu.RLock()
+	defer m.routingMu.RUnlock()
+	cfg, err := m.registry.Get(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.validateProjectTargets(cfg); err != nil {
+		return nil, err
+	}
+	if sourceTarget == "" {
+		sourceTarget = projectSourceTarget(cfg)
+	}
+	if err := m.validateProjectTarget(cfg, sourceTarget); err != nil {
+		return nil, fmt.Errorf("sync source: %w", err)
+	}
+
+	var destinations []string
+	if destinationTarget != "" {
+		if err := m.validateProjectTarget(cfg, destinationTarget); err != nil {
+			return nil, fmt.Errorf("sync destination: %w", err)
+		}
+		if destinationTarget != sourceTarget {
+			destinations = []string{destinationTarget}
+		}
+	} else {
+		for _, target := range cfg.Targets {
+			if target != sourceTarget {
+				destinations = append(destinations, target)
+			}
+		}
+	}
+
+	m.projectSyncMu.Lock()
+	defer m.projectSyncMu.Unlock()
+	results := make([]project.SyncResult, 0, len(destinations))
+	for _, destination := range destinations {
+		result, err := m.syncProjectTo(cfg, sourceTarget, destination)
+		if err != nil {
+			return results, fmt.Errorf("sync project %q from %q to %q: %w", name, sourceTarget, destination, err)
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func (m *MultiBackend) syncProjectTo(cfg *project.Config, sourceTarget, destinationTarget string) (project.SyncResult, error) {
+	result := project.SyncResult{SourceTarget: sourceTarget, DestinationTarget: destinationTarget}
+	source, err := m.TargetFS(sourceTarget)
+	if err != nil {
+		return result, err
+	}
+	destination, err := m.TargetFS(destinationTarget)
+	if err != nil {
+		return result, err
+	}
+	result.Copied, result.Deleted, err = project.Mirror(cfg.WorkingDir, source, cfg.WorkingDir, destination)
+	return result, err
+}
+
+func (m *MultiBackend) validateProjectTarget(cfg *project.Config, target string) error {
+	if target == "" {
+		return fmt.Errorf("project %q has no target", cfg.ProjectName)
+	}
+	if _, ok := m.get(target); !ok {
+		return fmt.Errorf("project %q references unknown target %q", cfg.ProjectName, target)
+	}
+	if len(cfg.Targets) == 0 {
+		sourceTarget := projectSourceTarget(cfg)
+		if target != sourceTarget {
+			return fmt.Errorf("project %q is pinned to target %q; add %q to project.targets to enable cross-target submit", cfg.ProjectName, sourceTarget, target)
+		}
+		return nil
+	}
+	for _, allowed := range cfg.Targets {
+		if allowed == target {
+			return nil
+		}
+	}
+	return fmt.Errorf("target %q is not declared in project %q targets", target, cfg.ProjectName)
+}
+
+func (m *MultiBackend) validateProjectTargets(cfg *project.Config) error {
+	if cfg.Target == "" {
+		cfg.Target = "local" // legacy empty target explicitly means local
+	}
+	seen := make(map[string]bool, len(cfg.Targets))
+	for _, target := range cfg.Targets {
+		if target == "" {
+			return fmt.Errorf("project targets cannot contain an empty name")
+		}
+		if seen[target] {
+			return fmt.Errorf("project target %q is duplicated", target)
+		}
+		seen[target] = true
+		if _, ok := m.get(target); !ok {
+			return fmt.Errorf("project references unknown target %q", target)
+		}
+	}
+	if len(cfg.Targets) > 0 && !seen[cfg.Target] {
+		return fmt.Errorf("project source target %q must also appear in targets", cfg.Target)
+	}
+	_, ok := m.get(cfg.Target)
+	if !ok {
+		return fmt.Errorf("project references unknown source target %q", cfg.Target)
+	}
+	return nil
+}
+
+func projectSourceTarget(cfg *project.Config) string {
+	if cfg.Target == "" {
+		return "local"
+	}
+	return cfg.Target
 }
 
 func (m *MultiBackend) DryRun(ctx context.Context, cfg job.JobConfig) (*DryRunResult, error) {
@@ -1501,6 +1647,12 @@ func (m *MultiBackend) CreateProject(ctx context.Context, cfg project.Config) er
 	if cfg.Target == "" {
 		cfg.Target = m.defaultName()
 	}
+	if len(cfg.Targets) == 0 {
+		cfg.Targets = []string{cfg.Target}
+	}
+	if err := m.validateProjectTargets(&cfg); err != nil {
+		return err
+	}
 	be, err := m.defaultBackendE()
 	if err != nil {
 		return err
@@ -1509,6 +1661,9 @@ func (m *MultiBackend) CreateProject(ctx context.Context, cfg project.Config) er
 }
 
 func (m *MultiBackend) UpdateProject(ctx context.Context, cfg project.Config) error {
+	if err := m.validateProjectTargets(&cfg); err != nil {
+		return err
+	}
 	be, err := m.defaultBackendE()
 	if err != nil {
 		return err

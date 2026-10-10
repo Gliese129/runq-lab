@@ -39,16 +39,30 @@
 
       <v-icon size="14" color="on-surface-variant">mdi-arrow-right</v-icon>
 
-      <!-- Target pill: READ-ONLY. A project's config pins its target
-           (registry fact) and cross-target projects are unsupported —
-           offering a picker here was a choice that could only ever be
-           wrong. The pill states the pin; changing it means editing the
-           project (create-time) or config.yaml. -->
-      <span class="pill pill--static d-flex align-center ga-2" :title="t('submit.target_pinned_hint')">
-        <v-icon size="15" color="on-surface-variant">mdi-server</v-icon>
-        <span class="text-body-2 font-weight-medium">{{ state.target }}</span>
-        <v-icon size="12" color="on-surface-variant">mdi-lock-outline</v-icon>
-      </span>
+      <!-- Target picker is constrained by project.targets. The project's
+           target remains the sync source; this chooses only the destination. -->
+      <v-menu location="bottom start" :disabled="allowedTargets.length <= 1">
+        <template #activator="{ props: menuProps }">
+          <button type="button" class="pill d-flex align-center ga-2" v-bind="menuProps">
+            <v-icon size="15" color="on-surface-variant">mdi-server</v-icon>
+            <span class="text-body-2 font-weight-medium">{{ state.target }}</span>
+            <v-icon v-if="allowedTargets.length > 1" size="12" color="on-surface-variant">mdi-chevron-down</v-icon>
+            <v-icon v-else size="12" color="on-surface-variant">mdi-lock-outline</v-icon>
+          </button>
+        </template>
+        <v-list density="compact">
+          <v-list-item
+            v-for="target in allowedTargets" :key="target"
+            :active="target === state.target" color="primary"
+            @click="state.target = target"
+          >
+            <v-list-item-title>{{ target }}</v-list-item-title>
+            <template #append>
+              <v-chip v-if="target === sourceTarget" size="x-small" variant="tonal">{{ t('submit.sync_source') }}</v-chip>
+            </template>
+          </v-list-item>
+        </v-list>
+      </v-menu>
 
       <v-spacer />
 
@@ -75,9 +89,7 @@
 <script setup lang="ts">
 // IdentityBar (RQ2-3 c2, kit ScreensSubmit) — project + target live in a
 // persistent bar instead of a wizard step; the CTA carries the task count.
-// The target pill is READ-ONLY by ruling: cross-target projects are
-// unsupported, so the project's pinned target is a fact, not a choice
-// (Phase 2 owns the placement model).
+// target is the submit destination; project.target remains the sync source.
 import { computed, inject } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -96,6 +108,11 @@ const { t } = useI18n()
 const router = useRouter()
 const prefs = usePreferences()
 const state = inject(SUBMIT_STATE_KEY)!
+const sourceTarget = computed(() => state.newProject.source?.target || state.target)
+const allowedTargets = computed(() => {
+  const declared = state.newProject.source?.targets
+  return declared?.length ? declared : [sourceTarget.value]
+})
 
 const sortedProjects = computed(() => {
   const list = state.matchedProjects.filter(p => !p.archived)
@@ -120,7 +137,4 @@ const sortedProjects = computed(() => {
   transition: var(--transition);
 }
 .pill:hover { border-color: rgb(var(--v-theme-primary)); }
-/* Read-only pill: no hover affordance — it is a fact, not a control. */
-.pill--static { cursor: default; }
-.pill--static:hover { border-color: rgb(var(--v-theme-outline-variant)); }
 </style>

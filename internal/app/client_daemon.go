@@ -117,6 +117,13 @@ func newClientDaemon(dataDir string, paths utils.DataDirPaths, logger *slog.Logg
 	// (the CLI socket needs it); TCP listening is what dashboard.enabled
 	// gates.
 	d.Dashboard = dashboard.NewServer(multiBe, storageCfg)
+	// access.log answers "which API surfaces are actually used, and how
+	// slow are they" (web vs CLI). Best-effort: a failure only loses the log.
+	if al, aerr := dashboard.OpenRotatingFile(filepath.Join(paths.LogDir, "access.log")); aerr != nil {
+		logger.Warn("access log disabled", "error", aerr)
+	} else {
+		d.Dashboard.SetAccessLog(al)
+	}
 
 	// Remote CLI forwards (remote_cli targets): a dedicated SSH connection
 	// per target keeps the runq client socket on the login node routed straight

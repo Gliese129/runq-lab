@@ -193,6 +193,18 @@ func (s *SSHFS) MkdirAll(path string, perm os.FileMode) (err error) {
 	return sc.MkdirAll(path)
 }
 
+// Remove is an optional FS extension used by project sync. It intentionally
+// removes one file at a time; project sync never gets a recursive delete.
+func (s *SSHFS) Remove(path string) (err error) {
+	s.conn.beginOp()
+	defer func() { s.conn.endOpErr(err) }()
+	sc, err := s.conn.getSFTP()
+	if err != nil {
+		return err
+	}
+	return sc.Remove(path)
+}
+
 // ── Command ─────────────────────────────────────────────────────────────────
 
 // Exec runs a remote command via an SSH session and returns stdout, stderr,

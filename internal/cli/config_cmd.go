@@ -124,7 +124,7 @@ func runConfigAdd(cmd *cobra.Command, args []string) error {
 	// Check for duplicate.
 	for _, t := range cfg.Targets {
 		if t.Name == name {
-			return fmt.Errorf("target %q already exists — use `runq config edit %s` to modify", name, name)
+			return fmt.Errorf("target %q already exists — use `runq target edit %s` to modify", name, name)
 		}
 	}
 
@@ -305,7 +305,7 @@ func runConfigSetTarget(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if !found {
-		return fmt.Errorf("target %q not found in config — see `runq config show`", name)
+		return fmt.Errorf("target %q not found in config — see `runq target ls`", name)
 	}
 
 	if persist {

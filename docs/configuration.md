@@ -15,6 +15,8 @@ Priority: CLI flag > job.yaml override > project.yaml default > built-in.
 
 ```yaml
 project_name: resnet50
+target: server-a                   # authoritative project filesystem
+targets: [server-a, server-b]      # allowed submit/sync destinations
 working_dir: /home/user/experiments/resnet50   # must exist at submit time
 command_template: python train.py {{args}}
 
@@ -66,6 +68,39 @@ resume:
 #   tags: [vision, baseline]
 #   mode: online
 ```
+
+### Cross-target project sync
+
+`target` is the project's single source of truth. `targets` declares every
+machine on which the project may run and must include `target`. Before a submit
+to another declared target, runq mirrors the project through the daemon using
+`<working_dir>/.rsync`; the target machines do not need network access to
+each other.
+
+`.rsync` is a whitelist in the style of `rsync --include-from=.rsync
+--exclude='*'`, with `!` rules for exclusions:
+
+```gitignore
+/src/**
+/configs/**.yaml
+/data/
+/data/*.jsonl
+/train.py
+!/src/private/
+!/configs/local.yaml
+```
+
+Blank lines and `#` comments are ignored. Patterns are relative to
+`working_dir`; `*`, `?`, and `**` are supported. As in rsync, an included
+directory pattern (`/data/`) only permits traversal — it does not select the
+files inside; use `/src/**` for a whole tree. Exclusions always win (unlike
+rsync's first-match order), and an excluded directory is never walked. Files
+selected by the whitelist are overwritten and stale selected files are
+deleted, while every other destination file is untouched. `.runq/` and `.git/`
+are never traversed. Symbolic links selected for sync are rejected explicitly.
+
+The dashboard can also perform a one-time forced fan-out from any target in the
+project's `targets` list. This does not change the configured source target.
 
 ### command_template placeholders
 
