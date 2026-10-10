@@ -201,7 +201,7 @@ func (fx cliFixture) configPath() string {
 func (fx cliFixture) startDaemon() (chan error, *bytes.Buffer, func()) {
 	fx.t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, fx.bin, "daemon", "start")
+	cmd := exec.CommandContext(ctx, fx.bin, "serve")
 	cmd.Dir = fx.root
 	cmd.Env = fx.env
 	output := &bytes.Buffer{}
