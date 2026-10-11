@@ -88,6 +88,9 @@ type TaskView struct {
 	MaxRetry    int                `json:"max_retry"`
 	GPUs        string             `json:"gpus,omitempty"`
 	WandbRunID  string             `json:"wandb_run_id,omitempty"`
+	// Links the task reported via SDK runq.link(name, url), e.g. "wandb" →
+	// its W&B run page. Name → URL.
+	Links map[string]string `json:"links,omitempty"`
 	// HPC-specific; zero-valued in daemon mode. Consumers check
 	// Capabilities.StateModel == "poll" before rendering.
 	ExternalID   string `json:"external_id,omitempty"`

@@ -54,6 +54,25 @@ runq.seed                  # deterministic per-task seed (SHA-256 of task_id, mo
 ctx.wandb_like_cfg         # dict to splat into wandb.init(...) — SDK never imports wandb
 ```
 
+### W&B: `ctx.wandb_like_cfg` + `runq.link`
+
+```python
+import wandb
+run = wandb.init(**ctx.wandb_like_cfg)      # override any key: {**ctx.wandb_like_cfg, "id": my_id}
+runq.link("wandb", run.url)                  # runq shows the run on the task (CLI + dashboard)
+```
+
+`wandb_like_cfg` fills: `project` / `entity` / `tags` / `mode` from the
+project's `wandb:` block (falling back to the runq project name), `id` =
+task id with `resume="allow"` so a retried task continues the same run,
+`name` from the swept values, `group` from the job note, `config` = params.
+Only rank 0 reports: when `RANK > 0` it sets `mode="disabled"`, so a
+multi-GPU task is one run (W&B's system monitor on rank 0 covers every GPU
+on that node; multi-node runs only show the first node).
+
+`runq.link(name, url)` records any external page for the task (last write
+per name wins); it works whatever run id your script chooses.
+
 ### Typed parameters with `@runq.dataclass`
 
 ```python
@@ -132,6 +151,7 @@ with runq.utils.atomic_write("output.json") as f:
 | `params.json` | runq (at submit) | SDK `context()` |
 | `metrics.jsonl` | SDK `log_metric` / `report` | dashboard |
 | `results.jsonl` | SDK `record` | `runq results`, dashboard |
+| `links.json` | SDK `link` | `runq task show`, dashboard |
 | `checkpoints/` | your training script | your resume code |
 
 ## Installation

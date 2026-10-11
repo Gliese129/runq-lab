@@ -846,6 +846,7 @@ func (b *SSHBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, erro
 	}
 	keys, _ := b.store.MetricKeys(ctx, jobID) // summaries: exact, remote-safe
 	detail := BuildJobDetail(*j, tasks, keys)
+	attachTaskLinks(ctx, b.store, detail.Tasks)
 	if cfg, err := b.reg.Get(ctx, j.ProjectName); err == nil && cfg.Wandb != nil {
 		detail.Wandb = &WandbInfo{
 			Entity:  cfg.Wandb.Entity,
@@ -952,7 +953,9 @@ func (b *SSHBackend) GetTask(ctx context.Context, taskID string) (*TaskView, err
 	if err != nil {
 		return nil, err
 	}
-	return &view, nil
+	views := []TaskView{view}
+	attachTaskLinks(ctx, b.store, views)
+	return &views[0], nil
 }
 
 // FS exposes this lane's filesystem (LocalFS or SSHFS — the lane doesn't

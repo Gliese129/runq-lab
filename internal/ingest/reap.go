@@ -265,7 +265,7 @@ func scanIncremental(fsys rfs.FS, path string, markSize, markOffset int64, final
 }
 
 // ReapIncremental ingests the bytes appended to the task's SDK output files
-// (metrics.jsonl / results.jsonl) since the last pass, each
+// (metrics.jsonl / results.jsonl, plus the small links.json) since the last pass, each
 // under its own (size, parsed_offset) mark. final marks the terminal pass:
 // tails are consumed and every mark is frozen — settled tasks are never
 // stat'ed again. Per-file failures don't block the other files; errors are
@@ -279,7 +279,8 @@ func ReapIncremental(ctx context.Context, st *store.Store, target Target, final 
 	var res Result
 	merr := reapMetricsFile(ctx, st, target, fsys, final, &res)
 	rerr := reapResultsFile(ctx, st, target, fsys, final, &res)
-	return res, errors.Join(merr, rerr)
+	lerr := reapLinksFile(ctx, st, target, fsys, final)
+	return res, errors.Join(merr, rerr, lerr)
 }
 
 func reapMetricsFile(ctx context.Context, st *store.Store, target Target, fsys rfs.FS, final bool, res *Result) error {
@@ -347,4 +348,57 @@ func reapResultsFile(ctx context.Context, st *store.Store, target Target, fsys r
 	}
 	res.ResultCount += c.parsed
 	return nil
+}
+
+// maxLinksFileBytes bounds links.json: it holds a handful of URLs, so
+// anything larger is misuse and is skipped rather than slurped over SSH.
+const maxLinksFileBytes = 64 << 10
+
+// reapLinksFile ingests <task_dir>/links.json (SDK runq.link) when its size
+// changed. The file is a whole JSON object rewritten atomically by the SDK,
+// so a size-gated full read is exact; a parse failure leaves the old rows
+// (the SDK may be mid-rename) and retries next pass.
+func reapLinksFile(ctx context.Context, st *store.Store, target Target, fsys rfs.FS, final bool) error {
+	mark, err := st.GetFileIngestMark(ctx, target.TaskID, store.IngestFileLinks)
+	if err != nil {
+		return err
+	}
+	if mark.Final {
+		return nil
+	}
+	path := workspace.LinksPath(target.Dir)
+	info, err := fsys.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		if final {
+			_ = st.SetFileIngestMark(ctx, target.TaskID, store.IngestFileLinks, store.FileIngestMark{Final: true})
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Size() == mark.Size && !final {
+		return nil
+	}
+	if info.Size() > maxLinksFileBytes {
+		logger.Warnf("reap %s: %d bytes exceeds the links cap; skipped", path, info.Size())
+		return st.SetFileIngestMark(ctx, target.TaskID, store.IngestFileLinks, store.FileIngestMark{Size: info.Size(), Final: final})
+	}
+	data, err := fsys.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	raw := map[string]any{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		logger.Warnf("reap %s: parse failed: %v", path, err)
+		return nil
+	}
+	links := make(map[string]string, len(raw))
+	for name, v := range raw {
+		if url, ok := v.(string); ok && name != "" && url != "" {
+			links[name] = url
+		}
+	}
+	return st.ApplyLinksIngest(ctx, target.TaskID, links,
+		store.FileIngestMark{Size: int64(len(data)), Offset: int64(len(data)), Final: final})
 }

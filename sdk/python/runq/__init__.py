@@ -26,6 +26,7 @@ from ._config import dataclass
 from ._context import Context, ParamDict, context, get_ctx
 from ._events import log_metric
 from ._exceptions import RunqError
+from ._link import link
 from ._log_group import log_group
 from ._record import record
 from ._report import report
@@ -45,6 +46,8 @@ __all__ = [  # noqa: RUF022
     "report",
     # Results (bounded facts, stored in full — see _record.py)
     "record",
+    # External links shown on the task (e.g. the W&B run page)
+    "link",
     # Exceptions
     "RunqError",
 ]

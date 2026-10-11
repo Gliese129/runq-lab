@@ -870,6 +870,7 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 	}
 	keys, _ := m.store.MetricKeys(ctx, jobID)
 	detail := BuildJobDetail(*j, tasks, keys)
+	attachTaskLinks(ctx, m.store, detail.Tasks)
 	if cfg, err := m.registry.Get(ctx, j.ProjectName); err == nil && cfg.Wandb != nil {
 		detail.Wandb = &WandbInfo{
 			Entity:  cfg.Wandb.Entity,

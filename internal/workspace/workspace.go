@@ -34,6 +34,12 @@ func ResultsPath(dir string) string {
 	return path.Join(dir, "results.jsonl")
 }
 
+// LinksPath is the SDK's runq.link sink: a small JSON object name → URL
+// (e.g. the task's W&B run), rewritten atomically on every call.
+func LinksPath(dir string) string {
+	return path.Join(dir, "links.json")
+}
+
 // PyramidPath is the multi-resolution metrics index built next to
 // metrics.jsonl by `runq metrics-index build` (pyramid.go, this package).
 func PyramidPath(dir string) string {

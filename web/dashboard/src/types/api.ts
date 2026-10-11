@@ -84,6 +84,8 @@ export interface TaskView {
   max_retry: number
   gpus?: string
   wandb_run_id?: string
+  /** Links the task reported via SDK runq.link(name, url); "wandb" → its run page. */
+  links?: Record<string, string>
   /** HPC-specific; empty in daemon mode. Check caps.state_model == 'poll'. */
   external_id?: string
   status_source?: string

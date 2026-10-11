@@ -122,6 +122,16 @@ CREATE TABLE IF NOT EXISTS result_records (
 CREATE INDEX IF NOT EXISTS idx_result_records_job  ON result_records(job_id);
 CREATE INDEX IF NOT EXISTS idx_result_records_task ON result_records(task_id);
 
+-- External links a task reported via SDK runq.link(name, url) — e.g. its
+-- W&B run. Ingested from <task_dir>/links.json (small JSON object); the
+-- file stays the source of truth and rows are replaced wholesale.
+CREATE TABLE IF NOT EXISTS task_links (
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    name    TEXT NOT NULL,
+    url     TEXT NOT NULL,
+    PRIMARY KEY (task_id, name)
+);
+
 -- Incremental ingest marks for the post-split SDK files (results.jsonl;
 -- "events" rows from pre-v0.6.0 are inert) — same (size, parsed_offset, final) semantics as
 -- metrics_ingest, generalized to one row per (task, file) so a future

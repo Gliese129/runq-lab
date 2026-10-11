@@ -93,8 +93,8 @@
             <td v-if="hasHPC" class="text-on-surface-variant">{{ task.native_state || '—' }}</td>
             <td v-if="hasHPC" class="text-on-surface-variant">{{ task.queue || '—' }}</td>
             <td v-if="hasWandb">
-              <v-btn v-if="task.wandb_run_id" size="x-small" variant="text" icon
-                :href="wandbRunURL(task.wandb_run_id)" target="_blank" @click.stop
+              <v-btn v-if="wandbHref(task)" size="x-small" variant="text" icon
+                :href="wandbHref(task)" target="_blank" rel="noopener" @click.stop
                 :aria-label="t('job.wandb_open')" :title="t('job.wandb_open')"
               ><v-icon size="14">mdi-open-in-new</v-icon></v-btn>
             </td>
@@ -144,7 +144,7 @@ const props = withDefaults(defineProps<{
 
 defineEmits<{ 'kill-task': [id: string]; 'retry-task': [id: string]; 'click-task': [id: string] }>()
 
-const hasWandb = computed(() => !!props.wandb)
+const hasWandb = computed(() => !!props.wandb || props.tasks.some(task => !!task.links?.wandb))
 const hasHPC = computed(() => props.tasks.some(task => !!task.external_id))
 
 // ── Column visibility (persisted per job) ──
@@ -240,9 +240,12 @@ const sortedTasks = computed(() => {
 })
 
 // ── Helpers ──
-function wandbRunURL(runId: string): string {
-  if (props.wandb?.base_url) return `${props.wandb.base_url}/runs/${runId}`
-  return `https://wandb.ai/runs/${runId}`
+// The URL the task reported (runq.link) wins; a bare run id is only
+// linkable when the project's wandb config supplies entity/project.
+function wandbHref(task: TaskView): string | undefined {
+  if (task.links?.wandb) return task.links.wandb
+  if (task.wandb_run_id && props.wandb?.base_url) return `${props.wandb.base_url}/runs/${task.wandb_run_id}`
+  return undefined
 }
 
 </script>

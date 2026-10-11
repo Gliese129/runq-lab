@@ -3,11 +3,15 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 // IngestFileResults identifies results.jsonl in file_ingest marks. (The
 // "events" file id is gone with lifecycle-event ingest; old rows are inert.)
 const IngestFileResults = "results"
+
+// IngestFileLinks identifies links.json (SDK runq.link) in file_ingest marks.
+const IngestFileLinks = "links"
 
 // MaxResultRecordsPerTask caps how many result records one task may ingest.
 // The cap is a MISUSE guard, not capacity planning: the record contract is
@@ -185,4 +189,63 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// ApplyLinksIngest replaces a task's links with the given set and advances
+// the links.json mark, atomically.
+func (s *Store) ApplyLinksIngest(ctx context.Context, taskID string, links map[string]string, mark FileIngestMark) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_links WHERE task_id = ?`, taskID); err != nil {
+		return err
+	}
+	for name, url := range links {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO task_links (task_id, name, url) VALUES (?, ?, ?)`, taskID, name, url); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, upsertFileIngestSQL,
+		taskID, IngestFileLinks, mark.Size, mark.Offset, boolToInt(mark.Final), mark.Dropped); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// TaskLinks batch-fetches links for the given task IDs: task → name → url.
+func (s *Store) TaskLinks(ctx context.Context, taskIDs []string) (map[string]map[string]string, error) {
+	out := map[string]map[string]string{}
+	const chunk = 500
+	for start := 0; start < len(taskIDs); start += chunk {
+		ids := taskIDs[start:min(start+chunk, len(taskIDs))]
+		ph := strings.Repeat("?,", len(ids)-1) + "?"
+		args := make([]any, len(ids))
+		for i, id := range ids {
+			args[i] = id
+		}
+		rows, err := s.db.QueryContext(ctx,
+			`SELECT task_id, name, url FROM task_links WHERE task_id IN (`+ph+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id, name, url string
+			if err := rows.Scan(&id, &name, &url); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if out[id] == nil {
+				out[id] = map[string]string{}
+			}
+			out[id][name] = url
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }

@@ -135,3 +135,55 @@ def test_wandb_like_metric_splat_pattern(clean_env, tmp_path, monkeypatch):
     merged = {**ctx.wandb_like_metric, "lr": 1e-4, "loss": 999.0}
     # User's extras + override should win on collision.
     assert merged == {"loss": 999.0, "lr": 1e-4}
+
+
+# ---- project wandb config, resume id, rank gating, link ----------
+
+def _hpc_task_env(monkeypatch, tmp_path, task_id="tk1"):
+    monkeypatch.setenv("RUNQ_TASK_ID", task_id)
+    monkeypatch.setenv("RUNQ_JOB_ID", "jb1")
+    monkeypatch.setenv("RUNQ_PROJECT_NAME", "runq-proj")
+    monkeypatch.setenv("RUNQ_TASK_DIR", str(tmp_path))
+    monkeypatch.setenv("RUNQ_METRICS_FILE", str(tmp_path / "metrics.jsonl"))
+    monkeypatch.setenv("RUNQ_NO_DAEMON", "1")
+
+
+def test_wandb_like_cfg_reads_project_wandb_config(clean_env, tmp_path, monkeypatch):
+    import json
+    _hpc_task_env(monkeypatch, tmp_path)
+    cfg_file = tmp_path / "wandb_config.json"
+    cfg_file.write_text(json.dumps({"project": "jp-rl", "entity": "lab", "tags": ["c0"], "mode": "online"}))
+    monkeypatch.setenv("RUNQ_WANDB_CONFIG_FILE", str(cfg_file))
+    monkeypatch.setenv("RUNQ_SWEEP_KEYS", "lr,c0")
+    cfg = runq.context().wandb_like_cfg
+    assert cfg["project"] == "jp-rl"            # project config beats runq project name
+    assert cfg["entity"] == "lab"
+    assert cfg["tags"] == ["c0", "lr"]          # deduped merge with sweep keys
+    assert cfg["mode"] == "online"
+    assert cfg["id"] == "tk1" and cfg["resume"] == "allow"
+
+
+def test_wandb_like_cfg_disables_non_zero_rank(clean_env, tmp_path, monkeypatch):
+    _hpc_task_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("RANK", "1")
+    assert runq.context().wandb_like_cfg["mode"] == "disabled"
+
+
+def test_wandb_like_cfg_omits_entity_without_config(clean_env, tmp_path, monkeypatch):
+    _hpc_task_env(monkeypatch, tmp_path)
+    cfg = runq.context().wandb_like_cfg
+    assert "entity" not in cfg and "mode" not in cfg
+    assert cfg["project"] == "runq-proj"
+
+
+def test_link_writes_links_json_and_merges(clean_env, tmp_path, monkeypatch):
+    import json
+    _hpc_task_env(monkeypatch, tmp_path)
+    runq.context()
+    runq.link("wandb", "https://wandb.ai/lab/jp-rl/runs/abc")
+    runq.link("tb", "http://tb/1")
+    runq.link("wandb", "https://wandb.ai/lab/jp-rl/runs/def")   # last write wins
+    data = json.loads((tmp_path / "links.json").read_text())
+    assert data == {"tb": "http://tb/1", "wandb": "https://wandb.ai/lab/jp-rl/runs/def"}
+    with pytest.raises(ValueError):
+        runq.link("", "x")

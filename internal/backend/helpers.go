@@ -350,6 +350,25 @@ func taskLogGrepViaExec(ctx context.Context, fsys rfs.FS, row store.TaskRow, pat
 	return out, nil
 }
 
+// attachTaskLinks fills views[i].Links from the store in one batched query.
+// Best-effort: links are decoration, a lookup failure never fails the view.
+func attachTaskLinks(ctx context.Context, st *store.Store, views []TaskView) {
+	if st == nil || len(views) == 0 {
+		return
+	}
+	ids := make([]string, len(views))
+	for i := range views {
+		ids[i] = views[i].ID
+	}
+	links, err := st.TaskLinks(ctx, ids)
+	if err != nil {
+		return
+	}
+	for i := range views {
+		views[i].Links = links[views[i].ID]
+	}
+}
+
 // listTasksFromStore is the shared ListTasks implementation: every lane and
 // the Multi router sit on the same store (tasks.target column), so the flat
 // table is one SQL query regardless of who serves it.
@@ -373,6 +392,7 @@ func listTasksFromStore(ctx context.Context, st *store.Store, opts TaskListOptio
 	for _, r := range rows {
 		views = append(views, BuildTaskView(r))
 	}
+	attachTaskLinks(ctx, st, views)
 	return views, total, nil
 }
 

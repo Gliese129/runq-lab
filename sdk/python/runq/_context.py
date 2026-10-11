@@ -71,6 +71,8 @@ class Context:
     # derived from metrics_file rather than env-injected, so an older
     # daemon that only sets RUNQ_METRICS_FILE still yields the right path.
     results_file: Path | None = None
+    # links.json (runq.link sink: name → URL, e.g. the W&B run page).
+    links_file: Path | None = None
 
     # daemon-only fields
     socket_path: str | None = None
@@ -115,28 +117,28 @@ class Context:
 
     @property
     def wandb_like_cfg(self) -> dict:
-        """Kwargs dict for ``wandb.init(**ctx.wandb_like_cfg)``. See F9/P6.
-
-        When ``RUNQ_SWEEP_KEYS`` is set (P6 W&B integration), the run
-        name is built from sweep parameter key=value pairs so each task
-        in a sweep is immediately distinguishable in the W&B UI.
-
-        When ``RUNQ_JOB_NOTE`` is set, it becomes the W&B group — giving
-        the user's note semantics as the grouping label instead of a raw
-        job id.
+        """Kwargs dict for ``wandb.init(**ctx.wandb_like_cfg)``.
 
         Shape::
 
             {
-                "project": self.project or "runq",
+                "project": <project wandb.project> or runq project or "runq",
+                "entity":  <project wandb.entity>          # only when configured
+                "tags":    <project wandb.tags> + sweep keys
+                "mode":    <project wandb.mode>; "disabled" on RANK > 0
+                "id":      task_id,  "resume": "allow",    # retries continue one run
                 "name":    "lr=0.01_bs=32" or f"{job_id}/{task_id}",
-                "group":   job_note or job_id or None,
-                "config":  dict(self.params),
+                "group":   job note or job_id,
+                "config":  dict(params),
             }
 
-        ``entity`` / ``mode`` are intentionally NOT included — those
-        come from the user's ``WANDB_*`` env / ``~/.netrc`` and runq
-        won't second-guess.
+        Project-level ``wandb:`` settings arrive via ``RUNQ_WANDB_CONFIG_FILE``.
+        Only rank 0 reports (``RANK`` unset counts as 0), so a multi-GPU task
+        is one run; W&B's system monitor on rank 0 covers every GPU on that
+        node. Every key is a default — pass your own to override, e.g.
+        ``wandb.init(**{**ctx.wandb_like_cfg, "id": my_id})``. Then call
+        ``runq.link("wandb", run.url)`` so runq shows the run on the task.
+        The SDK never imports wandb.
         """
         sweep_keys_raw = os.environ.get("RUNQ_SWEEP_KEYS", "")
         sweep_keys = [k.strip() for k in sweep_keys_raw.split(",") if k.strip()] if sweep_keys_raw else []
@@ -149,13 +151,27 @@ class Context:
             name = f"{self.job_id}/{self.task_id}" if self.job_id else self.task_id
 
         group = job_note if job_note else (self.job_id or None)
+        project_cfg = _load_wandb_project_cfg()
 
-        return {
-            "project": self.project or "runq",
+        cfg: dict[str, Any] = {
+            "project": project_cfg.get("project") or self.project or "runq",
             "name": name,
             "group": group,
+            "id": self.task_id,
+            "resume": "allow",
             "config": dict(self.params or {}),
         }
+        if project_cfg.get("entity"):
+            cfg["entity"] = project_cfg["entity"]
+        tags = [t for t in project_cfg.get("tags") or [] if isinstance(t, str)]
+        tags += [k for k in sweep_keys if k not in tags]
+        if tags:
+            cfg["tags"] = tags
+        if project_cfg.get("mode"):
+            cfg["mode"] = project_cfg["mode"]
+        if _int_or_zero(os.environ.get("RANK")) > 0:
+            cfg["mode"] = "disabled"
+        return cfg
 
     @property
     def wandb_like_metric(self) -> dict:
@@ -173,6 +189,27 @@ class Context:
         # from _context at module load).
         from . import _report
         return _report.latest_report_metrics()
+
+
+# ---- wandb helpers ----
+
+def _load_wandb_project_cfg() -> dict:
+    """Project-level ``wandb:`` block (runq writes it per task); {} if absent."""
+    path = os.environ.get("RUNQ_WANDB_CONFIG_FILE")
+    if not path:
+        return {}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _int_or_zero(raw: str | None) -> int:
+    try:
+        return int(raw) if raw else 0
+    except ValueError:
+        return 0
 
 
 # ---- mode detection ----
@@ -261,6 +298,7 @@ def context() -> Context:
         checkpoint_dir: Path | None = None
         metrics_file: Path | None = Path.cwd() / "runq_metrics.jsonl"
         results_file: Path | None = Path.cwd() / "runq_results.jsonl"
+        links_file: Path | None = Path.cwd() / "runq_links.json"
         local_params = Path.cwd() / "params.json"
         params = _load_params(local_params) if local_params.exists() else {}
     else:
@@ -274,8 +312,9 @@ def context() -> Context:
             Path(env["RUNQ_METRICS_FILE"]) if env.get("RUNQ_METRICS_FILE") else None
         )
         # Siblings of metrics.jsonl (see Context field comment). The daemon's
-        # reap reads the same fixed names via workspace.ResultsPath/EventsPath.
+        # reap reads the same fixed names via workspace.ResultsPath/LinksPath.
         results_file = metrics_file.with_name("results.jsonl") if metrics_file else None
+        links_file = metrics_file.with_name("links.json") if metrics_file else None
         params_file = env.get("RUNQ_PARAMS_FILE")
         params = _load_params(Path(params_file)) if params_file else {}
 
@@ -288,6 +327,7 @@ def context() -> Context:
         checkpoint_dir=checkpoint_dir,
         metrics_file=metrics_file,
         results_file=results_file,
+        links_file=links_file,
         socket_path=env.get("RUNQ_SOCKET_PATH"),
         params=ParamDict(params),
         seed=int(hashlib.sha256(task_id.encode()).hexdigest(), 16) % (2**32),

@@ -122,13 +122,15 @@
           <span class="text-subtitle-2">{{ t('task.metrics') }}</span>
           <v-spacer />
           <v-btn
-            v-if="task.wandb_run_id"
+            v-for="link in taskLinks"
+            :key="link.name"
             size="x-small"
             variant="text"
-            :href="wandbRunURL(task.wandb_run_id)"
+            :href="link.url"
             target="_blank"
+            rel="noopener"
           >
-            <v-icon start size="14">mdi-open-in-new</v-icon> W&B
+            <v-icon start size="14">mdi-open-in-new</v-icon> {{ link.label }}
           </v-btn>
         </div>
         <div class="pa-3">
@@ -467,9 +469,18 @@ const sweptParams = computed(() => {
 
 const latestMetrics = computed(() => Object.entries(task.value?.metrics ?? {}))
 
-function wandbRunURL(runId: string): string {
-  return `${jobDetail.value?.wandb?.base_url ?? 'https://wandb.ai'}/runs/${runId}`
-}
+// External links: what the task reported via runq.link, plus the legacy
+// run-id link when the project's wandb config makes it resolvable.
+const taskLinks = computed(() => {
+  const view = task.value
+  if (!view) return []
+  const links: Record<string, string> = { ...view.links }
+  const base = jobDetail.value?.wandb?.base_url
+  if (!links.wandb && view.wandb_run_id && base) links.wandb = `${base}/runs/${view.wandb_run_id}`
+  return Object.entries(links)
+    .sort(([a], [b]) => (a === 'wandb' ? -1 : b === 'wandb' ? 1 : a.localeCompare(b)))
+    .map(([name, url]) => ({ name, url, label: name === 'wandb' ? 'W&B' : name }))
+})
 
 // ── Log activity (activity.tsv, cumulative columns): fetched when the
 // Log tab first shows; while the task is live it re-fetches at the

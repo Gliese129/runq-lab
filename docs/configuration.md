@@ -62,8 +62,8 @@ resume:
                                 # working_dir/.env — sourced at task start,
                                 # NEVER stored by runq; explicit environment: wins)
 
-# wandb:                        # optional; daemon writes wandb_config.json per
-#   project: my-experiment      # task and the SDK exposes it as ctx.wandb_cfg
+# wandb:                        # optional; runq writes wandb_config.json per
+#   project: my-experiment      # task; the SDK folds it into ctx.wandb_like_cfg
 #   entity: my-team
 #   tags: [vision, baseline]
 #   mode: online
