@@ -87,7 +87,7 @@ For automation:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Gliese129/runq-lab/main/install.sh \
-  | RUNQ_WITH_UI=1 RUNQ_VERSION=v0.5.0 sh
+  | RUNQ_WITH_UI=1 RUNQ_VERSION=v0.6.0rc1 sh
 ```
 
 | Env var | Effect |

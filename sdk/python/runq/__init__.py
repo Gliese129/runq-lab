@@ -52,7 +52,7 @@ __all__ = [  # noqa: RUF022
     "RunqError",
 ]
 
-__version__ = "0.6.0"
+__version__ = "0.6.0rc1"
 
 
 def __getattr__(name: str):
