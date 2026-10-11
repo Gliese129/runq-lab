@@ -10,7 +10,7 @@ reading them IS the schema reference (also see
 | See every job.yaml feature: grid × zip blocks, note, overrides | [`job.yaml`](./job.yaml) |
 | See every project.yaml feature: catalog, strict choices, env, resume | [`project.yaml`](./project.yaml) |
 | Run model × benchmark evals on an HPC cluster, each benchmark with its own walltime | [`hpc/`](./hpc/) |
-| A training script that runq init can scan and whose metrics feed `runq best` | [`test_train.py`](./test_train.py) |
+| A training script that runq init can scan and whose metrics feed the dashboard charts | [`test_train.py`](./test_train.py) |
 
 Quick start from zero (local GPU machine):
 

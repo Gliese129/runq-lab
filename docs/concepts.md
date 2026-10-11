@@ -24,7 +24,7 @@ A **project** is a training script plus its parameter catalog
 optimizer — with types, defaults, and constraints.
 
 A **job** is one submission. It selects which parameters vary *this time*
-and how (`job.yaml` or `runq sweep`). One job produces many tasks.
+and how (`job.yaml`). One job produces many tasks.
 
 A **task** is one run with one set of parameters. Each task gets its own
 workspace, log, and parameter snapshot. Tasks are the atomic unit — they
@@ -117,8 +117,8 @@ the CLI.
 ## How the Python SDK fits in
 
 The SDK runs *inside* your training script. It receives parameters from
-the sweep, reports metrics back, handles checkpoints atomically, and
-cooperates with preemption signals.
+the sweep (ablation axes), reports step metrics and axis-keyed result
+records back, and gives each task a stable checkpoint directory.
 
 The SDK works in three modes: connected to `runqd` (full features),
 file-only (HPC, no socket), or standalone (no runq at all — useful for

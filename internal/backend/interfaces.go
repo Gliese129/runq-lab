@@ -160,11 +160,6 @@ type Backend interface {
 	// deleting. Backends without local storage return ErrNotSupported.
 	Clean(ctx context.Context, opts CleanOptions) (*CleanResult, error)
 
-	// ThawTasks releases SDK-frozen (SIGSTOPped) tasks. owner scopes by
-	// UID; force bypasses the per-task disk safety check. Returns
-	// ErrNotSupported in HPC mode (freeze/thaw is daemon-only).
-	ThawTasks(ctx context.Context, owner int, force bool) (*ThawResponse, error)
-
 	GetProject(ctx context.Context, name string) (*project.Config, error)
 	ListProjects(ctx context.Context) ([]ProjectSummary, error)
 	MatchProjects(ctx context.Context, dir string) ([]ProjectSummary, error)

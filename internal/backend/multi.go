@@ -1169,6 +1169,33 @@ func (m *MultiBackend) JobLogSearch(ctx context.Context, jobID, query string) ([
 	return out, nil
 }
 
+// TaskLogGrep greps one task's log on the target that owns it and returns
+// the last tail matches (see taskLogGrepViaExec). Optional capability, not
+// part of Backend: only the router knows which lane/generation owns a task.
+func (m *MultiBackend) TaskLogGrep(ctx context.Context, taskID, pattern string, tail int) ([]LogMatch, error) {
+	m.routingMu.RLock()
+	defer m.routingMu.RUnlock()
+	row, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, fmt.Errorf("task %q: %w", taskID, ErrNotFound)
+	}
+	be, err := m.resolveTaskRow(row)
+	if err != nil {
+		return nil, err
+	}
+	fsys := rfs.FS(rfs.NewLocalFS())
+	if fsp, ok := be.(interface{ FS() rfs.FS }); ok {
+		fsys = fsp.FS()
+	}
+	if active, ok := be.(interface{ touchActivity() }); ok {
+		active.touchActivity()
+	}
+	return taskLogGrepViaExec(ctx, fsys, *row, pattern, tail)
+}
+
 func (m *MultiBackend) JobActivity(ctx context.Context, jobID string) (*JobActivity, error) {
 	m.routingMu.RLock()
 	defer m.routingMu.RUnlock()
@@ -1604,14 +1631,6 @@ func (m *MultiBackend) Clean(ctx context.Context, opts CleanOptions) (*CleanResu
 		}
 		return rfs.NewLocalFS(), nil
 	}, opts)
-}
-
-func (m *MultiBackend) ThawTasks(ctx context.Context, owner int, force bool) (*ThawResponse, error) {
-	be, err := m.defaultBackendE()
-	if err != nil {
-		return nil, err
-	}
-	return be.ThawTasks(ctx, owner, force)
 }
 
 // ── Project operations (global, not per-target) ────────────────────────────

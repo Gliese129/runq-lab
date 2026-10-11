@@ -169,10 +169,6 @@ func (b *UnavailableBackend) Clean(ctx context.Context, opts CleanOptions) (*Cle
 	return nil, b.wrap()
 }
 
-func (b *UnavailableBackend) ThawTasks(ctx context.Context, owner int, force bool) (*ThawResponse, error) {
-	return nil, b.wrap()
-}
-
 func (b *UnavailableBackend) wrap() error {
 	return fmt.Errorf("dashboard backend unavailable: %w", b.err)
 }

@@ -12,8 +12,6 @@ they state what's wrong and how to fix it, and exit non-zero.
 |---|---|
 | `runq init [script.py]` | Scan argparse → generate project.yaml + job.yaml; auto-detect uv/venv/conda |
 | `runq submit <job.yaml \| .>` | Submit a job. `--dry` preview (nothing submitted) · `--watch` live progress · `--note` label · `--project` / `--project-file` override · `--json` → `{job_id, total_tasks}` |
-| `runq sweep k=v1,v2 …` | Quick sweep, no YAML. **Submits immediately** unless `--dry`. `--list` = zip 1-to-1 instead of grid · `--project` (default: cwd name) · `-n` note · `--gpus` · `--max-retry` |
-| `runq run <project> [--gpus N] -- <args…>` | One-off single task |
 
 ## Monitoring
 
@@ -24,9 +22,7 @@ they state what's wrong and how to fix it, and exit non-zero.
 | `runq status` | Daemon / queue summary |
 | `runq status <job_id>` | Refresh + show one job's tasks |
 | `runq gpu` | Per-GPU allocation on this machine |
-| `runq logs <task_id>` | Tail + **follow** (blocks). `--no-follow` prints and exits · `-n N` tail size |
-| `runq best <job_id> --key <m>` | Best task by metric. Lower-is-better by default; `--max` for accuracy-style |
-| `runq collect <job_id> --key <m>` | All tasks ranked by metric (`--max`, `--json`) |
+| `runq logs <task_id>` | Tail + **follow** (blocks). `--no-follow` prints and exits · `-n N` tail size · `--grep <regex>` last N matching lines, grepped on the target (no follow) |
 | `runq task show <task_id>` | Params, status, GPU, retry count, log path |
 
 ## Control
@@ -35,7 +31,6 @@ they state what's wrong and how to fix it, and exit non-zero.
 |---|---|
 | `runq kill <task_id \| job_id>` | Kill a task, or every task in a job |
 | `runq task retry <task_id>` | Requeue a failed task |
-| `runq job pause / resume <job_id>` | Stop / resume dispatching (running tasks continue) |
 | `runq job archive / unarchive <job_id>` | Hide from default lists — reversible, data untouched |
 | `runq project archive / unarchive <name>` | Same, for a project and its jobs |
 
@@ -85,19 +80,18 @@ targets.
 | Command | What it does |
 |---|---|
 | `runq clean` | Delete finished tasks **and all their artifacts — irreversible**. Interactive; `--show` previews without deleting · `-y` skips confirmation · `--older-than 720h` · `--orphan` · `--archived` |
-| `runq thaw` | Release tasks the SDK SIGSTOPped on low disk |
 | `runq config get / set / list` | Global config keys (e.g. `data_path`, `default_target`) |
 | `runq version` | Build version |
 
 ## Plumbing (you rarely need these)
 
-`runq metrics-index` builds or inspects the metrics pyramid index. `--socket`
+`runq metrics-index build` builds the metrics pyramid index (run by the HPC wrapper). `--socket`
 selects a non-default runq client socket. Machine execution is handled by
 runqd's own CLI — see runqd docs.
 
 ## Notes for scripts and agents
 
-- `runq sweep` without `--dry` mutates the queue — never use it to
+- `runq submit` without `--dry` mutates the queue — never use it to
   "explore" the CLI.
 - `runq logs` follows by default and will block a non-interactive caller;
   always pass `--no-follow` in scripts.

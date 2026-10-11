@@ -5,7 +5,7 @@ Two purposes:
      project.yaml catalog (note: positional args are skipped by design —
      sweep params must be flag-style).
   2. It writes metrics.jsonl into the task workspace, so
-     `runq best <job> --key loss` and `runq collect` work end to end.
+     the dashboard metric charts work end to end.
 
 Run it standalone:  python test_train.py --lr 0.01 --batch-size 64
 """

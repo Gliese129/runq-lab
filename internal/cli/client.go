@@ -20,7 +20,7 @@ func getSocketPath() string {
 }
 
 // getPlumbingSocketPath resolves the socket for PLUMBING commands
-// (sbatch/squeue/scancel, gpu --json, thaw, status): they address "this
+// (sbatch/squeue/scancel, gpu --json, status): they address "this
 // machine's executor" — runqd — not the client daemon. Same override
 // precedence as getSocketPath; only the default differs. This split is what
 // makes runq-preset templates portable verbatim (remote lab server or the

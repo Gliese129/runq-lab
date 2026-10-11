@@ -452,6 +452,19 @@ func (p *Proxy) TaskLogFollow(ctx context.Context, taskID string, offset int64) 
 	return nil, fmt.Errorf("task log follow: use the SSE stream endpoint: %w", backend.ErrNotSupported)
 }
 
+// TaskLogGrep — GET /tasks/{id}/log/grep?pattern=&tail= (last matches of one
+// task log, grepped on the owning target).
+func (p *Proxy) TaskLogGrep(ctx context.Context, taskID, pattern string, tail int) ([]backend.LogMatch, error) {
+	q := url.Values{"pattern": {pattern}, "tail": {strconv.Itoa(tail)}}
+	var resp struct {
+		Matches []backend.LogMatch `json:"matches"`
+	}
+	if err := p.do(ctx, "GET", "/api/v1/tasks/"+url.PathEscape(taskID)+"/log/grep?"+q.Encode(), nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Matches, nil
+}
+
 // JobLogSearch — GET /jobs/{id}/log/search?q= (capability: log_search).
 func (p *Proxy) JobLogSearch(ctx context.Context, jobID, query string) ([]backend.LogMatch, error) {
 	q := url.Values{"q": {query}}
@@ -560,7 +573,7 @@ func (p *Proxy) PreviewSubmit(ctx context.Context, cfg job.JobConfig, skipPrefli
 }
 
 // PlanJob — POST /jobs/plan (D12): cheap local expansion + note resolution
-// in one call. The submit wizard and `runq sweep --dry` consume this.
+// in one call. The submit wizard and `runq submit --dry` consume this.
 func (p *Proxy) PlanJob(ctx context.Context, cfg job.JobConfig) (tasks []job.TaskParams, noteResolved string, err error) {
 	body := submitWireBody{Config: cfg, Target: p.TargetFilter}
 	var resp struct {
@@ -642,20 +655,6 @@ func (p *Proxy) Clean(ctx context.Context, opts backend.CleanOptions) (*backend.
 	}
 	var result backend.CleanResult
 	if err := p.do(ctx, "POST", "/api/v1/clean", opts, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// ThawTasks hits the runqd executor lane (plumbing, spec §9).
-func (p *Proxy) ThawTasks(ctx context.Context, owner int, force bool) (*backend.ThawResponse, error) {
-	q := url.Values{}
-	q.Set("owner", strconv.Itoa(owner))
-	if force {
-		q.Set("force", "true")
-	}
-	var result backend.ThawResponse
-	if err := p.do(ctx, "POST", "/api/v1/thaw?"+q.Encode(), nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

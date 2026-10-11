@@ -269,3 +269,24 @@ func init() {
 	submitCmd.GroupID = groupCore
 	rootCmd.AddCommand(submitCmd)
 }
+
+// printGPUHint prints a one-line free-GPU hint after submit (local GPU
+// targets only; HPC backends report no GPU slots and stay silent).
+func printGPUHint(ctx context.Context, be backend.Backend) {
+	gpus, err := be.GPUStatus(ctx)
+	if err != nil || len(gpus) == 0 {
+		return
+	}
+	total := len(gpus)
+	free := 0
+	for _, g := range gpus {
+		if g.TaskID == "" {
+			free++
+		}
+	}
+	if free == 0 {
+		fmt.Printf("  queued: waiting for GPUs (0/%d free)\n", total)
+	} else if free < total {
+		fmt.Printf("  %d/%d GPUs free — some tasks may queue\n", free, total)
+	}
+}

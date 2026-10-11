@@ -2,7 +2,6 @@ package backend
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/project"
@@ -88,14 +87,10 @@ func (b *storeQueries) DryRun(ctx context.Context, cfg job.JobConfig) (*DryRunRe
 	}, nil)
 }
 
-// ── Clean / Thaw ─────────────────────────────────────────────────────────
+// ── Clean ─────────────────────────────────────────────────────────
 
 func (b *storeQueries) Clean(ctx context.Context, opts CleanOptions) (*CleanResult, error) {
 	// Single-target lane path: all indexed artifacts are in this store.
 	// Cross-target FS routing lives in MultiBackend.Clean.
 	return PerformClean(ctx, b.store, nil, opts)
-}
-
-func (b *storeQueries) ThawTasks(_ context.Context, _ int, _ bool) (*ThawResponse, error) {
-	return nil, fmt.Errorf("thaw tasks: %w", ErrNotSupported)
 }

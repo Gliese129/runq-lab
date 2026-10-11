@@ -100,7 +100,7 @@ const (
 //     a full scheduler probe for the job.
 //   - status.json: written by run.sh on compute nodes, read by daemon via SSH.
 type SSHBackend struct {
-	storeQueries    // embeds store, reg, and shared project/clean/thaw/dryrun methods
+	storeQueries    // embeds store, reg, and shared project/clean/dryrun methods
 	backend         *remote.Backend
 	transportCloser io.Closer        // SSHFS, or an injected closeable transport
 	targetName      string           // this lane's target name (tasks.target scope)

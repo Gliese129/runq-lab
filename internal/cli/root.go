@@ -42,11 +42,7 @@ var rootCmd = &cobra.Command{
 
     1. runq init                   Scan your train.py and generate configs
     2. runq project add .          Register the project
-    3. runq submit job.yaml        Submit and go
-
-  Or skip YAML entirely:
-
-    runq sweep --project myproj lr=1e-4,3e-4 batch=32,64`,
+    3. runq submit job.yaml        Submit and go`,
 	// main() prints the returned error; without this cobra prints it too
 	// and every failure shows up twice.
 	SilenceErrors: true,

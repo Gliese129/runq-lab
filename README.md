@@ -35,7 +35,7 @@ done
 runq turns both into:
 
 ```bash
-runq sweep lr=0.001,0.01,0.1 batch_size=32,64
+runq submit job.yaml        # sweep: {lr: [0.001, 0.01, 0.1], batch_size: [32, 64]}
 # 6 tasks queued. GPUs assigned. Failures retried. You go to sleep.
 ```
 
@@ -48,7 +48,7 @@ exact parameters that produced it.
 |---|---|---|---|
 | Setup | `runq` client + `runqd` on the GPU host | Already there | Need a cluster admin |
 | GPU assignment | Automatic, no conflicts | Manual `CUDA_VISIBLE_DEVICES` | Automatic |
-| Parameter sweep | One command or YAML | Hand-written for loop | sbatch arrays |
+| Parameter sweep | One YAML block | Hand-written for loop | sbatch arrays |
 | "Which log had lr=0.01?" | `runq task show <id>` | Good luck | Job name conventions |
 | Task fails at 3 AM | Auto-retry, next task starts | Dead. GPUs idle till morning | Depends on config |
 | Lab has 3 users | One visible queue | "Hey, are you using GPU 2?" | Built-in, but overkill |
@@ -132,12 +132,6 @@ runq submit job.yaml --dry  # preview the expansion — nothing submitted
 runq submit job.yaml        # go
 ```
 
-Or skip YAML entirely:
-
-```bash
-runq sweep lr=1e-3,1e-2 batch_size=32,64
-```
-
 Then monitor:
 
 ```bash
@@ -145,7 +139,7 @@ runq ps                     # job table
 runq ps <job_id>            # that job's tasks
 runq gpu                    # per-GPU allocation
 runq logs <task_id>         # tail + follow (--no-follow to print and exit)
-runq best <job_id> --key val_loss     # best task by metric
+runq logs <task_id> --grep 'loss|step'   # last matching lines only
 ```
 
 Full walkthrough: [docs/getting-started.md](./docs/getting-started.md)
@@ -178,7 +172,6 @@ runq status [job_id]         # daemon / queue summary
 runq logs <task_id>          # tail + follow
 runq kill <task_id|job_id>   # stop a task or job
 runq task retry <task_id>    # requeue a failed task
-runq job pause|resume <id>   # stop / resume dispatching
 runq job archive <id>        # hide from lists (reversible)
 runq clean --show            # preview cleanup (runq clean deletes IRREVERSIBLY)
 ```
@@ -269,7 +262,7 @@ crash recovery from durable state. A lost submit response becomes
 ## For scripts and agents
 
 - Every read command supports `--json` for structured output.
-- `runq sweep` without `--dry` mutates the queue — never use it to
+- `runq submit` without `--dry` mutates the queue — never use it to
   explore.
 - `runq logs` follows by default — always pass `--no-follow` in scripts.
 - `runq clean` is irreversible — preview with `--show` first.

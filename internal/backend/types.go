@@ -560,33 +560,3 @@ type ScriptArg struct {
 	// omitted when false (never `--name=false`).
 	Style string `json:"style,omitempty"`
 }
-
-// ── Thaw types ──
-
-// ThawResponse is the structured result of a thaw operation.
-// Thawed lists task IDs that were successfully resumed.
-// Blocked entries carry the mount, free/threshold bytes, and co-tenants
-// so the user knows whose checkpoints to clean up.
-type ThawResponse struct {
-	Thawed  []string                 `json:"thawed"`
-	Blocked map[string]BlockedDetail `json:"blocked,omitempty"`
-}
-
-// BlockedDetail enriches a blocked-task entry with per-mount info.
-type BlockedDetail struct {
-	Mount     string      `json:"mount"`
-	FreeBytes int64       `json:"free_bytes"` // -1 if disk.Usage failed
-	Threshold int64       `json:"threshold"`  // per-task NeededBytes
-	DiskUsers []MountMate `json:"disk_users,omitempty"`
-}
-
-// MountMate describes another running task sharing the same mount as a
-// blocked task — sorted by total ckpt bytes desc so the disk-hog stands
-// out.
-type MountMate struct {
-	TaskID          string `json:"task_id"`
-	User            string `json:"user"`
-	JobID           string `json:"job_id"`
-	LatestCkptBytes int64  `json:"latest_ckpt_bytes"`
-	TotalCkptBytes  int64  `json:"total_ckpt_bytes"`
-}

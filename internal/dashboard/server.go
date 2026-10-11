@@ -303,6 +303,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleGetTask)
 	s.mux.HandleFunc("GET /api/v1/tasks/{id}/log", s.handleTaskLog)
 	s.mux.HandleFunc("GET /api/v1/tasks/{id}/log/stream", s.handleTaskLogStream)
+	s.mux.HandleFunc("GET /api/v1/tasks/{id}/log/grep", s.handleTaskLogGrep) // ?pattern=&tail=
 	s.mux.HandleFunc("GET /api/v1/tasks/{id}/metrics", s.handleTaskMetrics)
 	s.mux.HandleFunc("POST /api/v1/tasks/{id}/kill", s.handleKillTask)
 	s.mux.HandleFunc("POST /api/v1/tasks/{id}/retry", s.handleRetryTask)
@@ -318,8 +319,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/log-sessions/{id}/search", s.handleUtilsLogSearch)
 	s.mux.HandleFunc("DELETE /api/v1/log-sessions/{id}", s.handleUtilsLogDelete)
 
-	// (thaw is deliberately absent: freeze/thaw is a runqd-machine concern
-	// and stays on the runqd executor lane, spec §9.)
 	s.mux.HandleFunc("GET /api/{path...}", s.handleAPINotFound)
 	s.mux.HandleFunc("POST /api/{path...}", s.handleAPINotFound)
 	s.mux.HandleFunc("PUT /api/{path...}", s.handleAPINotFound)
@@ -1202,6 +1201,30 @@ func (s *Server) handleJobResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// handleTaskLogGrep returns the last `tail` lines of one task log matching an
+// extended regex, grepped on the owning target (CLI `runq logs --grep`).
+func (s *Server) handleTaskLogGrep(w http.ResponseWriter, r *http.Request) {
+	pattern := r.URL.Query().Get("pattern")
+	if pattern == "" {
+		writeErr(w, http.StatusBadRequest, backend.CodeBadRequest, "pattern parameter required")
+		return
+	}
+	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
+	grepper, ok := s.backend.(interface {
+		TaskLogGrep(context.Context, string, string, int) ([]backend.LogMatch, error)
+	})
+	if !ok {
+		writeError(w, fmt.Errorf("task log grep: %w", backend.ErrNotSupported))
+		return
+	}
+	matches, err := grepper.TaskLogGrep(r.Context(), r.PathValue("id"), pattern, tail)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"matches": matches})
 }
 
 // handleJobLogSearch searches across all task logs in a job.

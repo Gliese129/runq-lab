@@ -91,13 +91,6 @@ sweep:
       batch_size: [32, 64]
 ```
 
-Or skip the file entirely for quick things:
-
-```bash
-runq sweep lr=0.001,0.01,0.1 batch_size=32,64      # same 6 tasks, no YAML
-runq run resnet50 --gpus 2 -- --lr 0.01            # one-off single task
-```
-
 ## 5. Preview, then submit
 
 ```bash
@@ -123,16 +116,12 @@ runq ps                      # job table: id, status, done/total, note
 runq ps <job_id>             # that job's tasks with their params
 runq gpu                     # who is on which GPU
 runq logs <task_id>          # tail + follow (Ctrl-C to stop; --no-follow to just print)
+runq logs <task_id> --grep 'val_loss'   # last matching lines only
 ```
 
-If your script logs metrics (via the Python SDK's `runq.log_metric()`, or
-by writing `metrics.jsonl` in the task workspace):
-
-```bash
-runq best <job_id> --key val_loss          # single best task + its params
-runq best <job_id> --key accuracy --max    # higher-is-better metrics need --max
-runq collect <job_id> --key val_loss       # every task, ranked
-```
+If your script reports metrics (`runq.report()`) or results (`runq.record()`)
+through the Python SDK, the dashboard charts them and `runq results <job_id>`
+prints the result records.
 
 ## 7. When something goes wrong
 
@@ -141,7 +130,6 @@ runq task show <task_id>     # params, status, retry count, log path
 runq task retry <task_id>    # requeue just that one
 runq kill <task_id>          # stop one task
 runq kill <job_id>           # stop the whole job
-runq job pause <job_id>      # stop dispatching; running tasks continue
 ```
 
 runq's own operation log (every submit/kill with the rendered command) is

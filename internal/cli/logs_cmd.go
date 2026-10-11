@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -24,12 +25,15 @@ var logsCmd = &cobra.Command{
 	Short: "Show task output (default: tail + follow)",
 	Example: `  runq logs a3f9              # last 200 lines, then follow (SSE)
   runq logs a3f9 --no-follow  # print tail and exit
-  runq logs a3f9 -n 500       # tail size`,
+  runq logs a3f9 -n 500       # tail size
+  runq logs a3f9 --grep 'loss|throughput'          # last 200 matching lines
+  runq logs a3f9 --grep '^(DONE|LOAD)' -n 5        # last 5 matches (extended regex)`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id := args[0]
 		noFollow, _ := cmd.Flags().GetBool("no-follow")
 		lines, _ := cmd.Flags().GetInt("lines")
+		pattern, _ := cmd.Flags().GetString("grep")
 
 		return withBackend(cmd, func(be backend.Backend) error {
 			view, err := be.GetTask(cmd.Context(), id)
@@ -41,6 +45,10 @@ var logsCmd = &cobra.Command{
 				utils.IDColor(view.ID),
 				utils.StatusColor(view.Status),
 				utils.Dimf("%s", view.LogPath))
+
+			if pattern != "" {
+				return printLogGrep(cmd, be, view.ID, pattern, lines)
+			}
 
 			// First paint: tail view (spec — the entry point has no byte
 			// coordinates; the returned NextOffset seeds the follow).
@@ -57,6 +65,30 @@ var logsCmd = &cobra.Command{
 			return followLogSSE(cmd, view.ID, page.NextOffset)
 		})
 	},
+}
+
+// printLogGrep prints the last n lines of one task log that match an
+// extended regex. The grep runs on the target that owns the log, so only
+// the matches travel — no follow (a filtered stream is a different tool).
+func printLogGrep(cmd *cobra.Command, be backend.Backend, taskID, pattern string, n int) error {
+	grepper, ok := be.(interface {
+		TaskLogGrep(context.Context, string, string, int) ([]backend.LogMatch, error)
+	})
+	if !ok {
+		return fmt.Errorf("logs --grep: %w", backend.ErrNotSupported)
+	}
+	matches, err := grepper.TaskLogGrep(cmd.Context(), taskID, pattern, n)
+	if err != nil {
+		return err
+	}
+	if len(matches) == 0 {
+		fmt.Println(utils.Dimf("(no matching lines)"))
+		return nil
+	}
+	for _, m := range matches {
+		fmt.Printf("%s %s\n", utils.Dimf("%6d", m.Line), m.Text)
+	}
+	return nil
 }
 
 // followLogSSE consumes GET /tasks/{id}/log/stream (spec §6.3):
@@ -106,7 +138,8 @@ func followLogSSE(cmd *cobra.Command, taskID string, offset int64) error {
 
 func init() {
 	logsCmd.Flags().Bool("no-follow", false, "Print tail and exit (no follow)")
-	logsCmd.Flags().IntP("lines", "n", logfile.DefaultPageLines, "Tail size (lines)")
+	logsCmd.Flags().IntP("lines", "n", logfile.DefaultPageLines, "Tail size (lines); with --grep, how many of the last matches")
+	logsCmd.Flags().String("grep", "", "Only lines matching this extended regex (grepped on the target; implies --no-follow)")
 
 	logsCmd.GroupID = groupCore
 	rootCmd.AddCommand(logsCmd)

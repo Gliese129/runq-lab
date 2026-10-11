@@ -302,6 +302,54 @@ func jobLogSearchRowsViaExec(ctx context.Context, fsys rfs.FS, rows []store.Task
 	return out, nil
 }
 
+// TaskLogGrepMaxTail caps --tail so one call can't pull a whole log.
+const TaskLogGrepMaxTail = 2000
+
+// taskLogGrepViaExec greps ONE task log on the owning side and returns the
+// LAST tail matches (progress lines: the newest ones are the interesting
+// ones). Unlike JobLogSearch the pattern is an extended regex — the caller
+// is a CLI user asking e.g. 'loss|throughput' — and it is shell-quoted, so
+// it is data to grep, never shell.
+func taskLogGrepViaExec(ctx context.Context, fsys rfs.FS, row store.TaskRow, pattern string, tail int) ([]LogMatch, error) {
+	if pattern == "" {
+		return nil, fmt.Errorf("task log grep: empty pattern")
+	}
+	if row.LogPath == "" {
+		return []LogMatch{}, nil
+	}
+	if tail <= 0 || tail > TaskLogGrepMaxTail {
+		tail = TaskLogGrepMaxTail
+	}
+	if fsys == nil {
+		fsys = rfs.NewLocalFS()
+	}
+	// grep exit 1 (no match) / missing file (-s) both yield empty stdout.
+	// An invalid regex exits 2 with stderr; the pipe hides the code, so
+	// stderr is the signal.
+	cmd := fmt.Sprintf("grep -n -s -E -- %s %s | tail -n %d",
+		utils.ShellQuote(pattern), utils.ShellQuote(row.LogPath), tail)
+	stdout, stderr, _, err := fsys.Exec(ctx, "sh", "-c", cmd)
+	if err != nil {
+		return nil, fmt.Errorf("task log grep: %w", err)
+	}
+	if len(stdout) == 0 && len(strings.TrimSpace(string(stderr))) > 0 {
+		return nil, fmt.Errorf("task log grep: %s", strings.TrimSpace(string(stderr)))
+	}
+	out := []LogMatch{}
+	for _, line := range strings.Split(string(stdout), "\n") {
+		lineno, text, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(lineno)
+		if err != nil {
+			continue
+		}
+		out = append(out, LogMatch{TaskID: row.ID, Line: n, Text: logfile.StripANSI(text)})
+	}
+	return out, nil
+}
+
 // listTasksFromStore is the shared ListTasks implementation: every lane and
 // the Multi router sit on the same store (tasks.target column), so the flat
 // table is one SQL query regardless of who serves it.

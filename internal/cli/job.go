@@ -69,42 +69,6 @@ func runJobKill(cmd *cobra.Command, args []string) error {
 	})
 }
 
-var jobPauseCmd = &cobra.Command{
-	Use:   "pause <job_id>",
-	Short: "Pause a job (stop dispatching new tasks, running tasks continue)",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runJobPause,
-}
-
-func runJobPause(cmd *cobra.Command, args []string) error {
-	jobID := args[0]
-	return withBackend(cmd, func(b backend.Backend) error {
-		if err := b.PauseJob(cmd.Context(), jobID); err != nil {
-			return err
-		}
-		fmt.Printf("job %s paused\n", utils.IDColor(jobID))
-		return nil
-	})
-}
-
-var jobResumeCmd = &cobra.Command{
-	Use:   "resume <job_id>",
-	Short: "Resume a paused job",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runJobResume,
-}
-
-func runJobResume(cmd *cobra.Command, args []string) error {
-	jobID := args[0]
-	return withBackend(cmd, func(b backend.Backend) error {
-		if err := b.ResumeJob(cmd.Context(), jobID); err != nil {
-			return err
-		}
-		fmt.Printf("job %s resumed\n", utils.IDColor(jobID))
-		return nil
-	})
-}
-
 func init() {
 	jobLsCmd.Flags().StringP("target", "t", "", "Filter jobs by compute target")
 	jobCmd.AddCommand(jobLsCmd)
@@ -113,8 +77,6 @@ func init() {
 	jobShowCmd.Flags().Bool("json", true, "output raw JSON (always on; accepted for parity)")
 	jobCmd.AddCommand(jobShowCmd)
 	jobCmd.AddCommand(jobKillCmd)
-	jobCmd.AddCommand(jobPauseCmd)
-	jobCmd.AddCommand(jobResumeCmd)
 	jobCmd.AddCommand(jobArchiveCmd)
 	jobCmd.AddCommand(jobUnarchiveCmd)
 	jobCmd.GroupID = groupManagement
