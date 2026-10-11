@@ -190,11 +190,11 @@ if [ "$start_daemon" = "1" ]; then
   mkdir -p "$data_dir" \
     || die "runq was installed, but the data directory ${data_dir} could not be created"
   if "${install_dir}/runq" status --json >/dev/null 2>&1; then
-    say "Restarting the runq client daemon to activate the installed build..."
+    say "Restarting the runq service to activate the installed build..."
     "${install_dir}/runq" serve restart \
       || die "runq was installed, but the existing client daemon could not be restarted"
   else
-    say "Starting runq daemon in the background..."
+    say "Starting the runq service in the background..."
     "${install_dir}/runq" serve -d \
       || die "runq was installed, but the daemon could not be started"
   fi
@@ -221,3 +221,4 @@ if [ "$with_ui" = "1" ]; then
   say "Dashboard: http://127.0.0.1:8077"
 fi
 say "Next: runq doctor"
+say "Agents (Codex / Claude Code): runq skill install   # re-run after every upgrade"

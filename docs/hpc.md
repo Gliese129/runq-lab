@@ -53,10 +53,12 @@ params:
 ```
 
 ```yaml
-# job.yaml — pair each benchmark with ITS walltime via zip
+# job.yaml — pair each benchmark with ITS walltime via zip. Every param a
+# template references needs a value here: a param's `default` only pre-fills
+# the dashboard form and is NOT injected at submit.
 sweep:
   - method: grid
-    parameters: { model: [llama3-8b, qwen2-7b] }
+    parameters: { model: [llama3-8b, qwen2-7b], node_kind: [node_q] }
   - method: list
     parameters:
       benchmark: [mmlu, gsm8k, humaneval]

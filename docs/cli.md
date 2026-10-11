@@ -82,6 +82,7 @@ targets.
 | `runq clean` | Delete finished tasks **and all their artifacts — irreversible**. Interactive; `--show` previews without deleting · `-y` skips confirmation · `--older-than 720h` · `--orphan` · `--archived` |
 | `runq config get / set / list` | Global config keys (e.g. `data_path`, `default_target`) |
 | `runq version` | Build version |
+| `runq skill install [--dir <root>]` | Install the built-in agent skill into `~/.codex/skills/runq` and `~/.claude/skills/runq` (matches this binary — re-run after upgrading) · `runq skill show [file]` prints it |
 
 ## Plumbing (you rarely need these)
 

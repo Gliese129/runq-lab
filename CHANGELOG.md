@@ -35,6 +35,10 @@ convention, completion contracts).
 
 ### New
 
+- `runq skill install` — the agent skill (SKILL.md + references for HPC,
+  SDK, troubleshooting) is embedded in the binary and installed into
+  `~/.codex/skills/runq` and `~/.claude/skills/runq`; `runq skill show`
+  prints it. Built from an audit of 36 friction episodes in Codex sessions.
 - `runq logs <task> --grep '<extended regex>' [-n N]` — last N matching lines,
   grepped on the target that owns the log.
 - `runq.link(name, url)` — record an external page for the task (e.g.
@@ -58,7 +62,8 @@ convention, completion contracts).
 ### Upgrade notes
 
 - After installing, restart the service: `runq serve restart`, then
-  `runq connect <target>` to refresh the remote CLI on login nodes.
+  `runq connect <target>` to refresh the remote CLI on login nodes, and
+  `runq skill install` so agents read the v0.6 guide.
 - Scripts or agent prompts that call `runq daemon …`, `runq sweep`, `runq best`
   or `runq collect` must be updated (see Breaking).
 - The checkpoints table is no longer created; existing databases keep it
