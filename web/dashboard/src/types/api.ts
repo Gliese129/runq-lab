@@ -128,6 +128,9 @@ export interface TaskView {
   command?: string
   working_dir?: string
   task_dir?: string
+  output_dir?: string
+  checkpoint_dir?: string
+  wandb_dir?: string
 }
 
 /** One metric sample (mirrors backend.MetricPoint). */

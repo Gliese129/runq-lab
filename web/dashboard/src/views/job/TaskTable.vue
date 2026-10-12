@@ -247,11 +247,9 @@ const sortedTasks = computed(() => {
 })
 
 // ── Helpers ──
-// The URL the task reported (runq.link) wins; a bare run id is only
-// linkable when the project's wandb config supplies entity/project.
+// Only URLs reported by the initialized run are linkable.
 function wandbHref(task: TaskView): string | undefined {
   if (task.links?.wandb) return task.links.wandb
-  if (task.wandb_run_id && props.wandb?.base_url) return `${props.wandb.base_url}/runs/${task.wandb_run_id}`
   return undefined
 }
 

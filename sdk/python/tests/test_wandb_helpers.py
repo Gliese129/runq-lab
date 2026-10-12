@@ -187,3 +187,47 @@ def test_link_writes_links_json_and_merges(clean_env, tmp_path, monkeypatch):
     assert data == {"tb": "http://tb/1", "wandb": "https://wandb.ai/lab/jp-rl/runs/def"}
     with pytest.raises(ValueError):
         runq.link("", "x")
+
+
+def test_task_directories_and_explicit_wandb_root(clean_env, tmp_path, monkeypatch):
+    task = tmp_path / "task"
+    root = tmp_path / "tracking"
+    outputs = tmp_path / "products"
+    monkeypatch.setenv("RUNQ_TASK_ID", "tk-directories")
+    monkeypatch.setenv("RUNQ_TASK_DIR", str(task))
+    monkeypatch.setenv("RUNQ_OUTPUT_DIR", str(outputs))
+    monkeypatch.setenv("WANDB_DIR", str(root))
+    ctx = runq.context()
+    assert ctx.output_dir == outputs and ctx.wandb_dir == root
+    assert outputs.is_dir() and root.is_dir()
+    assert ctx.wandb_like_cfg["dir"] == str(root)
+    assert ctx.wandb_like_cfg["dir"] != str(root / "wandb")
+
+
+def test_wandb_default_root_and_global_rank_not_local_rank(clean_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("RUNQ_TASK_ID", "tk-default")
+    monkeypatch.setenv("RUNQ_TASK_DIR", str(tmp_path))
+    monkeypatch.delenv("WANDB_DIR", raising=False)
+    monkeypatch.setenv("LOCAL_RANK", "0")
+    monkeypatch.setenv("RANK", "8")
+    ctx = runq.context()
+    assert ctx.wandb_like_cfg["dir"] == str(tmp_path)
+    assert ctx.wandb_like_cfg["mode"] == "disabled"
+
+
+def test_link_wandb_uses_real_url_only_on_global_main(clean_env, tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    monkeypatch.setenv("RUNQ_TASK_ID", "tk1")
+    monkeypatch.setenv("RUNQ_TASK_DIR", str(tmp_path))
+    monkeypatch.setenv("RUNQ_METRICS_FILE", str(tmp_path / "metrics.jsonl"))
+    ctx = runq.context()
+    run = SimpleNamespace(id="custom", url="https://wandb.ai/custom/entity/runs/custom")
+    ctx.link_wandb(run, global_rank=1)
+    assert not ctx.links_file.exists()
+    ctx.link_wandb(SimpleNamespace(url=None), global_rank=0)
+    assert not ctx.links_file.exists()
+    ctx.link_wandb(run, global_rank=0)
+    assert json.loads(ctx.links_file.read_text())["wandb"] == run.url
+    ctx.link_wandb(SimpleNamespace(url=""), global_rank=0)
+    assert json.loads(ctx.links_file.read_text())["wandb"] == run.url

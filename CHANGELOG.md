@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.0rc3 — 2026-10-12
+
+- Isolate remote sockets by controller/target; bounded SSH/SFTP cancellation, verified forward readiness and unified SSH configuration/background recovery.
+- Separate queue, scheduler resource and script time with attempt-specific source/observation evidence; preserve short-task start/finish and retry history.
+- Resolve outputs, checkpoints and W&B run roots consistently across preview, target preparation, wrapper, SDK and dashboard; remote W&B configuration no longer depends on controller filesystem state.
+- Add `ctx.output_dir`, `ctx.wandb_dir` and `ctx.link_wandb(run)`; keep explicit overrides and actual run URLs, global-rank gating and offline files. Python SDK: `0.6.0rc3`.
+
+
 ## v0.6.0rc2 — 2026-10-12
 
 ### Breaking

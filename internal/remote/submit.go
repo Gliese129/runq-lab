@@ -247,6 +247,9 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	}
 
 	for _, t := range plan.Tasks {
+		if err := workspace.EnsureTaskDirs(ctx, b.FS, t.Env); err != nil {
+			return plan.JobID, rows, fmt.Errorf("prepare directories for %s: %w", t.TaskID, err)
+		}
 		// Local prep + template render first: these have no external side effect,
 		// so a failure here aborts before any cluster job or DB row exists.
 		if err := workspace.WriteFS(b.FS, t.TaskDir, t.Params, plan.Wandb, plan.Note); err != nil {
@@ -324,17 +327,10 @@ func (b *Backend) homeDirCached() (string, error) {
 // wrapped by the kernel) is embedded verbatim, exactly as the daemon would exec
 // it.
 func (b *Backend) buildRunScript(t submitplan.PlannedTask, plan submitplan.Plan) string {
-	env := make(map[string]string, len(t.Env)+10)
-	for k, v := range t.Env {
-		env[k] = v
-	}
-	// Shared RUNQ_* contract; HPC adds RUNQ_NO_DAEMON and sets no socket.
-	for k, v := range workspace.BaseEnv(workspace.Identity{
+	env := workspace.TaskEnv(workspace.Identity{
 		TaskID: t.TaskID, JobID: plan.JobID, Project: plan.Project, TaskDir: t.TaskDir,
-		SweepKeys: plan.SweepKeys, JobNote: plan.Note,
-	}) {
-		env[k] = v
-	}
+		SweepKeys: plan.SweepKeys, JobNote: plan.Note, WandbConfigured: plan.Wandb != nil,
+	}, t.Env, t.WorkingDir)
 	// A runqd-backed target injects RUNQ_SOCKET_PATH into the child process, so
 	// its SDK calls should use that machine daemon. Traditional HPC schedulers
 	// have no daemon on the compute node and retain the explicit no-daemon mode.
@@ -405,6 +401,13 @@ set -e
 `)
 	// Record wrapper entrance and arm exit capture before environment setup.
 	s.WriteString(b.envPrelude(env).Render())
+	// Check the compute node too: never let W&B silently fall back to /tmp.
+	for _, key := range []string{"RUNQ_OUTPUT_DIR", "RUNQ_CHECKPOINT_DIR", "WANDB_DIR"} {
+		if dir := env[key]; dir != "" {
+			quoted := utils.ShellQuote(dir)
+			fmt.Fprintf(&s, "mkdir -p %s\ntest -d %s && test -w %s && test -x %s || { echo %s >&2; exit 1; }\n", quoted, quoted, quoted, quoted, utils.ShellQuote("runq: directory "+key+" is not writable/searchable: "+dir))
+		}
+	}
 	s.WriteString("set +e\n")
 	// Activity sidecar: sample log file size + incremental line count every 60s
 	// into 3-column activity.tsv {ts, bytes, lines}. The trap kills the sidecar

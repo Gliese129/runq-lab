@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -35,7 +34,7 @@ func TestBaseSharedKeys(t *testing.T) {
 	}
 }
 
-func TestBaseWandbOnlyWhenFileExists(t *testing.T) {
+func TestBaseWandbFollowsPlanWithoutLocalFile(t *testing.T) {
 	dir := t.TempDir()
 
 	// No wandb file → key absent.
@@ -43,13 +42,10 @@ func TestBaseWandbOnlyWhenFileExists(t *testing.T) {
 		t.Fatal("RUNQ_WANDB_CONFIG_FILE should be absent when the file does not exist")
 	}
 
-	// Create it → key present and points at it.
+	// A target path absent on this machine still receives its config signal.
 	wandb := filepath.Join(dir, "wandb_config.json")
-	if err := os.WriteFile(wandb, []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := BaseEnv(Identity{TaskDir: dir})["RUNQ_WANDB_CONFIG_FILE"]; got != wandb {
-		t.Fatalf("RUNQ_WANDB_CONFIG_FILE = %q, want %q", got, wandb)
+	if got := BaseEnv(Identity{TaskDir: dir, WandbConfigured: true})["RUNQ_WANDB_CONFIG_FILE"]; got != wandb {
+		t.Fatalf("remote config signal lost: %q", got)
 	}
 }
 

@@ -132,9 +132,12 @@ type TaskView struct {
 	// consumers don't need them and lists stay lean). Straight DTO
 	// exposure of store columns; secrets travel via .env/prelude, never
 	// the command text.
-	Command    string `json:"command,omitempty"`
-	WorkingDir string `json:"working_dir,omitempty"`
-	TaskDir    string `json:"task_dir,omitempty"`
+	Command       string `json:"command,omitempty"`
+	WorkingDir    string `json:"working_dir,omitempty"`
+	TaskDir       string `json:"task_dir,omitempty"`
+	OutputDir     string `json:"output_dir,omitempty"`
+	CheckpointDir string `json:"checkpoint_dir,omitempty"`
+	WandbDir      string `json:"wandb_dir,omitempty"`
 }
 
 type MetricPoint struct {

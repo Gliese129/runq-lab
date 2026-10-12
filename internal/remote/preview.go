@@ -11,6 +11,7 @@ import (
 	"github.com/gliese129/runq-lab/internal/project"
 	"github.com/gliese129/runq-lab/internal/submitplan"
 	"github.com/gliese129/runq-lab/internal/utils"
+	"github.com/gliese129/runq-lab/internal/workspace"
 )
 
 // Preview compiles the job and renders what WOULD be submitted — the
@@ -30,8 +31,13 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	jobCfg.Note = resolved
 	deps := b.planDeps(skipPreflight)
 	deps.JobID = utils.GenerateJobID()
-	// Placeholder roots: nothing is written (the dry-run contract).
-	deps.Paths = submitplan.Paths{WorkspaceRoot: "<workspace>", LogRoot: "<workspace>"}
+	// Use the same root and layout as Prepare without materializing it.
+	root, err := b.WorkspaceRoot(proj, false)
+	if err != nil {
+		return "", submitplan.Plan{}, err
+	}
+	jobRoot := path.Join(root, workspace.JobDirName(resolved, deps.JobID))
+	deps.Paths = submitplan.Paths{WorkspaceRoot: jobRoot, LogRoot: jobRoot}
 	plan, err := submitplan.Build(ctx, jobCfg, proj, deps)
 	if err != nil {
 		// A preflight failure is a RESULT for a dry-run, not an error
@@ -66,8 +72,7 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	fmt.Fprintf(&s, "dry-run: %d task(s) would be submitted\n", len(plan.Tasks))
 	// Where <workspace> will actually live — shown read-only (nothing is
 	// created here); ids are regenerated at real submit.
-	root, _ := b.WorkspaceRoot(proj, false) // same decision point as Prepare (RQ-65)
-	fmt.Fprintf(&s, "workspace root: %s/<note>-<job_id> — <workspace> below means that job dir (ids regenerate at submit)\n\n", root)
+	fmt.Fprintf(&s, "workspace root: %s (preview IDs; regenerated at submit)\n\n", jobRoot)
 	for _, c := range plan.Preflight.Results {
 		mark := map[string]string{"passed": "✓", "failed": "✗", "warning": "!"}[c.Status]
 		if mark == "" {
@@ -82,6 +87,9 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 
 	if len(plan.Tasks) == 0 {
 		return "", submitplan.Plan{}, fmt.Errorf("sweep expands to zero tasks — check sweep parameters (nothing would be submitted)")
+	}
+	for _, task := range plan.Tasks {
+		fmt.Fprintf(&s, "task %s: outputs=%s checkpoints=%s WANDB_DIR=%s\n", task.TaskID, task.OutputDir, task.CheckpointDir, task.WandbDir)
 	}
 	t := plan.Tasks[0]
 	runsh := path.Join(t.TaskDir, runScriptName)

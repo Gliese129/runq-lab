@@ -46,6 +46,8 @@ func PyramidPath(dir string) string {
 	return path.Join(dir, "metrics.pyr")
 }
 
+func OutputsDir(dir string) string { return path.Join(dir, "outputs") }
+
 func CheckpointsDir(dir string) string {
 	return path.Join(dir, "checkpoints")
 }
@@ -115,6 +117,9 @@ func WriteTaskMeta(dir string, update func(*TaskMeta)) error {
 // it also writes note.txt. All writes are atomic via utils.AtomicWriteFile so
 // the Python SDK never observes a half-written file.
 func Write(dir string, params job.TaskParams, wandb *project.WandbConfig, note string) error {
+	if err := os.MkdirAll(OutputsDir(dir), 0o755); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(CheckpointsDir(dir), 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
@@ -155,6 +160,9 @@ func Write(dir string, params job.TaskParams, wandb *project.WandbConfig, note s
 func WriteFS(fsys rfs.FS, dir string, params job.TaskParams, wandb *project.WandbConfig, note string) error {
 	if fsys == nil {
 		return Write(dir, params, wandb, note)
+	}
+	if err := fsys.MkdirAll(OutputsDir(dir), 0o755); err != nil {
+		return err
 	}
 	if err := fsys.MkdirAll(CheckpointsDir(dir), 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)

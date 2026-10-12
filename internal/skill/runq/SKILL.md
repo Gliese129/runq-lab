@@ -155,3 +155,12 @@ Reservation in one line: copy the target in `~/.runq/config.yaml` under a new
 name, put `-ar <id>` (and the reservation's resource shape) in its
 `submit_template`, `runq target check <name>`, submit with `-t <name>`, and
 confirm `-ar` appears in the `--dry` rendered command.
+
+## RC3 time and file facts
+
+Use `queue_seconds`, `scheduler_seconds`, and `elapsed_seconds` (script only)
+separately. Unknown timestamps remain absent; `times` and `time_history` retain
+source, observation time and attempt. Never infer a precise script start from
+legacy DB `started_at`, file mtime or W&B cumulative runtime.
+Task detail exposes output/checkpoint/W&B roots; preview uses the same resolver.
+See `references/sdk.md` for explicit overrides, rank gating, links and offline sync.

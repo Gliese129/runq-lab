@@ -107,6 +107,12 @@ func applyTaskDetail(view *TaskView, task store.TaskRow) {
 	view.Command = task.Command
 	view.WorkingDir = task.WorkingDir
 	view.TaskDir = task.TaskDir
+	var env map[string]string
+	_ = json.Unmarshal([]byte(task.EnvJSON), &env)
+	resolved := workspace.TaskEnv(workspace.Identity{TaskDir: task.TaskDir}, env, task.WorkingDir)
+	view.OutputDir = resolved["RUNQ_OUTPUT_DIR"]
+	view.CheckpointDir = resolved["RUNQ_CHECKPOINT_DIR"]
+	view.WandbDir = resolved["WANDB_DIR"]
 }
 
 // compareRowsFromDB builds CompareRows from INGESTED metrics — pure SQL,
@@ -565,7 +571,10 @@ func TaskRowToSchedulerTask(row *store.TaskRow) *scheduler.Task {
 	// RUNQ_CHECKPOINT_DIR (computed the same way in buildTaskEnv).
 	var ckptDir string
 	if row.TaskDir != "" {
-		ckptDir = filepath.Join(row.TaskDir, "checkpoints")
+		ckptDir = env["RUNQ_CHECKPOINT_DIR"]
+		if ckptDir == "" {
+			ckptDir = filepath.Join(row.TaskDir, "checkpoints")
+		}
 	}
 	dispatchAt := row.StartedAt // legacy dispatch baseline retained for recovery
 	if e, ok := store.CurrentTaskTimes(*row)["dispatch_started_at"]; ok {

@@ -107,8 +107,8 @@ func TestBuildDeterministicPlan(t *testing.T) {
 	if first.WorkingDir != workDir {
 		t.Fatalf("WorkingDir = %q", first.WorkingDir)
 	}
-	if _, ok := first.Env["RUNQ_TASK_ID"]; ok {
-		t.Fatalf("Plan Env must not contain RUNQ_*: %#v", first.Env)
+	if first.Env["RUNQ_TASK_ID"] != first.TaskID || first.Env["WANDB_DIR"] != first.TaskDir {
+		t.Fatalf("plan lost per-task identity/directories: %#v", first.Env)
 	}
 }
 

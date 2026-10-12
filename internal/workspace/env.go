@@ -13,23 +13,27 @@
 package workspace
 
 import (
-	"os"
+	"context"
+	"fmt"
+	"github.com/gliese129/runq-lab/internal/rfs"
+	"github.com/gliese129/runq-lab/internal/utils"
+	"path"
 	"strings"
 )
 
 // Identity is the task's stable identity plus its workspace directory.
 type Identity struct {
-	TaskID    string
-	JobID     string
-	Project   string
-	TaskDir   string   // per-task workspace; when empty, path vars are omitted
-	SweepKeys []string // sweep parameter key names (for WANDB_TAGS + WANDB_RUN_NAME)
-	JobNote   string   // job note (for WANDB_RUN_GROUP)
+	TaskID          string
+	JobID           string
+	Project         string
+	TaskDir         string   // per-task workspace; when empty, path vars are omitted
+	SweepKeys       []string // sweep parameter key names (for WANDB_TAGS + WANDB_RUN_NAME)
+	WandbConfigured bool     // supplied by the plan, never inferred from the controller filesystem
+	JobNote         string   // job note (for WANDB_RUN_GROUP)
 }
 
 // BaseEnv returns the shared RUNQ_* variables. It does NOT set RUNQ_SOCKET_PATH or
-// RUNQ_NO_DAEMON. RUNQ_WANDB_CONFIG_FILE is only set when the file exists, so the
-// SDK can treat its presence as a binary "wandb configured" signal.
+// RUNQ_NO_DAEMON. RUNQ_WANDB_CONFIG_FILE follows the submitted plan, including remote workspaces.
 func BaseEnv(id Identity) map[string]string {
 	env := make(map[string]string, 10)
 	env["RUNQ_TASK_ID"] = id.TaskID
@@ -41,9 +45,11 @@ func BaseEnv(id Identity) map[string]string {
 		env["RUNQ_PARAMS_FILE"] = ParamsPath(id.TaskDir)
 		env["RUNQ_METRICS_FILE"] = MetricsPath(id.TaskDir)
 		env["RUNQ_CHECKPOINT_DIR"] = CheckpointsDir(id.TaskDir)
+		env["RUNQ_OUTPUT_DIR"] = OutputsDir(id.TaskDir)
+		env["WANDB_DIR"] = id.TaskDir
 
 		wandbCfg := WandbConfigPath(id.TaskDir)
-		if _, err := os.Stat(wandbCfg); err == nil {
+		if id.WandbConfigured {
 			env["RUNQ_WANDB_CONFIG_FILE"] = wandbCfg
 		}
 	}
@@ -58,4 +64,53 @@ func BaseEnv(id Identity) map[string]string {
 	}
 
 	return env
+}
+
+// TaskEnv is the single resolver for preview, persistence and run.sh.
+// Explicit path overrides are literal target paths; relative ones are rooted
+// at the project working directory, where the task's command executes.
+func TaskEnv(id Identity, overrides map[string]string, workingDir string) map[string]string {
+	env := make(map[string]string, len(overrides)+16)
+	for key, value := range overrides {
+		env[key] = value
+	}
+	delete(env, "RUNQ_WANDB_CONFIG_FILE")
+	for key, value := range BaseEnv(id) {
+		env[key] = value
+	}
+	for _, key := range []string{"RUNQ_OUTPUT_DIR", "RUNQ_CHECKPOINT_DIR", "WANDB_DIR"} {
+		if value := overrides[key]; value != "" {
+			if !path.IsAbs(value) {
+				value = path.Join(workingDir, value)
+			}
+			env[key] = path.Clean(value)
+		}
+	}
+	return env
+}
+
+// EnsureTaskDirs operates on the actual target before external submission.
+// W&B owns its child run directories; runq creates and checks the root only.
+func EnsureTaskDirs(ctx context.Context, fsys rfs.FS, env map[string]string) error {
+	if fsys == nil {
+		fsys = rfs.NewLocalFS()
+	}
+	fsys = rfs.WithContext(fsys, ctx)
+	seen := map[string]bool{}
+	for _, key := range []string{"RUNQ_OUTPUT_DIR", "RUNQ_CHECKPOINT_DIR", "WANDB_DIR"} {
+		dir := env[key]
+		if dir == "" || seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		if err := fsys.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("create %s %q on target: %w", key, dir, err)
+		}
+		// Check search/write permissions on the target using the same user as submit.
+		_, stderr, code, err := fsys.Exec(ctx, "sh", "-c", "test -d "+utils.ShellQuote(dir)+" && test -w "+utils.ShellQuote(dir)+" && test -x "+utils.ShellQuote(dir))
+		if err != nil || code != 0 {
+			return fmt.Errorf("directory %s %q is not writable/searchable on target (exit %d): %v %s", key, dir, code, err, stderr)
+		}
+	}
+	return nil
 }

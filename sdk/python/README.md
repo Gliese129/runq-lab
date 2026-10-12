@@ -13,7 +13,7 @@ pip install -e ./sdk/python
 Optional extras:
 
 ```sh
-pip install -e "./sdk/python[wandb]"   # auto wandb integration
+pip install -e "./sdk/python[wandb]"   # optional W&B dependency
 pip install -e "./sdk/python[dev]"     # for pytest
 ```
 
@@ -44,3 +44,22 @@ Detected automatically at `runq.context()`:
 - `manual` — running outside runq (no `RUNQ_TASK_ID`); useful for local debugging
 
 `ctx.mode` exposes which mode is active.
+
+## Output and W&B directories (RC3)
+
+`ctx.output_dir` defaults to `<task_dir>/outputs`; `ctx.checkpoint_dir` defaults
+to `<task_dir>/checkpoints`. `ctx.wandb_like_cfg["dir"]` uses `WANDB_DIR`, whose
+default is the task directory. W&B manages the `wandb` child itself. Explicit
+project/job environment overrides are resolved before submission and preserved
+by the SDK.
+
+```python
+import wandb
+run = wandb.init(**ctx.wandb_like_cfg)
+ctx.link_wandb(run)  # global rank 0; ignores missing offline/disabled URLs
+```
+
+The SDK still works without W&B installed. Retries keep outputs and offline
+files; online `resume="allow"` and offline `wandb sync` have different semantics.
+See the [directory contract](../../docs/sdk_reference.md#task-outputs-and-wb-files-rc3)
+for artifact staging/cache/download paths and explicit clean behavior.

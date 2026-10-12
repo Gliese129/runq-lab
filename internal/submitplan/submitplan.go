@@ -95,6 +95,8 @@ type PlannedTask struct {
 	UID           int               `json:"uid"`
 	TaskDir       string            `json:"task_dir"`
 	CheckpointDir string            `json:"checkpoint_dir"`
+	OutputDir     string            `json:"output_dir"`
+	WandbDir      string            `json:"wandb_dir"`
 }
 
 // validateChoices enforces every nonempty choices list: a value outside the
@@ -403,6 +405,13 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 		}
 	}
 	sort.Strings(sweepKeys)
+	for i := range tasks {
+		task := &tasks[i]
+		task.Env = workspace.TaskEnv(workspace.Identity{TaskID: task.TaskID, JobID: jobID, Project: cfg.Project, TaskDir: task.TaskDir, SweepKeys: sweepKeys, JobNote: cfg.Note, WandbConfigured: proj.Wandb != nil}, env, task.WorkingDir)
+		task.CheckpointDir = task.Env["RUNQ_CHECKPOINT_DIR"]
+		task.OutputDir = task.Env["RUNQ_OUTPUT_DIR"]
+		task.WandbDir = task.Env["WANDB_DIR"]
+	}
 
 	keys := make([]string, 0, len(unconsumed))
 	for key := range unconsumed {

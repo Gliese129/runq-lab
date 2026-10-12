@@ -59,12 +59,12 @@ ctx.wandb_like_cfg         # dict to splat into wandb.init(...) — SDK never im
 ```python
 import wandb
 run = wandb.init(**ctx.wandb_like_cfg)      # override any key: {**ctx.wandb_like_cfg, "id": my_id}
-runq.link("wandb", run.url)                  # runq shows the run on the task (CLI + dashboard)
+ctx.link_wandb(run)                  # runq shows the run on the task (CLI + dashboard)
 ```
 
 `wandb_like_cfg` fills: `project` / `entity` / `tags` / `mode` from the
 project's `wandb:` block (falling back to the runq project name), `id` =
-task id with `resume="allow"` so a retried task continues the same run,
+task id with `resume="allow"` so an online retried task continues the same run,
 `name` from the swept values, `group` from the job note, `config` = params.
 Only rank 0 reports: when `RANK > 0` it sets `mode="disabled"`, so a
 multi-GPU task is one run (W&B's system monitor on rank 0 covers every GPU
@@ -160,3 +160,43 @@ with runq.utils.atomic_write("output.json") as f:
 pip install runq-sdk          # from PyPI
 cd sdk/python && pip install -e .   # development
 ```
+
+### Task outputs and W&B files (RC3)
+
+| Purpose | Environment | Context | Default |
+|---|---|---|---|
+| Training outputs | `RUNQ_OUTPUT_DIR` | `ctx.output_dir` | `<task_dir>/outputs` |
+| Checkpoints | `RUNQ_CHECKPOINT_DIR` | `ctx.checkpoint_dir` | `<task_dir>/checkpoints` |
+| W&B run root | `WANDB_DIR` | `ctx.wandb_dir`, `wandb_like_cfg["dir"]` | `<task_dir>` |
+
+Runq resolves these paths in preview and creates/checks them on the selected
+execution target before submission. Project environment and job override values
+win over directory defaults; relative overrides resolve against `working_dir`.
+Use literal target paths, rather than shell expressions. Commands still run in
+the project's code directory. Write products explicitly to `ctx.output_dir`.
+W&B creates its own `wandb` child under its root; do not append another `wandb`
+to the default `dir`.
+
+`dir` controls W&B run files, not all artifact locations. Configure
+`WANDB_DATA_DIR` for artifact staging and `WANDB_CACHE_DIR` for a target's shared
+artifact cache; downloaded artifacts should use `artifact.download(root=...)`
+when a task-specific destination is needed. W&B owns upload/sync; runq does not
+upload checkpoints automatically or store credentials.
+
+Call `ctx.link_wandb(run)` immediately after `wandb.init`. It records only a
+nonempty `run.url` on global rank zero, including custom run IDs. Set `RANK` to
+the framework's global rank, or pass `global_rank` to `link_wandb`; `LOCAL_RANK`
+is insufficient on multiple nodes. For frameworks without `RANK`, also set
+`mode="disabled"` in init kwargs for nonzero global ranks.
+
+A retry keeps task identity, outputs, checkpoints and offline files. The default
+`id=task_id, resume="allow"` resumes an online run; offline attempts remain
+separate local run bundles and must be synced with W&B's official `wandb sync`.
+W&B runtime accumulated across retries does not represent one attempt's script
+or scheduler time. A new task has a new run ID.
+
+`runq clean --show` previews removal; an explicitly confirmed `all` action
+removes the task directory, including its outputs/checkpoints/W&B files and
+unsynced offline data, plus the recorded task log. Paths explicitly overridden
+outside that directory and shared caches are left in place. No background
+retention policy deletes these files.

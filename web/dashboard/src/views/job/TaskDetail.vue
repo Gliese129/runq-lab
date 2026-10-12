@@ -193,6 +193,7 @@
         <div v-if="task.command" class="kv-row"><span class="kv-key">{{ t('task.exec_command') }}</span><code>{{ task.command }}</code></div>
         <div v-if="task.working_dir" class="kv-row"><span class="kv-key">{{ t('task.exec_working_dir') }}</span><code>{{ task.working_dir }}</code></div>
         <div v-if="task.task_dir" class="kv-row"><span class="kv-key">{{ t('task.exec_task_dir') }}</span><code>{{ task.task_dir }}</code></div>
+        <div v-for="[label, dir] in [['RUNQ_OUTPUT_DIR', task.output_dir], ['RUNQ_CHECKPOINT_DIR', task.checkpoint_dir], ['WANDB_DIR', task.wandb_dir]]" :key="label" class="kv-row"><span class="kv-key">{{ label }}</span><code>{{ dir || '—' }}</code></div>
         <div class="kv-row"><span class="kv-key">{{ t('job.exit_code') }}</span><code>{{ task.exit_code ?? '—' }}</code></div>
         <div class="kv-row">
           <span class="kv-key">{{ t('job.elapsed') }}</span>
@@ -488,14 +489,11 @@ const sweptParams = computed(() => {
 
 const latestMetrics = computed(() => Object.entries(task.value?.metrics ?? {}))
 
-// External links: what the task reported via runq.link, plus the legacy
-// run-id link when the project's wandb config makes it resolvable.
+// External links are the actual URLs reported by initialized tools.
 const taskLinks = computed(() => {
   const view = task.value
   if (!view) return []
   const links: Record<string, string> = { ...view.links }
-  const base = jobDetail.value?.wandb?.base_url
-  if (!links.wandb && view.wandb_run_id && base) links.wandb = `${base}/runs/${view.wandb_run_id}`
   return Object.entries(links)
     .sort(([a], [b]) => (a === 'wandb' ? -1 : b === 'wandb' ? 1 : a.localeCompare(b)))
     .map(([name, url]) => ({ name, url, label: name === 'wandb' ? 'W&B' : name }))

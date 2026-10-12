@@ -66,6 +66,8 @@ class Context:
     # Filesystem paths (None when the relevant env var wasn't set).
     task_dir: Path | None = None
     checkpoint_dir: Path | None = None
+    output_dir: Path | None = None
+    wandb_dir: Path | None = None
     metrics_file: Path | None = None
     # results.jsonl (runq.record data plane) lives NEXT TO metrics.jsonl;
     # derived from metrics_file rather than env-injected, so an older
@@ -137,7 +139,7 @@ class Context:
         is one run; W&B's system monitor on rank 0 covers every GPU on that
         node. Every key is a default — pass your own to override, e.g.
         ``wandb.init(**{**ctx.wandb_like_cfg, "id": my_id})``. Then call
-        ``runq.link("wandb", run.url)`` so runq shows the run on the task.
+        ``ctx.link_wandb(run)`` so runq shows the run on the task.
         The SDK never imports wandb.
         """
         sweep_keys_raw = os.environ.get("RUNQ_SWEEP_KEYS", "")
@@ -161,6 +163,8 @@ class Context:
             "resume": "allow",
             "config": dict(self.params or {}),
         }
+        if self.wandb_dir is not None:
+            cfg["dir"] = str(self.wandb_dir)
         if project_cfg.get("entity"):
             cfg["entity"] = project_cfg["entity"]
         tags = [t for t in project_cfg.get("tags") or [] if isinstance(t, str)]
@@ -172,6 +176,21 @@ class Context:
         if _int_or_zero(os.environ.get("RANK")) > 0:
             cfg["mode"] = "disabled"
         return cfg
+
+    def link_wandb(self, run: Any, *, global_rank: int | None = None) -> None:
+        """Record a nonempty run.url from the main process, including custom ids.
+
+        Pass the framework's global rank if it is not exported as RANK.
+        Offline/disabled runs with no URL leave the existing link untouched.
+        The helper never imports W&B or constructs a URL.
+        """
+        rank = _int_or_zero(os.environ.get("RANK")) if global_rank is None else global_rank
+        if rank != 0:
+            return
+        url = getattr(run, "url", None)
+        if isinstance(url, str) and url.strip():
+            from ._link import link
+            link("wandb", url)
 
     @property
     def wandb_like_metric(self) -> dict:
@@ -318,6 +337,11 @@ def context() -> Context:
         params_file = env.get("RUNQ_PARAMS_FILE")
         params = _load_params(Path(params_file)) if params_file else {}
 
+    output_raw = env.get("RUNQ_OUTPUT_DIR")
+    wandb_raw = env.get("WANDB_DIR")
+    output_dir = Path(output_raw) if output_raw else (task_dir / "outputs" if task_dir else None)
+    wandb_dir = Path(wandb_raw) if wandb_raw else task_dir
+
     _ctx = Context(
         mode=mode,
         task_id=task_id,
@@ -325,6 +349,8 @@ def context() -> Context:
         project=env.get("RUNQ_PROJECT_NAME", ""),
         task_dir=task_dir,
         checkpoint_dir=checkpoint_dir,
+        output_dir=output_dir,
+        wandb_dir=wandb_dir,
         metrics_file=metrics_file,
         results_file=results_file,
         links_file=links_file,
@@ -337,8 +363,9 @@ def context() -> Context:
     # and prevents a confusing first-write failure mid-training.
     if _ctx.metrics_file is not None:
         _ctx.metrics_file.parent.mkdir(parents=True, exist_ok=True)
-    if _ctx.checkpoint_dir is not None:
-        _ctx.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    for directory in (_ctx.checkpoint_dir, _ctx.output_dir, _ctx.wandb_dir):
+        if directory is not None:
+            directory.mkdir(parents=True, exist_ok=True)
 
     return _ctx
 
