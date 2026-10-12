@@ -121,16 +121,15 @@ Full reference: [docs/cli.md](./docs/cli.md)
 
 Run `runq skill install` once per machine. The short version:
 
-- Preview with `submit --dry`; a real `submit` queues real cluster jobs.
-- One project per code base; new experiment = new `job.yaml`.
-- Read state with one `runq ps <job> --json`; never write polling loops.
-- `runq logs` follows by default — use `--no-follow` or `--grep`.
-- If runq and the scheduler disagree, report "unconfirmed" with both facts.
-- Don't write wrapper scripts for things runq declares (env, dirs, retries, sync).
-- Check outputs, not counts: look at real generations/losses before reporting a
-  rate or widening a sweep.
-- Keep the repo tidy: one project.yaml, job files per experiment, no `-v2` copies
-  or per-run status docs.
+- Preview with `submit --dry`, then submit when it matches the plan.
+- Express variations of an experiment as job files under the existing project.
+- Check state with one `runq ps <job> --json` when there is a reason to look.
+- From tool calls, read logs with `--no-follow` or `--grep`.
+- When runq and the scheduler disagree, report "unconfirmed" with both observations.
+- Declare environment, directories, retries and sync in YAML so the command stays
+  `python train.py`.
+- Look at real outputs (generations, losses) before reporting a rate or widening a sweep.
+- Keep experiment files together and edit or parametrize them rather than copying.
 
 ## Documentation
 

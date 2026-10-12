@@ -1,13 +1,13 @@
 # runq troubleshooting — first line of the error → what to do
 
 Read the error first; runq errors usually name the fix. Do one diagnostic
-step, then act or report. Do not loop retries.
+step, then act or report; one retry is usually enough to tell a blip from a fault.
 
 | Symptom (first line) | Meaning | Do |
 |---|---|---|
 | `dial unix …runq.sock: … no such file or directory` / `connection refused` | runq service not running | `runq serve status` → `runq serve -d` |
 | `… (PID n) exists but is not responding` | service hung | `runq serve restart` |
-| `context deadline exceeded` on submit / logs / task show | the service is waiting on SSH to the target | `runq target show <name>`; one `ssh <host> true`; report "unconfirmed" — don't restart in a loop |
+| `context deadline exceeded` on submit / logs / task show | the service is waiting on SSH to the target | `runq target show <name>`; one `ssh <host> true`; report "unconfirmed"; restart the service once if the target itself is reachable |
 | `ssh: handshake failed: unable to authenticate` | no usable key | `ssh-add <key>` (agent is used first) or fix the key path in the target |
 | `key … is passphrase-protected — add it to ssh-agent` | encrypted key, no agent | `ssh-add <key>` |
 | `unknown host key for …` | first contact / rotated keys | `runq target connect <name>` |
@@ -31,7 +31,7 @@ step, then act or report. Do not loop retries.
 - **runq says running, user says it finished (or vice versa)**:
   `runq ps <job_id> --fresh --json` (forces a probe). If it still disagrees with
   `qstat` / `qacct -j <ext_id>`, report both values as "unconfirmed /
-  conflicting" — don't pick one.
+  conflicting" and let the researcher see both.
 - **A dead task still "running" blocks new submits (max_inflight)**: after
   confirming with the scheduler that it is gone, `runq kill <task_id>`.
 - **The remote code is stale**: runq ran what was on the target at submit

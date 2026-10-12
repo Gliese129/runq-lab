@@ -51,7 +51,7 @@ when `RANK > 0` (one run per multi-GPU task; rank 0's system monitor covers
 every GPU on its node). Every key is a default you can override.
 `runq.link(name, url)` works with any run-id scheme; call it right after init.
 
-## Removed in 0.6 (do not use)
+## Removed in 0.6 (use the replacements above)
 
 `safe_save`, `best_checkpoint`, `latest_checkpoint`, `early_stop`, `Decision`,
 `patience`, `threshold`, `convergence`, `runq.range`, `runq.loop`, `runq.epoch`,
@@ -62,10 +62,10 @@ every GPU on its node). Every key is a default you can override.
 
 - `ctx.output_dir` / `RUNQ_OUTPUT_DIR`: task `outputs/`; write training outputs there explicitly.
 - `ctx.checkpoint_dir` / `RUNQ_CHECKPOINT_DIR`: task `checkpoints/`, retained on retry.
-- `ctx.wandb_like_cfg["dir"]` = resolved `WANDB_DIR`, default task root. W&B creates `wandb/` itself; do not pass `task_dir/wandb` by default.
+- `ctx.wandb_like_cfg["dir"]` = resolved `WANDB_DIR`, default task root. W&B creates `wandb/` under it, so pass the root (the default) rather than `task_dir/wandb`.
 - Project/job explicit path overrides win and appear in preview; relative paths resolve against the target project's `working_dir`. Submission creates/checks the selected target paths. CWD stays the code directory.
 - Set global `RANK` (not `LOCAL_RANK`) before W&B init. Without `RANK`, explicitly disable W&B on nonzero framework global ranks and pass that rank to `ctx.link_wandb`.
-- Call `ctx.link_wandb(run)` after init. It records a nonempty actual URL; don't guess custom-id URLs. Core SDK does not import W&B.
+- Call `ctx.link_wandb(run)` after init. It records the run's actual URL, which stays correct for custom run ids. Core SDK does not import W&B.
 - Default task ID plus `resume="allow"` continues an online run on retry. Offline attempts keep independent bundles; use W&B's official sync. W&B cumulative runtime is not the current attempt's runtime.
 - Artifact staging (`WANDB_DATA_DIR`), shared cache (`WANDB_CACHE_DIR`) and download (`artifact.download(root=...)`) are independent of run dir. Runq doesn't upload checkpoints or manage W&B credentials.
 - Retry preserves task files. Confirmed `clean all` deletes task dirs (including offline bundles, outputs and checkpoints) and task logs; overridden paths outside task dirs and shared caches survive. Preview before deleting unsynced data.
