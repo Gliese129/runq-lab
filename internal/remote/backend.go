@@ -161,11 +161,6 @@ func (b *Backend) WithLifecycleLock(fn func() error) error {
 	return fn()
 }
 
-// New builds a Backend with a local filesystem (same-machine operation).
-func New(cfg *config.TargetConfig, st *store.Store, storageCfg *config.GlobalConfig) *Backend {
-	return &Backend{Cfg: cfg, Store: st, FS: rfs.NewLocalFS(), StorageCfg: storageCfg}
-}
-
 // NewWithFS builds a Backend with an explicit filesystem — used by SSHBackend
 // to inject an rfs.SSHFS for remote cluster operation.
 func NewWithFS(cfg *config.TargetConfig, st *store.Store, storageCfg *config.GlobalConfig, fsys rfs.FS) *Backend {

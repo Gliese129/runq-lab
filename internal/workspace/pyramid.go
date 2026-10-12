@@ -375,28 +375,6 @@ type PyramidInfo struct {
 	LayerCounts []int64 `json:"layer_counts"` // records per layer, coarsest first
 }
 
-// InspectPyramid parses only the header and reports every key's shape.
-func InspectPyramid(ctx context.Context, fsys rfs.FS, taskDir string) ([]PyramidInfo, error) {
-	if fsys == nil {
-		fsys = rfs.NewLocalFS()
-	}
-	f, err := fsys.Open(PyramidPath(taskDir))
-	if err != nil {
-		return nil, ErrPyramidNotBuilt
-	}
-	defer f.Close()
-	metas, err := parseHeader(f)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]PyramidInfo, 0, len(metas))
-	for key, m := range metas {
-		out = append(out, PyramidInfo{Key: key, PointCount: m.pointCount, LayerCounts: m.layerCounts})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-	return out, nil
-}
-
 // QueryPyramid returns ≤ maxBuckets buckets for one key covering [fromTS, toTS]
 // (0,0 = full range). Descent: start at the coarsest level, narrow the
 // bucket span by first_ts/last_ts, drop one level (span ×pyramidFanout) while the

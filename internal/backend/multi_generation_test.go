@@ -39,11 +39,6 @@ func (l *generationTestLane) RefreshJob(_ context.Context, jobID string) error {
 	return l.refreshErr
 }
 
-func (l *generationTestLane) recordTasksSync(err error) {
-	l.recordedSyncErr = err
-	l.syncStale = err != nil
-}
-
 func (l *generationTestLane) ReconcileAll(context.Context) error {
 	l.reconcileCalls++
 	return nil

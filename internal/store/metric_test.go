@@ -32,8 +32,6 @@ func seedJobAndTask(t *testing.T, s *Store, taskID, jobID string) {
 	}
 }
 
-func ptrInt64(v int64) *int64 { return &v }
-
 // ── tests ─────────────────────────────────────────────────────────────────
 
 func TestMergeMetricSummaries(t *testing.T) {

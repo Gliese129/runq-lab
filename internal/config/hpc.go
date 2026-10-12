@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -22,76 +21,6 @@ func HPCLogDir() string { return filepath.Join(ConfigDir(), "logs") }
 // HPCOpLogPath is the append-only HPC operation log.
 func HPCOpLogPath() string { return filepath.Join(HPCLogDir(), "runq.log") }
 
-// LoadHPCConfig reads and validates the `hpc:` section of config.yaml,
-// returning a *TargetConfig with the HPC template fields populated.
-func LoadHPCConfig() (*TargetConfig, error) {
-	path := ConfigPath()
-	buf, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, fmt.Errorf("no HPC config at %s — run `runq hpc init` first", path)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
-	}
-	var f hpcConfigFile
-	if err := yaml.Unmarshal(buf, &f); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	if err := f.HPC.validateHPC(); err != nil {
-		return nil, fmt.Errorf("invalid %s (hpc section): %w", path, err)
-	}
-	return &f.HPC, nil
-}
-
-// validateHPC checks required HPC template fields.
-func (tc *TargetConfig) validateHPC() error {
-	if tc.SubmitTemplate == "" {
-		return fmt.Errorf("submit_template is required")
-	}
-	if tc.SubmitIDRegex == "" {
-		return fmt.Errorf("submit_id_regex is required")
-	}
-	re, err := regexp.Compile(tc.SubmitIDRegex)
-	if err != nil {
-		return fmt.Errorf("submit_id_regex is not a valid regular expression: %w", err)
-	}
-	if re.NumSubexp() != 1 {
-		return fmt.Errorf(
-			`submit_id_regex must contain exactly one capture group for the job id (found %d), e.g. "Submitted batch job ([0-9]+)" — use (?:...) for grouping you don't want captured`,
-			re.NumSubexp())
-	}
-	if tc.KillTemplate == "" {
-		return fmt.Errorf("kill_template is required")
-	}
-	return nil
-}
-
-// SaveHPCConfig rewrites the hpc: section of config.yaml, preserving every
-// other top-level key by value.
-func SaveHPCConfig(cfg *TargetConfig) error {
-	if err := cfg.validateHPC(); err != nil {
-		return err
-	}
-	path := ConfigPath()
-	doc := map[string]any{}
-	if buf, err := os.ReadFile(path); err == nil {
-		if err := yaml.Unmarshal(buf, &doc); err != nil {
-			return fmt.Errorf("parse %s: %w", path, err)
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("read %s: %w", path, err)
-	}
-	doc["hpc"] = cfg
-	out, err := yaml.Marshal(doc)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(ConfigDir(), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, out, 0o644)
-}
-
 // HPCPresets returns the scheduler names WriteHPCTemplate understands.
 func HPCPresets() []string { return []string{"slurm", "pbs", "sge", "tsubame", "abci", "runq"} }
 
@@ -106,62 +35,6 @@ func HPCPreset(name string) (*TargetConfig, error) {
 		return nil, fmt.Errorf("parse preset %q: %w", name, err)
 	}
 	return &f.HPC, nil
-}
-
-// WriteHPCTemplate creates the config dir and writes a starter config.yaml
-// for the named scheduler ("slurm" | "pbs" | "sge"; empty = generic).
-//
-// Three cases:
-//   - no config.yaml exists         → write the full template (global + hpc)
-//   - config.yaml exists WITHOUT hpc: → append the hpc section
-//   - config.yaml exists WITH hpc:    → refuse to overwrite ("already exists")
-func WriteHPCTemplate(scheduler string) (path string, created bool, err error) {
-	tmpl, ok := hpcTemplates[scheduler]
-	if !ok {
-		return "", false, fmt.Errorf("unknown scheduler %q (try: %v, or omit for generic)", scheduler, HPCPresets())
-	}
-	hpcSnippet, ok := hpcSnippets[scheduler]
-	if !ok {
-		hpcSnippet = hpcSnippets[""]
-	}
-
-	dir := ConfigDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", false, fmt.Errorf("mkdir %s: %w", dir, err)
-	}
-	path = ConfigPath()
-
-	buf, readErr := os.ReadFile(path)
-	if readErr != nil && !os.IsNotExist(readErr) {
-		return "", false, fmt.Errorf("read %s: %w", path, readErr)
-	}
-
-	if os.IsNotExist(readErr) {
-		if err := os.WriteFile(path, []byte(tmpl), 0o644); err != nil {
-			return "", false, fmt.Errorf("write %s: %w", path, err)
-		}
-		return path, true, nil
-	}
-
-	var probe struct {
-		HPC yaml.Node `yaml:"hpc"`
-	}
-	if err := yaml.Unmarshal(buf, &probe); err != nil {
-		return "", false, fmt.Errorf("parse existing %s: %w", path, err)
-	}
-	if probe.HPC.Kind != 0 {
-		return path, false, nil
-	}
-
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return "", false, fmt.Errorf("open %s for append: %w", path, err)
-	}
-	defer f.Close()
-	if _, err := f.WriteString(hpcSnippet); err != nil {
-		return "", false, fmt.Errorf("append hpc section to %s: %w", path, err)
-	}
-	return path, true, nil
 }
 
 // HPCPlaceholders is the single source of truth for which {{vars}} each

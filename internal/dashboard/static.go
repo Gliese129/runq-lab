@@ -23,10 +23,6 @@ type StaticAssets struct {
 	Err    error
 }
 
-func StaticFS() fs.FS {
-	return ResolveStaticAssets("").FS
-}
-
 func ResolveStaticAssets(assetsDir string) StaticAssets {
 	if embedded, ok := embeddedDashboardFS(); ok {
 		if err := requireDashboardIndex(embedded); err == nil {

@@ -1376,11 +1376,3 @@ func envelope[T any](items []T) listEnvelope[T] {
 	}
 	return listEnvelope[T]{Items: items}
 }
-
-func ParsePort(port string) (int, error) {
-	p, err := strconv.Atoi(port)
-	if err != nil || p < 1 || p > 65535 {
-		return 0, fmt.Errorf("invalid port %q", port)
-	}
-	return p, nil
-}

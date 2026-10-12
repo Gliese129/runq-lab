@@ -584,20 +584,6 @@ func (m *MultiBackend) jobOwningLanes(ctx context.Context, jobID string) (primar
 	return primary, owners, nil
 }
 
-// jobControlLanes includes every current owner plus the active lane even when
-// its scope is empty. The active generation owns any future manual retry, so a
-// paused job must already be gated there before ownership can move to it.
-func (m *MultiBackend) jobControlLanes(ctx context.Context, jobID string) ([]Backend, error) {
-	primary, owners, err := m.jobOwningLanes(ctx, jobID)
-	if err != nil {
-		return nil, err
-	}
-	if len(owners) == 0 || owners[0] != primary {
-		owners = append([]Backend{primary}, owners...)
-	}
-	return owners, nil
-}
-
 // refreshJobGenerations reconciles every live lane generation that owns at
 // least one task for the job. Errors are joined so an empty/successful active
 // scope can never hide a retiring generation's failure.

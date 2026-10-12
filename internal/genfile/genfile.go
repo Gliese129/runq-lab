@@ -33,7 +33,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"syscall"
 
 	"gopkg.in/yaml.v3"
@@ -250,17 +249,6 @@ func SemanticEqual(a, b []byte) bool {
 	ha, ea := SemanticHash(a)
 	hb, eb := SemanticHash(b)
 	return ea == nil && eb == nil && ha == hb
-}
-
-// SortedKeys is a small helper for consumers that render diffs of generic
-// trees (the field-level conflict dialog): deterministic key order.
-func SortedKeys(m map[string]any) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func hashBytes(b []byte) string {

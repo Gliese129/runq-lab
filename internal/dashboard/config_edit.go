@@ -72,13 +72,6 @@ func (s *Server) SetForwardStatus(fn func() map[string]rfs.ForwardStatus) { s.fo
 // immediately instead of waiting for the next watch tick.
 func (s *Server) SetConfigChanged(fn func()) { s.configChanged = fn }
 
-// notifyConfigChanged fires the reconciler hook if one is wired.
-func (s *Server) notifyConfigChanged() {
-	if s.configChanged != nil {
-		s.configChanged()
-	}
-}
-
 // SetForwardStopper wires the client daemon's runtime forward teardown
 // (POST /targets/{name}/disconnect).
 func (s *Server) SetForwardStopper(fn func(name string) error) { s.forwardStopper = fn }

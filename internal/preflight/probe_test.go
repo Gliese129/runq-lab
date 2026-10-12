@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -15,40 +14,6 @@ import (
 // ----------------------------------------------------------------------
 // HF reference extraction
 // ----------------------------------------------------------------------
-
-func TestExtractHFRefs(t *testing.T) {
-	src := []byte(`
-from transformers import AutoModel, AutoTokenizer
-from datasets import load_dataset
-from huggingface_hub import snapshot_download, hf_hub_download
-
-model = AutoModel.from_pretrained("org/model-7B")
-tok = AutoTokenizer.from_pretrained('org/model-7B')          # dup → dedup
-base = AutoModel.from_pretrained("gpt2")                     # single-segment id
-ds = load_dataset("org/eval-set", split="test")
-ds2 = load_dataset(path='squad')
-snap = snapshot_download(repo_id="org/weights")
-one = hf_hub_download("org/cfg", filename="config.json")
-
-local = AutoModel.from_pretrained("/data/ckpts/llama")       # abs path → skip
-rel = AutoModel.from_pretrained("./out")                     # rel path → skip
-home = AutoModel.from_pretrained("~/models/x")               # home path → skip
-tpl = AutoModel.from_pretrained(f"org/{name}")               # f-string → skip
-var = AutoModel.from_pretrained(model_name)                  # variable → skip
-`)
-	got := ExtractHFRefs(src)
-	want := []HFRef{
-		{RepoID: "org/model-7B", RepoType: "model"},
-		{RepoID: "gpt2", RepoType: "model"},
-		{RepoID: "org/weights", RepoType: "model"},
-		{RepoID: "org/cfg", RepoType: "model"},
-		{RepoID: "org/eval-set", RepoType: "dataset"},
-		{RepoID: "squad", RepoType: "dataset"},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("refs = %#v\nwant %#v", got, want)
-	}
-}
 
 func TestHFDownloadCommand(t *testing.T) {
 	if got := (HFRef{RepoID: "org/m", RepoType: "model"}).DownloadCommand(); got != "huggingface-cli download org/m" {

@@ -24,54 +24,6 @@ func printDashboardJobs(jobs []backend.JobSummary) error {
 	return w.Flush()
 }
 
-func printDashboardDetail(detail *backend.JobDetail) error {
-	fmt.Printf("job %s  project=%s  status=%s  tasks=%d\n\n",
-		utils.IDColor(detail.Job.ID), detail.Job.Project,
-		utils.StatusColor(detail.Job.Status), detail.Job.Tasks.Total)
-	if len(detail.Tasks) == 0 {
-		return nil
-	}
-
-	// Detect HPC fields: show extra columns only when at least one task
-	// has an external_id (poll-model backend).
-	hasHPC := false
-	for _, t := range detail.Tasks {
-		if t.ExternalID != "" {
-			hasHPC = true
-			break
-		}
-	}
-
-	w := newTable()
-	if hasHPC {
-		fmt.Fprintf(w, "TASK_ID\tEXT_ID\tSTATUS\tSCHED_STATE\tQUEUE\tRETRY\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
-	} else {
-		fmt.Fprintf(w, "TASK_ID\tSTATUS\tRETRY\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
-	}
-	for _, task := range detail.Tasks {
-		step := "-"
-		if task.CurrentStep != nil {
-			step = fmt.Sprintf("%d", *task.CurrentStep)
-		}
-		elapsed := "-"
-		if task.ElapsedSec != nil {
-			elapsed = formatTaskDuration(task.ElapsedSec, task.TimeEstimated)
-		}
-		status := utils.StatusColor(task.Status)
-		if hasHPC {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
-				utils.IDColor(task.ID), task.ExternalID, status,
-				task.NativeState, task.Queue,
-				task.RetryCount, step, formatTaskDuration(task.QueueSec, task.QueueEstimated), formatTaskDuration(task.SchedulerSec, false), elapsed, compactJSON(task.Params))
-		} else {
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
-				utils.IDColor(task.ID), status, task.RetryCount,
-				step, formatTaskDuration(task.QueueSec, task.QueueEstimated), formatTaskDuration(task.SchedulerSec, false), elapsed, compactJSON(task.Params))
-		}
-	}
-	return w.Flush()
-}
-
 // printDashboardTasks renders the flat task table for `runq ps <job_id>`
 // (D16 task view) — same column logic as the job-detail table.
 func printDashboardTasks(tasks []backend.TaskView) error {

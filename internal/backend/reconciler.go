@@ -47,6 +47,3 @@ type Reconciler interface {
 // NoopReconciler satisfies Reconciler for push-model backends where data
 // is always current (daemon mode).
 type NoopReconciler struct{}
-
-func (NoopReconciler) EnsureFresh(context.Context, string, time.Duration) error { return nil }
-func (NoopReconciler) SchedulerProbe(context.Context, time.Duration) error      { return nil }

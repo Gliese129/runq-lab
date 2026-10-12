@@ -295,14 +295,6 @@ func SaveGlobal(cfg *GlobalConfig) error {
 	return saveGlobalWith(cfg, "")
 }
 
-// SaveGlobalIfMatch persists cfg with optimistic concurrency (RQ-75): the
-// file's current SEMANTIC generation must equal ifMatch or the save fails
-// with *genfile.ConflictError carrying the current generation. Empty
-// ifMatch degrades to the unconditional SaveGlobal (legacy CLI writers).
-func SaveGlobalIfMatch(cfg *GlobalConfig, ifMatch string) error {
-	return saveGlobalWith(cfg, ifMatch)
-}
-
 func saveGlobalWith(cfg *GlobalConfig, ifMatch string) error {
 	out, err := renderGlobalYAML(cfg)
 	if err != nil {
@@ -405,10 +397,6 @@ func ConfigDir() string {
 
 // ConfigPath is <ConfigDir>/config.yaml.
 func ConfigPath() string { return filepath.Join(ConfigDir(), "config.yaml") }
-
-// DBPath is <ConfigDir>/runq.db (the HPC store; the daemon has its own DB
-// under its runtime data dir).
-func DBPath() string { return filepath.Join(ConfigDir(), "runq.db") }
 
 // Load reads the global section of config.yaml. A missing file is not an error
 // — it returns a zero GlobalConfig (data_path empty = project_path mode).

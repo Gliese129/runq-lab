@@ -54,32 +54,6 @@ func looksLikeHFRepoID(s string) bool {
 	return hfRepoIDRegex.MatchString(s)
 }
 
-// ExtractHFRefs scans python source for Hub references. Deduped, in
-// order of first appearance. Model and dataset namespaces are distinct
-// on the Hub, so the same id may legitimately appear as both.
-func ExtractHFRefs(src []byte) []HFRef {
-	var refs []HFRef
-	seen := map[string]bool{}
-	add := func(id, repoType string) {
-		if !looksLikeHFRepoID(id) {
-			return
-		}
-		key := repoType + ":" + id
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		refs = append(refs, HFRef{RepoID: id, RepoType: repoType})
-	}
-	for _, m := range hfModelCallRegex.FindAllStringSubmatch(string(src), -1) {
-		add(m[1], "model")
-	}
-	for _, m := range hfDatasetCallRegex.FindAllStringSubmatch(string(src), -1) {
-		add(m[1], "dataset")
-	}
-	return refs
-}
-
 // DownloadCommand renders the ready-made pre-download command for a ref.
 // Surfaced verbatim in warnings so the CLI user can copy-paste it and the
 // WebUI can inject it into the project's setup command in one click.

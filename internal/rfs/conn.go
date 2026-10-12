@@ -259,10 +259,6 @@ func (c *sshConn) invalidate(client *ssh.Client) {
 	c.mu.Unlock()
 	_ = client.Close()
 }
-func (c *sshConn) getSFTP() (*sftp.Client, error) {
-	_, sc, err := c.getSFTPContext(context.Background())
-	return sc, err
-}
 func (c *sshConn) getSFTPContext(ctx context.Context) (*ssh.Client, *sftp.Client, error) {
 	client, err := c.getConnContext(ctx)
 	if err != nil {
