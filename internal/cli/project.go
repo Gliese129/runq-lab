@@ -32,7 +32,7 @@ is also provided on the command line (CLI takes priority).`,
   runq project add myproject --file ./project.yaml
 
   # Inline (minimal)
-  runq project add myproject --dir . --cmd "python train.py {{args}}"`,
+  runq project add myproject --dir . --cmd "python train.py {{args}}" -t local`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := project.Config{}
 		var yamlPath string
@@ -76,6 +76,9 @@ is also provided on the command line (CLI takes priority).`,
 			cfg.CmdTemplate = cmdTpl
 		}
 
+		if cmd.Flags().Changed("target") {
+			cfg.Target, _ = cmd.Flags().GetString("target")
+		}
 		return withBackend(cmd, func(be backend.Backend) error {
 			if err := be.CreateProject(cmd.Context(), cfg); err != nil {
 				return err
@@ -198,6 +201,7 @@ func init() {
 	// Flags for project add
 	projectAddCmd.Flags().StringP("file", "f", "", "Path to project.yaml")
 	projectAddCmd.Flags().String("dir", "", "Working directory")
+	projectAddCmd.Flags().StringP("target", "t", "", "Project source/default execution target (registration only)")
 	projectAddCmd.Flags().String("cmd", "", "Command template")
 
 	projectCmd.AddCommand(projectAddCmd)

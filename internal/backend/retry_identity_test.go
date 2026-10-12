@@ -243,9 +243,6 @@ func TestSSHRestoreReinstatesPausedDispatchGate(t *testing.T) {
 	if !be.sched.IsJobPaused("job-paused") {
 		t.Fatal("paused job dispatch gate was not restored")
 	}
-	if !be.Capabilities().PauseResume {
-		t.Fatal("SSH lane hides its runq-level pause/resume capability")
-	}
 }
 
 func TestSSHRestorePreservesPendingExternalKillForReplay(t *testing.T) {
@@ -305,79 +302,6 @@ func TestSSHRestorePreservesPendingExternalKillForReplay(t *testing.T) {
 	}
 	if settled.Status != "killed" {
 		t.Fatalf("restored kill intent settled as %q, want killed", settled.Status)
-	}
-}
-
-func TestSSHResumeJobCompletesGenerationFanoutAfterPeerPersistence(t *testing.T) {
-	ctx := context.Background()
-	st, err := store.Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	be, err := NewSSHBackend(SSHBackendConfig{
-		Target: config.TargetConfig{Name: "hpc", SubmitTemplate: "submit {{run_sh}}", SubmitIDRegex: `job ([0-9]+)`},
-		Store:  st,
-		FS:     rfs.NewLocalFS(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = be.Close() })
-	if err := st.InsertJob(ctx, &store.JobRow{
-		ID: "job-resume-fanout", ProjectName: "p", ConfigJSON: "{}",
-		Status: "running", TotalTasks: 1, Target: "hpc", CreatedAt: time.Now(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	be.sched.PauseJob("job-resume-fanout")
-
-	// Another owning generation already changed the shared durable status.
-	// This lane must still remove its local dispatch gate idempotently.
-	if err := be.ResumeJob(ctx, "job-resume-fanout"); err != nil {
-		t.Fatalf("complete resume fanout: %v", err)
-	}
-	if be.sched.IsJobPaused("job-resume-fanout") {
-		t.Fatal("resume fanout left this generation's dispatch gate paused")
-	}
-}
-
-func TestSSHPausePersistenceFailureReopensDispatchGate(t *testing.T) {
-	ctx := context.Background()
-	st, err := store.Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	be, err := NewSSHBackend(SSHBackendConfig{
-		Target: config.TargetConfig{Name: "hpc", SubmitTemplate: "submit {{run_sh}}", SubmitIDRegex: `job ([0-9]+)`},
-		Store:  st,
-		FS:     rfs.NewLocalFS(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = be.Close() })
-	if err := st.InsertJob(ctx, &store.JobRow{
-		ID: "job-pause-fail", ProjectName: "p", ConfigJSON: "{}",
-		Status: "running", TotalTasks: 1, Target: "hpc", CreatedAt: time.Now(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.DB().Exec(`
-		CREATE TRIGGER reject_job_pause
-		BEFORE UPDATE OF status ON jobs
-		WHEN NEW.status = 'paused'
-		BEGIN SELECT RAISE(ABORT, 'injected pause failure'); END;
-	`); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := be.PauseJob(ctx, "job-pause-fail"); err == nil {
-		t.Fatal("pause unexpectedly succeeded despite persistence failure")
-	}
-	if be.sched.IsJobPaused("job-pause-fail") {
-		t.Fatal("failed pause left the dispatch gate closed")
 	}
 }
 

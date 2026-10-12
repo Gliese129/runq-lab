@@ -2,13 +2,10 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"syscall"
 	"time"
@@ -92,18 +89,28 @@ job.yaml in the current directory.`,
 			// ── submit ──
 			jobID, n, err := be.SubmitJob(ctx, jobCfg, backend.SubmitOptions{
 				SkipPreflight: noPreflight,
+				Target:        explicitSubmitTarget(cmd),
 			})
 			if err != nil {
 				return err
 			}
+			target, source := "", ""
+			if detail, err := be.GetJob(ctx, jobID); err == nil && detail != nil {
+				target, source = detail.Job.Target, detail.Job.TargetSource
+			}
 			if jsonOut {
 				printJSON(struct {
-					JobID      string `json:"job_id"`
-					TotalTasks int    `json:"total_tasks"`
-				}{JobID: jobID, TotalTasks: n})
+					JobID        string `json:"job_id"`
+					TotalTasks   int    `json:"total_tasks"`
+					Target       string `json:"target,omitempty"`
+					TargetSource string `json:"target_source,omitempty"`
+				}{JobID: jobID, TotalTasks: n, Target: target, TargetSource: source})
 				return nil
 			}
 			fmt.Printf("submitted job %s (%d tasks)\n", utils.IDColor(jobID), n)
+			if target != "" {
+				fmt.Printf("target: %s (%s)\n", target, source)
+			}
 			printGPUHint(ctx, be)
 
 			if watch {
@@ -132,13 +139,10 @@ func ensureProjectRegistered(cmd *cobra.Command, be backend.Backend, jobProject 
 	if cfg.ProjectName == "" {
 		cfg.ProjectName = jobProject
 	}
-	// Home target (RQ-65): --target / $RUNQ_TARGET / .active-target wins;
-	// empty stays empty and the daemon fills its default_target — either
-	// way the registered project carries an EXPLICIT home.
 	if cfg.Target == "" {
-		cfg.Target = resolveTarget(cmd)
+		return fmt.Errorf("%s: project.target is required", pf)
 	}
-	ctx := context.Background()
+	ctx := cmd.Context()
 	if _, err := be.GetProject(ctx, cfg.ProjectName); err != nil {
 		return be.CreateProject(ctx, cfg)
 	}
@@ -152,63 +156,29 @@ func ensureProjectRegistered(cmd *cobra.Command, be backend.Backend, jobProject 
 // target backend and returns ErrNotSupported for backends without a
 // submit template.
 func submitDryRun(ctx context.Context, be backend.Backend, jobCfg job2.JobConfig, noPreflight, jsonOut bool) error {
-	// Try full submit preview (HPC targets render run.sh + submit command).
 	out, err := be.PreviewSubmit(ctx, jobCfg, noPreflight)
-	if err == nil {
-		if jsonOut {
-			printJSON(out)
-			return nil
-		}
-		fmt.Println(out.Preview)
-		return nil
-	}
-	if !errors.Is(err, backend.ErrNotSupported) {
-		return err
-	}
-
-	// Fall back to common dry-run: task expansion + command preview.
-	result, err := be.DryRun(ctx, jobCfg)
 	if err != nil {
 		return err
 	}
 	if jsonOut {
-		printJSON(result)
-		return nil
+		printJSON(out)
+	} else {
+		fmt.Println(out.Preview)
 	}
-	if len(result.Tasks) == 0 {
-		fmt.Println("No tasks would be generated.")
-		return nil
-	}
-	fmt.Printf("dry-run: %d task(s) would be submitted\n", len(result.Tasks))
-
-	keys := slices.Sorted(maps.Keys(result.Tasks[0]))
-	table := tablewriter.NewTable(os.Stdout)
-	table.Header(keys)
-	data := make([][]string, 0, len(result.Tasks))
-	for _, task := range result.Tasks {
-		row := make([]string, 0, len(keys))
-		for _, key := range keys {
-			row = append(row, fmt.Sprintf("%v", task[key]))
-		}
-		data = append(data, row)
-	}
-	if err := table.Bulk(data); err != nil {
-		return err
-	}
-	if err := table.Render(); err != nil {
-		return err
-	}
-
-	if result.WorkspaceRoot != "" {
-		fmt.Printf("\nworkspace root: %s/<note>-<job_id> (ids regenerate at submit)\n", result.WorkspaceRoot)
-	}
-	if result.SampleCommand != "" {
-		fmt.Printf("\n── command (task 1 of %d) ──\n%s\n", len(result.Tasks), result.SampleCommand)
+	if !out.Preflight.OK() {
+		return fmt.Errorf("preflight failed; nothing submitted")
 	}
 	return nil
 }
 
-// watchJob polls job status and renders a live-updating task table.
+func explicitSubmitTarget(cmd *cobra.Command) string {
+	if !cmd.Flags().Changed("target") {
+		return ""
+	}
+	target, _ := cmd.Flags().GetString("target")
+	return target
+}
+
 func watchJob(ctx context.Context, be backend.Backend, jobID string) error {
 	writer := uilive.New()
 	writer.Start()
@@ -256,7 +226,7 @@ func init() {
 	submitCmd.Flags().Bool("watch", false, "Block and show live progress after submit")
 	submitCmd.Flags().String("project", "", "Override the project name in the YAML")
 	submitCmd.Flags().StringP("note", "n", "", "Experiment note (overrides YAML note: field)")
-	submitCmd.Flags().String("project-file", "", "load project config from a YAML file instead of the HPC registry")
+	submitCmd.Flags().String("project-file", "", "Upsert project config from a YAML file (also writes on --dry)")
 	submitCmd.Flags().Bool("json", false, "output raw JSON")
 	submitCmd.Flags().Bool(
 		"no-preflight",
@@ -264,7 +234,7 @@ func init() {
 		"Skip submit-time checks (imports, pip check, path args, writability). "+
 			"Use when the daemon misclassifies a runtime-only path or conditional import.",
 	)
-	submitCmd.Flags().StringP("target", "t", "", "Compute target to submit to (default: config default_target)")
+	submitCmd.Flags().StringP("target", "t", "", "Execution target override (-t > job.target > project.target)")
 
 	submitCmd.GroupID = groupCore
 	rootCmd.AddCommand(submitCmd)

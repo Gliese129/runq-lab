@@ -3,7 +3,6 @@ package backend
 import (
 	"context"
 
-	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/project"
 	"github.com/gliese129/runq-lab/internal/store"
 )
@@ -80,12 +79,6 @@ func (b *storeQueries) configsToSummaries(ctx context.Context, configs []project
 }
 
 // ── DryRun ───────────────────────────────────────────────────────────────
-
-func (b *storeQueries) DryRun(ctx context.Context, cfg job.JobConfig) (*DryRunResult, error) {
-	return BuildDryRunResult(cfg, func(name string) (*project.Config, error) {
-		return b.reg.Get(ctx, name)
-	}, nil)
-}
 
 // ── Clean ─────────────────────────────────────────────────────────
 

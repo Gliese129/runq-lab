@@ -44,16 +44,6 @@ func (l *generationTestLane) recordTasksSync(err error) {
 	l.syncStale = err != nil
 }
 
-func (l *generationTestLane) PauseJob(context.Context, string) error {
-	l.pauseCalls++
-	return nil
-}
-
-func (l *generationTestLane) ResumeJob(context.Context, string) error {
-	l.resumeCalls++
-	return nil
-}
-
 func (l *generationTestLane) ReconcileAll(context.Context) error {
 	l.reconcileCalls++
 	return nil
@@ -107,38 +97,6 @@ func newGenerationMulti(t *testing.T, st *store.Store, active *generationTestLan
 	return m
 }
 
-func TestPauseResumeFanOutToEveryOwningGeneration(t *testing.T) {
-	st, err := store.Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	seedGenerationJob(t, st, "job-control", "active", "old")
-
-	active := newGenerationTestLane()
-	old := newGenerationTestLane()
-	unused := newGenerationTestLane()
-	m := newGenerationMulti(t, st, active)
-	m.SetRetiringLane("hpc", "old", old)
-	m.SetRetiringLane("hpc", "unused", unused)
-
-	ctx := context.Background()
-	if err := m.PauseJob(ctx, "job-control"); err != nil {
-		t.Fatalf("pause job: %v", err)
-	}
-	if err := m.ResumeJob(ctx, "job-control"); err != nil {
-		t.Fatalf("resume job: %v", err)
-	}
-	if active.pauseCalls != 1 || old.pauseCalls != 1 || unused.pauseCalls != 0 {
-		t.Fatalf("pause calls active/old/unused = %d/%d/%d, want 1/1/0",
-			active.pauseCalls, old.pauseCalls, unused.pauseCalls)
-	}
-	if active.resumeCalls != 1 || old.resumeCalls != 1 || unused.resumeCalls != 0 {
-		t.Fatalf("resume calls active/old/unused = %d/%d/%d, want 1/1/0",
-			active.resumeCalls, old.resumeCalls, unused.resumeCalls)
-	}
-}
-
 func TestRefreshJobDoesNotLetEmptyActiveScopeHideRetiringFailure(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
@@ -163,7 +121,7 @@ func TestRefreshJobDoesNotLetEmptyActiveScopeHideRetiringFailure(t *testing.T) {
 	}
 }
 
-func TestGenerationCompleteRefreshPrecedesJobScopedStoreReads(t *testing.T) {
+func TestJobScopedStoreReadsDoNotRefreshGenerations(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -198,14 +156,14 @@ func TestGenerationCompleteRefreshPrecedesJobScopedStoreReads(t *testing.T) {
 			if err == nil && tt.wantErr {
 				t.Fatal("expected store validation error")
 			}
-			if active.refreshCalls != 1 || old.refreshCalls != 1 {
-				t.Fatalf("refresh calls active/old = %d/%d, want 1/1", active.refreshCalls, old.refreshCalls)
+			if active.refreshCalls != 0 || old.refreshCalls != 0 {
+				t.Fatalf("refresh calls active/old = %d/%d, want 0/0", active.refreshCalls, old.refreshCalls)
 			}
 		})
 	}
 }
 
-func TestJobListRefreshesEveryOwningGenerationBeforeReread(t *testing.T) {
+func TestJobListReadsSnapshotWithoutRefreshingGenerations(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -225,8 +183,8 @@ func TestJobListRefreshesEveryOwningGenerationBeforeReread(t *testing.T) {
 	if len(jobs) != 1 || jobs[0].ID != "job-list" {
 		t.Fatalf("jobs = %+v, want job-list", jobs)
 	}
-	if active.refreshCalls != 1 || old.refreshCalls != 1 {
-		t.Fatalf("refresh calls active/old = %d/%d, want 1/1", active.refreshCalls, old.refreshCalls)
+	if active.refreshCalls != 0 || old.refreshCalls != 0 {
+		t.Fatalf("refresh calls active/old = %d/%d, want 0/0", active.refreshCalls, old.refreshCalls)
 	}
 	if active.listCalls != 0 || old.listCalls != 0 {
 		t.Fatalf("lane list calls active/old = %d/%d, want durable-store rendering", active.listCalls, old.listCalls)
@@ -250,11 +208,8 @@ func TestJobListAggregatesEveryObservationBeforePublishingFreshness(t *testing.T
 	if err != nil || len(jobs) != 2 {
 		t.Fatalf("jobs = %+v, err %v", jobs, err)
 	}
-	if !errors.Is(active.recordedSyncErr, failure) {
-		t.Fatalf("published sync error = %v, want aggregate containing %v", active.recordedSyncErr, failure)
-	}
-	if _, stale, known := m.SyncInfo(context.Background(), "hpc"); !known || !stale {
-		t.Fatalf("freshness known/stale = %t/%t, want true/true", known, stale)
+	if active.recordedSyncErr != nil || active.refreshCalls != 0 {
+		t.Fatal("state list started an observation")
 	}
 }
 

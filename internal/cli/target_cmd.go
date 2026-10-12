@@ -35,7 +35,8 @@ var targetUseCmd = &cobra.Command{
 	Short: "Select the active compute target for this session (or persistently with -p)",
 	Long: `Select the active compute target. Without -p, writes to ~/.runq/.active-target
 (session-scoped, overridden by $RUNQ_TARGET or --target flag). With -p,
-writes to config.yaml default_target (persists across sessions).`,
+writes to config.yaml default_target (persists across sessions).
+This scopes queries; submit always uses -t > job.target > project.target.`,
 	Example: `  runq target use tsubame       # session-scoped
   runq target use tsubame -p    # persistent default`,
 	Args: cobra.ExactArgs(1),

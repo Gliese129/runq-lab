@@ -4,7 +4,7 @@
 //
 //	interfaces.go          — Backend interface + SubmitOptions + Capabilities
 //	errors.go              — ErrNotSupported, ErrNotFound, IsNotFound
-//	helpers.go             — Build* view builders, metric readers, BuildDryRunResult
+//	helpers.go             — Build* view builders, metric readers
 //	types.go               — view/response structs
 //	clean.go               — PerformClean shared logic
 //	reconciler.go          — Reconciler interface, NoopReconciler, DefaultReadTTL

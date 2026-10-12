@@ -29,10 +29,6 @@ func (b *UnavailableBackend) RefreshJob(ctx context.Context, jobID string) error
 	return b.wrap()
 }
 
-func (b *UnavailableBackend) ResolveNote(ctx context.Context, cfg job.JobConfig) (string, error) {
-	return "", b.wrap()
-}
-
 func (b *UnavailableBackend) ListJobs(ctx context.Context, project string) ([]JobSummary, error) {
 	return nil, b.wrap()
 }
@@ -109,14 +105,6 @@ func (b *UnavailableBackend) KillJob(ctx context.Context, jobID string) error {
 	return b.wrap()
 }
 
-func (b *UnavailableBackend) PauseJob(ctx context.Context, jobID string) error {
-	return b.wrap()
-}
-
-func (b *UnavailableBackend) ResumeJob(ctx context.Context, jobID string) error {
-	return b.wrap()
-}
-
 func (b *UnavailableBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts SubmitOptions) (string, int, error) {
 	return "", 0, b.wrap()
 }
@@ -135,10 +123,6 @@ func (b *UnavailableBackend) UnarchiveProject(context.Context, string) error { r
 
 func (b *UnavailableBackend) PreviewSubmit(context.Context, job.JobConfig, bool) (PreviewResult, error) {
 	return PreviewResult{}, b.wrap()
-}
-
-func (b *UnavailableBackend) DryRun(ctx context.Context, cfg job.JobConfig) (*DryRunResult, error) {
-	return nil, b.wrap()
 }
 
 func (b *UnavailableBackend) GetProject(ctx context.Context, name string) (*project.Config, error) {

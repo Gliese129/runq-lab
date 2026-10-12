@@ -31,6 +31,8 @@ type Proxy struct {
 	// the API layer itself is always explicit (D11), so the Proxy is where
 	// the convenience layer turns into explicit paths/body fields.
 	TargetFilter string
+	// SubmitTarget is an explicit preview override; query filters never select submissions.
+	SubmitTarget string
 }
 
 // NewProxy creates a Backend proxy connected to the daemon at
@@ -115,12 +117,11 @@ func (p *Proxy) Capabilities() backend.Capabilities {
 		return backend.Capabilities{}
 	}
 	return backend.Capabilities{
-		GPUMap:      true,
-		PauseResume: true,
-		LiveLog:     true,
-		Retry:       true,
-		StateModel:  "push",
-		KillAsync:   false,
+		GPUMap:     true,
+		LiveLog:    true,
+		Retry:      true,
+		StateModel: "push",
+		KillAsync:  false,
 	}
 }
 
@@ -526,14 +527,6 @@ func (p *Proxy) KillJob(ctx context.Context, jobID string) error {
 	return p.do(ctx, "POST", "/api/v1/jobs/"+url.PathEscape(jobID)+"/kill", nil, nil)
 }
 
-func (p *Proxy) PauseJob(ctx context.Context, jobID string) error {
-	return p.do(ctx, "POST", "/api/v1/jobs/"+url.PathEscape(jobID)+"/pause", nil, nil)
-}
-
-func (p *Proxy) ResumeJob(ctx context.Context, jobID string) error {
-	return p.do(ctx, "POST", "/api/v1/jobs/"+url.PathEscape(jobID)+"/resume", nil, nil)
-}
-
 // ── Submit family（plan → preview → submit，选项一律 body，D12）──────────
 
 // submitWireBody matches the server's submitBody.
@@ -544,12 +537,6 @@ type submitWireBody struct {
 }
 
 func (p *Proxy) SubmitJob(ctx context.Context, cfg job.JobConfig, opts backend.SubmitOptions) (string, int, error) {
-	// TargetFilter is the default submit target when the caller doesn't
-	// specify one — the CLI sets it once via resolveTarget and every
-	// operation picks it up automatically.
-	if opts.Target == "" {
-		opts.Target = p.TargetFilter
-	}
 	var resp struct {
 		JobID      string `json:"job_id"`
 		TotalTasks int    `json:"total_tasks"`
@@ -564,43 +551,12 @@ func (p *Proxy) SubmitJob(ctx context.Context, cfg job.JobConfig, opts backend.S
 // PreviewSubmit routes through POST /jobs/preview, which delegates to the
 // target backend (full run.sh + submit command rendering).
 func (p *Proxy) PreviewSubmit(ctx context.Context, cfg job.JobConfig, skipPreflight bool) (backend.PreviewResult, error) {
-	body := submitWireBody{Config: cfg, Target: p.TargetFilter, SkipPreflight: skipPreflight}
+	body := submitWireBody{Config: cfg, Target: p.SubmitTarget, SkipPreflight: skipPreflight}
 	var resp backend.PreviewResult
 	if err := p.do(ctx, "POST", "/api/v1/jobs/preview", body, &resp); err != nil {
 		return backend.PreviewResult{}, err
 	}
 	return resp, nil
-}
-
-// PlanJob — POST /jobs/plan (D12): cheap local expansion + note resolution
-// in one call. The submit wizard and `runq submit --dry` consume this.
-func (p *Proxy) PlanJob(ctx context.Context, cfg job.JobConfig) (tasks []job.TaskParams, noteResolved string, err error) {
-	body := submitWireBody{Config: cfg, Target: p.TargetFilter}
-	var resp struct {
-		Tasks        []job.TaskParams `json:"tasks"`
-		NoteResolved string           `json:"note_resolved"`
-	}
-	if err := p.do(ctx, "POST", "/api/v1/jobs/plan", body, &resp); err != nil {
-		return nil, "", err
-	}
-	return resp.Tasks, resp.NoteResolved, nil
-}
-
-func (p *Proxy) DryRun(ctx context.Context, cfg job.JobConfig) (*backend.DryRunResult, error) {
-	// nil wsRootFor: the CLI-side fallback has no target filesystem; the
-	// daemon's /jobs/plan (and the lane's DryRun override) own the real
-	// workspace-root answer.
-	return backend.BuildDryRunResult(cfg, func(name string) (*project.Config, error) {
-		return p.GetProject(ctx, name)
-	}, nil)
-}
-
-// ResolveNote rides /jobs/plan (the standalone endpoint is retired, D12) —
-// the daemon owns the store, and the {{version}} family scan must run
-// against it (same path as submit).
-func (p *Proxy) ResolveNote(ctx context.Context, cfg job.JobConfig) (string, error) {
-	_, note, err := p.PlanJob(ctx, cfg)
-	return note, err
 }
 
 // ── Projects ────────────────────────────────────────────────────────────

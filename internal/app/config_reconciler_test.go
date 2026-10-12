@@ -247,7 +247,7 @@ func TestReconcileLastTargetToUnconfigured(t *testing.T) {
 	if len(d.lastTargets) != 0 {
 		t.Fatalf("observed targets = %+v, want empty", d.lastTargets)
 	}
-	if _, err := d.multiBe.DryRun(context.Background(), job.JobConfig{}); !errors.Is(err, backend.ErrNoTargetConfigured) {
+	if _, err := d.multiBe.PreviewSubmit(context.Background(), job.JobConfig{}, true); !errors.Is(err, backend.ErrNoTargetConfigured) {
 		t.Fatalf("unconfigured DryRun error = %v", err)
 	}
 }

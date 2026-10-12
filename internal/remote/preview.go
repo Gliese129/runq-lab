@@ -18,6 +18,16 @@ import (
 // side effects: nothing written, nothing persisted, nothing queued.
 // The dry-run contract: preview is truth, disk stays untouched (C5/U1).
 func (b *Backend) Preview(ctx context.Context, jobCfg job.JobConfig, proj *project.Config, skipPreflight bool) (string, preflight.Report, error) {
+	text, plan, err := b.CompilePreview(ctx, jobCfg, proj, skipPreflight)
+	return text, plan.Preflight, err
+}
+
+func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj *project.Config, skipPreflight bool) (string, submitplan.Plan, error) {
+	resolved, err := resolveNote(ctx, b.Store, jobCfg)
+	if err != nil {
+		return "", submitplan.Plan{}, err
+	}
+	jobCfg.Note = resolved
 	deps := b.planDeps(skipPreflight)
 	deps.JobID = utils.GenerateJobID()
 	// Placeholder roots: nothing is written (the dry-run contract).
@@ -43,12 +53,16 @@ func (b *Backend) Preview(ctx context.Context, jobCfg job.JobConfig, proj *proje
 				}
 			}
 			s.WriteString("\nFix the failed checks, or submit with --no-preflight.")
-			return s.String(), plan.Preflight, nil
+			return s.String(), plan, nil
 		}
-		return "", preflight.Report{}, err
+		return "", submitplan.Plan{}, err
 	}
 
 	var s strings.Builder
+	fmt.Fprintf(&s, "note: %s\n", plan.Note)
+	if len(plan.UnconsumedParams) > 0 {
+		fmt.Fprintf(&s, "params via ctx.params: %s\n", strings.Join(plan.UnconsumedParams, ", "))
+	}
 	fmt.Fprintf(&s, "dry-run: %d task(s) would be submitted\n", len(plan.Tasks))
 	// Where <workspace> will actually live — shown read-only (nothing is
 	// created here); ids are regenerated at real submit.
@@ -67,7 +81,7 @@ func (b *Backend) Preview(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	}
 
 	if len(plan.Tasks) == 0 {
-		return "", preflight.Report{}, fmt.Errorf("sweep expands to zero tasks — check sweep parameters (nothing would be submitted)")
+		return "", submitplan.Plan{}, fmt.Errorf("sweep expands to zero tasks — check sweep parameters (nothing would be submitted)")
 	}
 	t := plan.Tasks[0]
 	runsh := path.Join(t.TaskDir, runScriptName)
@@ -76,10 +90,10 @@ func (b *Backend) Preview(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	// {{project}}/{{log_path}} vars the runq preset requires).
 	cmd, err := renderSubmitCmd(b.Cfg.SubmitTemplate, t, plan, runsh)
 	if err != nil {
-		return "", preflight.Report{}, fmt.Errorf("render submit_template: %w", err)
+		return "", submitplan.Plan{}, fmt.Errorf("render submit_template: %w", err)
 	}
 
 	fmt.Fprintf(&s, "\n── submit command (task 1 of %d) ──\n%s%s\n", len(plan.Tasks), b.envPrelude(plan.Env).Render(), cmd)
 	fmt.Fprintf(&s, "\n── run.sh (task 1 of %d) ──\n%s", len(plan.Tasks), b.buildRunScript(t, plan))
-	return s.String(), plan.Preflight, nil
+	return s.String(), plan, nil
 }

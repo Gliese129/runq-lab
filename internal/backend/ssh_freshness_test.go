@@ -132,11 +132,11 @@ func TestMultiListObservationFailureMarksReturnedSnapshotStale(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row == nil || row.LastError == "" {
-		t.Fatalf("sync state = %+v, want multi-list observation failure", row)
+	if row == nil || row.LastError != "" {
+		t.Fatalf("sync state = %+v, want unchanged last successful observation", row)
 	}
-	if _, stale, known := m.SyncInfo(ctx, "hpc"); !known || !stale {
-		t.Fatalf("multi list freshness known/stale = %t/%t, want true/true", known, stale)
+	if _, stale, known := m.SyncInfo(ctx, "hpc"); !known || stale {
+		t.Fatalf("multi list freshness known/stale = %t/%t, want true/false", known, stale)
 	}
 }
 

@@ -739,26 +739,12 @@ func (b *SSHBackend) Close() error {
 func (b *SSHBackend) Capabilities() Capabilities {
 	return Capabilities{
 		GPUMap:        b.backend.Cfg.GPUTemplate != "", // gpu_template-driven (runq preset)
-		PauseResume:   true,                            // runq-level dispatch gate (in-flight work continues)
 		LiveLog:       true,                            // logs readable via SSH
 		Retry:         true,                            // scheduler lane re-runs submit.cmd (RQ-46)
 		StateModel:    "poll",                          // best-effort projection; staleness surfaced
 		KillAsync:     true,                            // qdel/scancel forwarded
 		SubmitPreview: true,                            // zero-disk dry-run via submit code path
 	}
-}
-
-// DryRun overrides storeQueries: the workspace-root preview must come from
-// THIS lane's decision point (target workspace), not the client's global
-// config (RQ-65 — dry-run confirming /tmp/.runq while submit writes to the
-// cluster's runq-workspaces).
-func (b *SSHBackend) DryRun(ctx context.Context, cfg job.JobConfig) (*DryRunResult, error) {
-	return BuildDryRunResult(cfg, func(name string) (*project.Config, error) {
-		return b.reg.Get(ctx, name)
-	}, func(proj *project.Config) string {
-		root, _ := b.backend.WorkspaceRoot(proj, false)
-		return root
-	})
 }
 
 // ── Reconcile ─────────────────────────────────────────────────────────────
@@ -1636,61 +1622,6 @@ func (b *SSHBackend) KillJob(ctx context.Context, jobID string) error {
 	return errors.Join(killErrs...)
 }
 
-func (b *SSHBackend) PauseJob(ctx context.Context, jobID string) error {
-	job, err := b.store.GetJob(ctx, jobID)
-	if err != nil {
-		return err
-	}
-	if job == nil {
-		return fmt.Errorf("job %q: %w", jobID, ErrNotFound)
-	}
-	if store.IsTerminalJobStatus(job.Status) {
-		return fmt.Errorf("job %q is already %s", jobID, job.Status)
-	}
-	// Establish the linearizable dispatch gate first. Any admitted dispatch
-	// finishes its pre-launch aggregate write before this returns; later
-	// dispatches observe the pause. Persist only after that boundary so an
-	// admitted RefreshJobStatus cannot overwrite the durable pause.
-	b.sched.PauseJob(jobID)
-	if err := b.store.UpdateJobStatus(ctx, jobID, "paused"); err != nil {
-		b.sched.ResumeJob(jobID) // the API did not acknowledge the pause
-		return fmt.Errorf("persist job pause: %w", err)
-	}
-	return nil
-}
-
-func (b *SSHBackend) ResumeJob(ctx context.Context, jobID string) error {
-	job, err := b.store.GetJob(ctx, jobID)
-	if err != nil {
-		return err
-	}
-	if job == nil {
-		return fmt.Errorf("job %q: %w", jobID, ErrNotFound)
-	}
-	if job.Status != "paused" && !b.sched.IsJobPaused(jobID) {
-		return fmt.Errorf("job %q is %s, not paused", jobID, job.Status)
-	}
-	if job.Status != "paused" {
-		// Another owning generation already persisted the resume. This lane
-		// still has the local dispatch gate, so complete the idempotent fanout.
-		b.sched.ResumeJob(jobID)
-		return nil
-	}
-	tasks, err := b.store.ListTasks(ctx, store.TaskFilter{JobID: jobID})
-	if err != nil {
-		return fmt.Errorf("derive resumed job status: %w", err)
-	}
-	status, err := store.ProjectJobStatus(tasks)
-	if err != nil {
-		return fmt.Errorf("derive resumed job status: %w", err)
-	}
-	if err := b.store.UpdateJobStatus(ctx, jobID, status); err != nil {
-		return fmt.Errorf("persist job resume: %w", err)
-	}
-	b.sched.ResumeJob(jobID)
-	return nil
-}
-
 // ── Submit ────────────────────────────────────────────────────────────────
 
 // SubmitJob prepares the job (plan, workspace files, run.sh, submit.cmd,
@@ -1710,7 +1641,7 @@ func (b *SSHBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts Subm
 	if b.scope.IsRetiring() {
 		return "", 0, fmt.Errorf("target %s: %w — retry to reach the active configuration", b.targetName, ErrLaneRetired)
 	}
-	proj, err := b.reg.Get(ctx, cfg.Project)
+	proj, err := b.submissionProject(ctx, cfg)
 	if err != nil {
 		return "", 0, fmt.Errorf("project %q: %w", cfg.Project, err)
 	}
@@ -1729,29 +1660,15 @@ func (b *SSHBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts Subm
 }
 
 func (b *SSHBackend) PreviewSubmit(ctx context.Context, cfg job.JobConfig, skipPreflight bool) (PreviewResult, error) {
-	proj, err := b.reg.Get(ctx, cfg.Project)
+	proj, err := b.submissionProject(ctx, cfg)
 	if err != nil {
 		return PreviewResult{}, fmt.Errorf("project %q: %w", cfg.Project, err)
 	}
-	text, report, err := b.backend.Preview(ctx, cfg, proj, skipPreflight)
+	text, plan, err := b.backend.CompilePreview(ctx, cfg, proj, skipPreflight)
 	if err != nil {
 		return PreviewResult{}, err
 	}
-	return PreviewResult{Preview: text, Preflight: report}, nil
-}
-
-func (b *SSHBackend) ResolveNote(ctx context.Context, cfg job.JobConfig) (string, error) {
-	rows, err := b.store.ListJobs(ctx, cfg.Project, "")
-	if err != nil {
-		return "", err
-	}
-	notes := make([]string, 0, len(rows))
-	for _, r := range rows {
-		notes = append(notes, r.Note)
-	}
-	return job.RenderNote(&cfg, job.NoteContext{
-		Project: cfg.Project, Now: time.Now(), ExistingNotes: notes,
-	})
+	return PreviewResult{Preview: text, Preflight: plan.Preflight, Plan: &plan}, nil
 }
 
 // ── Archive ───────────────────────────────────────────────────────────────
@@ -1803,3 +1720,10 @@ func (b *SSHBackend) ListProjects(ctx context.Context) ([]ProjectSummary, error)
 
 // compile-time interface check
 var _ Backend = (*SSHBackend)(nil)
+
+func (b *SSHBackend) submissionProject(ctx context.Context, cfg job.JobConfig) (*project.Config, error) {
+	if cfg.EffectiveConfig != nil {
+		return cfg.EffectiveConfig, nil
+	}
+	return b.reg.Get(ctx, cfg.Project)
+}

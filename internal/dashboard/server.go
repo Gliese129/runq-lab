@@ -42,7 +42,6 @@ type Server struct {
 	static       fs.FS
 	staticSource string
 	staticErr    error
-	utilsLogs    *utilsLogStore
 	accessLog    io.Writer // nil = no access log (see access_log.go)
 
 	// Background reconcile (HPC mode only): the ticker runs SchedulerProbe
@@ -92,7 +91,6 @@ func NewServerWithAssets(be backend.Backend, cfg *config.GlobalConfig, assetsDir
 		static:       static.FS,
 		staticSource: static.Source,
 		staticErr:    static.Err,
-		utilsLogs:    newUtilsLogStore(),
 		version:      version.Version,
 		startedAt:    time.Now(),
 		jobRefreshAt: map[string]time.Time{},
@@ -248,28 +246,17 @@ func (s *Server) registerRoutes() {
 	// ── §5.1 System ──────────────────────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/v1/config", s.handleConfig)
-	s.mux.HandleFunc("PUT /api/v1/config", s.handlePutGlobalConfig)
-	s.mux.HandleFunc("GET /api/v1/ui", s.handleGetUIState)
-	s.mux.HandleFunc("PUT /api/v1/ui", s.handlePutUIState)
 	s.mux.HandleFunc("POST /api/v1/clean", s.handleClean)
 
 	// ── §5.2 Targets（含 target 级资源）────────────────────────────────
 	// "presets" is a reserved name (never a valid target); register the
 	// literal route before the {name} wildcards.
 	s.mux.HandleFunc("GET /api/v1/targets", s.handleListTargets)
-	s.mux.HandleFunc("GET /api/v1/targets/presets", s.handleTargetPresets)
-	s.mux.HandleFunc("PUT /api/v1/targets/{name}", s.handlePutTarget)
-	s.mux.HandleFunc("DELETE /api/v1/targets/{name}", s.handleDeleteTarget)
-	s.mux.HandleFunc("POST /api/v1/targets/{name}/check", s.handleCheckTarget)
 	s.mux.HandleFunc("POST /api/v1/targets/{name}/connect", s.handleConnectTarget)
 	s.mux.HandleFunc("POST /api/v1/targets/{name}/disconnect", s.handleDisconnectTarget)
 	s.mux.HandleFunc("POST /api/v1/targets/{name}/refresh", s.handleRefreshTarget)
 	s.mux.HandleFunc("GET /api/v1/targets/{name}/gpus", s.handleTargetGPUs)
 	s.mux.HandleFunc("GET /api/v1/targets/{name}/fs/list", s.handleFSList)
-	s.mux.HandleFunc("GET /api/v1/targets/{name}/fs/read", s.handleFSRead)
-	s.mux.HandleFunc("GET /api/v1/targets/{name}/fs/glob", s.handleFSGlob)
-	s.mux.HandleFunc("POST /api/v1/targets/{name}/fs/parse-script", s.handleParseScript)
-	s.mux.HandleFunc("GET /api/v1/targets/{name}/python-envs", s.handlePythonEnvs)
 
 	// ── §5.3 Projects ────────────────────────────────────────────────
 	s.mux.HandleFunc("GET /api/v1/projects", s.handleListProjects) // ?dir=&archived= 吸收旧 /projects/match
@@ -282,7 +269,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/projects/{name}/sync", s.handleSyncProject)
 
 	// ── §5.4 Jobs（提交族 = plan → preview → submit，选项进 body）──────
-	s.mux.HandleFunc("POST /api/v1/jobs/plan", s.handlePlanJob) // 合并 dry-run + resolve-note
 	s.mux.HandleFunc("POST /api/v1/jobs/preview", s.handlePreviewSubmit)
 	s.mux.HandleFunc("POST /api/v1/jobs", s.handleSubmitJob)
 	s.mux.HandleFunc("GET /api/v1/jobs", s.handleListJobs) // ?project=&archived=&status=&target=&limit=&offset=
@@ -292,8 +278,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/jobs/{id}/results", s.handleJobResults)
 	s.mux.HandleFunc("GET /api/v1/jobs/{id}/log/search", s.handleJobLogSearch)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/kill", s.handleKillJob)
-	s.mux.HandleFunc("POST /api/v1/jobs/{id}/pause", s.handlePauseJob)
-	s.mux.HandleFunc("POST /api/v1/jobs/{id}/resume", s.handleResumeJob)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/archive", s.handleArchiveJob)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/unarchive", s.handleUnarchiveJob)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/refresh", s.handleRefreshJob)
@@ -314,10 +298,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/daemon/logs/{name}/stream", s.handleDaemonLogStream)
 
 	// ── §5.6 Log sessions（原 /utils/log）──────────────────────────────
-	s.mux.HandleFunc("POST /api/v1/log-sessions", s.handleUtilsLogUpload)
-	s.mux.HandleFunc("GET /api/v1/log-sessions/{id}", s.handleUtilsLogRead)
-	s.mux.HandleFunc("GET /api/v1/log-sessions/{id}/search", s.handleUtilsLogSearch)
-	s.mux.HandleFunc("DELETE /api/v1/log-sessions/{id}", s.handleUtilsLogDelete)
 
 	s.mux.HandleFunc("GET /api/{path...}", s.handleAPINotFound)
 	s.mux.HandleFunc("POST /api/{path...}", s.handleAPINotFound)
@@ -527,7 +507,20 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		}
 		projects = kept
 	}
-	writeJSON(w, http.StatusOK, envelope(projects))
+	if name := r.URL.Query().Get("name"); name != "" {
+		kept := projects[:0]
+		for _, p := range projects {
+			if p.Name == name {
+				kept = append(kept, p)
+			}
+		}
+		projects = kept
+	}
+	total := len(projects)
+	projects = paginate(projects, r.URL.Query().Get("limit"), r.URL.Query().Get("offset"))
+	out := envelope(projects)
+	out.Total = &total
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
@@ -699,6 +692,15 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if project := q.Get("project"); archived && project != "" {
+		kept := jobs[:0]
+		for _, j := range jobs {
+			if j.Project == project {
+				kept = append(kept, j)
+			}
+		}
+		jobs = kept
+	}
 	if status := q.Get("status"); status != "" {
 		kept := jobs[:0]
 		for _, j := range jobs {
@@ -880,38 +882,6 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"job_id":      jobID,
 		"total_tasks": total,
-	})
-}
-
-// handlePlanJob — POST /jobs/plan (spec §5.4, D12): merges the retired
-// dry-run + resolve-note into one cheap, purely local expansion so the
-// submit wizard makes a single call.
-func (s *Server) handlePlanJob(w http.ResponseWriter, r *http.Request) {
-	var body submitBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, backend.CodeBadRequest, err.Error())
-		return
-	}
-	result, err := s.backend.DryRun(r.Context(), body.Config)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	tasks := result.Tasks
-	if tasks == nil {
-		tasks = []job.TaskParams{}
-	}
-	note, err := s.backend.ResolveNote(r.Context(), body.Config)
-	if err != nil {
-		// note 解析失败不应阻塞 plan：降级为原样返回
-		note = body.Config.Note
-	}
-	// No warnings field: it was forever-empty dead wire. Submission-time
-	// findings travel through the preflight report (four-state grammar),
-	// which is a different concept with its own channel.
-	writeJSON(w, http.StatusOK, map[string]any{
-		"tasks":         tasks,
-		"note_resolved": note,
 	})
 }
 
@@ -1311,18 +1281,6 @@ func (s *Server) handleKillJob(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handlePauseJob(w http.ResponseWriter, r *http.Request) {
-	s.handleAction(w, r, func() error {
-		return s.backend.PauseJob(r.Context(), r.PathValue("id"))
-	})
-}
-
-func (s *Server) handleResumeJob(w http.ResponseWriter, r *http.Request) {
-	s.handleAction(w, r, func() error {
-		return s.backend.ResumeJob(r.Context(), r.PathValue("id"))
-	})
-}
-
 func (s *Server) handleAction(w http.ResponseWriter, _ *http.Request, fn func() error) {
 	if err := fn(); err != nil {
 		writeError(w, err)
@@ -1439,6 +1397,8 @@ func writeError(w http.ResponseWriter, err error) {
 	status, code := http.StatusInternalServerError, backend.CodeInternal
 	msg := strings.ToLower(err.Error())
 	switch {
+	case errors.Is(err, backend.ErrForbidden):
+		status, code = http.StatusForbidden, backend.CodeForbidden
 	case errors.Is(err, backend.ErrNoTargetConfigured):
 		status, code = http.StatusConflict, backend.CodeInvalidState
 	case errors.Is(err, backend.ErrNotSupported):

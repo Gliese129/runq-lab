@@ -6,6 +6,7 @@ import (
 )
 
 var (
+	ErrForbidden          = errors.New("forbidden")
 	ErrNotSupported       = errors.New("not supported")
 	ErrNotFound           = errors.New("not found")
 	ErrNoTargetConfigured = errors.New("no target configured")

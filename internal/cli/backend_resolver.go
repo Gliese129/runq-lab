@@ -20,13 +20,13 @@ import (
 //
 // The resolved target is applied as Proxy.TargetFilter, which:
 //   - scopes list operations (ListJobs, ListArchivedJobs, Clean)
-//   - serves as the default submit target when SubmitOptions.Target is empty
-//   - is available for any future endpoint that benefits from target scoping
+//
+// Explicit submission/preview targets are separate from query filters.
 func withBackend(cmd *cobra.Command, fn func(backend.Backend) error) error {
-	target := resolveTarget(cmd)
 	be := api.NewProxy(getSocketPath())
-	if target != "" {
-		be.TargetFilter = target
+	be.TargetFilter = resolveTarget(cmd)
+	if cmd.Name() == "submit" {
+		be.SubmitTarget = explicitSubmitTarget(cmd)
 	}
 	return fn(be)
 }

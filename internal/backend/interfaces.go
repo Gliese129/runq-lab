@@ -135,11 +135,8 @@ type Backend interface {
 	KillTask(ctx context.Context, taskID string) error
 	RetryTask(ctx context.Context, taskID string) error
 	KillJob(ctx context.Context, jobID string) error
-	PauseJob(ctx context.Context, jobID string) error
-	ResumeJob(ctx context.Context, jobID string) error
 
 	SubmitJob(ctx context.Context, cfg job.JobConfig, opts SubmitOptions) (jobID string, totalTasks int, err error)
-	DryRun(ctx context.Context, cfg job.JobConfig) (*DryRunResult, error)
 	// PreviewSubmit renders what WOULD be submitted (preview is truth, zero
 	// side effects), plus the structured preflight report. Backends without
 	// the concept return ErrNotSupported.
@@ -151,10 +148,6 @@ type Backend interface {
 	UnarchiveJob(ctx context.Context, jobID string) error
 	ArchiveProject(ctx context.Context, name string) error
 	UnarchiveProject(ctx context.Context, name string) error
-	// ResolveNote previews the note template's resolution ({{version}} family
-	// scan needs the backend's store) — submit's code path, never a frontend
-	// simulation.
-	ResolveNote(ctx context.Context, cfg job.JobConfig) (string, error)
 	// Clean removes tasks matching the given selectors and their on-disk
 	// artifacts. opts.DryRun=true returns what would be cleaned without
 	// deleting. Backends without local storage return ErrNotSupported.
@@ -170,5 +163,5 @@ type Backend interface {
 
 type SubmitOptions struct {
 	SkipPreflight bool
-	Target        string // compute target name; empty = default_target
+	Target        string // compute target name; empty = job.target > project.target
 }

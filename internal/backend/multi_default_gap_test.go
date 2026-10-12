@@ -35,21 +35,21 @@ func TestDefaultBackendReconcileGap(t *testing.T) {
 	m.SetTarget("hpc", lane)
 	m.RemoveTarget("local")
 	_ = m.Capabilities() // must not panic
-	if _, lerr := m.ListProjects(ctx); lerr == nil {
-		t.Fatal("UnavailableBackend must surface its error, not succeed")
+	if _, lerr := m.ListProjects(ctx); lerr != nil {
+		t.Fatal("local project list must remain readable")
 	}
 
 	// Mid-reconcile shape 2: NO lane routable at all (old default retired,
 	// replacement still building) — the exact window Codex reproduced.
 	m.RemoveTarget("hpc")
 	caps := m.Capabilities() // must not panic; zero value is the honest answer
-	if caps.PauseResume || caps.Retry {
+	if caps.Retry {
 		t.Fatalf("gap capabilities must be zero, got %+v", caps)
 	}
-	if _, lerr := m.ListProjects(ctx); lerr == nil {
-		t.Fatal("gap reads must return a retryable error, not succeed")
+	if _, lerr := m.ListProjects(ctx); lerr != nil {
+		t.Fatal("project snapshots must survive routing gaps")
 	}
-	if _, derr := m.DryRun(ctx, job.JobConfig{}); derr == nil {
+	if _, derr := m.PreviewSubmit(ctx, job.JobConfig{}, true); derr == nil {
 		t.Fatal("gap DryRun must return an error, not panic")
 	}
 }
@@ -81,7 +81,7 @@ func TestMultiBackendUnconfiguredState(t *testing.T) {
 		t.Fatalf("empty GPU aggregate = %+v, err %v", gpus, err)
 	}
 
-	_, err = m.DryRun(ctx, job.JobConfig{})
+	_, err = m.PreviewSubmit(ctx, job.JobConfig{}, true)
 	if !errors.Is(err, ErrNoTargetConfigured) {
 		t.Fatalf("DryRun error = %v, want ErrNoTargetConfigured", err)
 	}

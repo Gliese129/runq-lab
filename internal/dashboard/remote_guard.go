@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	"github.com/gliese129/runq-lab/internal/backend"
+	"github.com/gliese129/runq-lab/internal/job"
 )
 
 // guardBodyLimit caps buffered request bodies (submit configs are small).
@@ -85,7 +86,7 @@ func (s *Server) guardAllows(w http.ResponseWriter, r *http.Request, target stri
 			return true
 		case len(seg) == 1 && r.Method == http.MethodPost: // submit
 			return s.rewriteBodyTarget(w, r, target)
-		case len(seg) == 2 && (seg[1] == "plan" || seg[1] == "preview") && r.Method == http.MethodPost:
+		case len(seg) == 2 && seg[1] == "preview" && r.Method == http.MethodPost:
 			return s.rewriteBodyTarget(w, r, target)
 		case len(seg) >= 2: // /jobs/{id}[/...] — ownership gate
 			return s.checkOwner(w, r, target, "job", seg[1], owner)
@@ -112,9 +113,9 @@ func (s *Server) guardAllows(w http.ResponseWriter, r *http.Request, target stri
 		}
 		rest := strings.Join(seg[2:], "/")
 		switch {
-		case get && (rest == "gpus" || rest == "fs/list" || rest == "fs/read" || rest == "python-envs"):
+		case get && (rest == "gpus" || rest == "fs/list"):
 			return true
-		case r.Method == http.MethodPost && (rest == "refresh" || rest == "fs/parse-script"):
+		case r.Method == http.MethodPost && rest == "refresh":
 			return true
 		}
 		return deny(r.Method + " " + path)
@@ -172,12 +173,33 @@ func (s *Server) rewriteBodyTarget(w http.ResponseWriter, r *http.Request, targe
 	if !ok {
 		return false
 	}
-	if t, _ := doc["target"].(string); t != "" && t != target {
-		writeErr(w, http.StatusForbidden, backend.CodeForbidden,
-			fmt.Sprintf("cannot submit to target %q through target %q's forward", t, target))
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		writeError(w, err)
 		return false
 	}
-	doc["target"] = target
+	var body submitBody
+	if err := json.Unmarshal(raw, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, backend.CodeBadRequest, err.Error())
+		return false
+	}
+	resolver, ok := s.backend.(interface {
+		ResolveSubmitTarget(context.Context, job.JobConfig, string) (string, string, error)
+	})
+	if !ok {
+		writeErr(w, http.StatusForbidden, backend.CodeForbidden, "submission target resolution unavailable")
+		return false
+	}
+	resolved, _, err := resolver.ResolveSubmitTarget(r.Context(), body.Config, body.Target)
+	if err != nil {
+		writeError(w, err)
+		return false
+	}
+	if resolved != target {
+		writeErr(w, http.StatusForbidden, backend.CodeForbidden, fmt.Sprintf("cannot submit to target %q through target %q's forward", resolved, target))
+		return false
+	}
+	*r = *r.WithContext(backend.WithSubmitTargetBoundary(r.Context(), target))
 	return s.replaceBody(w, r, doc)
 }
 

@@ -82,6 +82,8 @@ type TaskRow struct {
 // TaskFilter holds optional filter criteria for ListTasks.
 // Zero values mean "no filter".
 type TaskFilter struct {
+ VisibleOnly bool // default user-facing lists hide archived jobs/projects
+
 	Status string // filter by status; empty = no filter
 	JobID  string // filter by job; empty = no filter
 	Target string // filter by target; empty = no filter
@@ -505,6 +507,7 @@ func (s *Store) ListTasks(ctx context.Context, filter TaskFilter) ([]TaskRow, er
 		where = append(where, "status = ?")
 		args = append(args, filter.Status)
 	}
+    if filter.VisibleOnly { where = append(where, "EXISTS (SELECT 1 FROM jobs j JOIN projects p ON p.name = j.project_name WHERE j.id = tasks.job_id AND j.archived_at IS NULL AND p.archived_at IS NULL)") }
 	if filter.JobID != "" {
 		where = append(where, "job_id = ?")
 		args = append(args, filter.JobID)
@@ -555,6 +558,7 @@ func (s *Store) CountTasks(ctx context.Context, filter TaskFilter) (int, error) 
 		where = append(where, "status = ?")
 		args = append(args, filter.Status)
 	}
+    if filter.VisibleOnly { where = append(where, "EXISTS (SELECT 1 FROM jobs j JOIN projects p ON p.name = j.project_name WHERE j.id = tasks.job_id AND j.archived_at IS NULL AND p.archived_at IS NULL)") }
 	if filter.JobID != "" {
 		where = append(where, "job_id = ?")
 		args = append(args, filter.JobID)

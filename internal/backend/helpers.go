@@ -14,10 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gliese129/runq-lab/internal/config"
-	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/logfile"
-	"github.com/gliese129/runq-lab/internal/project"
+
 	"github.com/gliese129/runq-lab/internal/rfs"
 	"github.com/gliese129/runq-lab/internal/scheduler"
 	"github.com/gliese129/runq-lab/internal/store"
@@ -50,16 +48,22 @@ func BuildJobSummary(job store.JobRow, tasks []store.TaskRow) JobSummary {
 		refreshedAt = &ts
 	}
 
+	var cfg struct {
+		TargetSource string `json:"target_source"`
+	}
+	_ = json.Unmarshal([]byte(job.ConfigJSON), &cfg)
 	return JobSummary{
-		ID:          job.ID,
-		Project:     job.ProjectName,
-		Note:        job.Note,
-		Status:      job.Status,
-		Target:      job.Target,
-		Archived:    job.ArchivedAt != nil,
-		CreatedAt:   job.CreatedAt.Unix(),
-		Tasks:       counts,
-		RefreshedAt: refreshedAt,
+		TargetSource: cfg.TargetSource,
+		Stale:        !store.IsTerminalJobStatus(job.Status) && (refreshedAt == nil || time.Now().Unix()-*refreshedAt > 90),
+		ID:           job.ID,
+		Project:      job.ProjectName,
+		Note:         job.Note,
+		Status:       job.Status,
+		Target:       job.Target,
+		Archived:     job.ArchivedAt != nil,
+		CreatedAt:    job.CreatedAt.Unix(),
+		Tasks:        counts,
+		RefreshedAt:  refreshedAt,
 	}
 }
 
@@ -70,14 +74,13 @@ func BuildJobSummary(job store.JobRow, tasks []store.TaskRow) JobSummary {
 func BuildJobDetail(job store.JobRow, tasks []store.TaskRow, metricKeys []string) JobDetail {
 	views := make([]TaskView, 0, len(tasks))
 	for _, task := range tasks {
-		views = append(views, BuildTaskView(task))
+		views = append(views, buildTaskView(task, false))
 	}
 	return JobDetail{
 		Job:        BuildJobSummary(job, tasks),
 		Tasks:      views,
 		MetricKeys: metricKeys,
-		// Raw config (note template, sweep blocks) — powers "re-run as
-		// template" in the GUI without a second endpoint.
+		// Saved submission configuration and its effective snapshot.
 		Config:  json.RawMessage(job.ConfigJSON),
 		DataDir: jobDataDir(tasks),
 	}
@@ -374,11 +377,12 @@ func attachTaskLinks(ctx context.Context, st *store.Store, views []TaskView) {
 // table is one SQL query regardless of who serves it.
 func listTasksFromStore(ctx context.Context, st *store.Store, opts TaskListOptions) ([]TaskView, int, error) {
 	filter := store.TaskFilter{
-		JobID:  opts.JobID,
-		Status: opts.Status,
-		Target: opts.Target,
-		Limit:  opts.Limit,
-		Offset: opts.Offset,
+		VisibleOnly: opts.JobID == "",
+		JobID:       opts.JobID,
+		Status:      opts.Status,
+		Target:      opts.Target,
+		Limit:       opts.Limit,
+		Offset:      opts.Offset,
 	}
 	rows, err := st.ListTasks(ctx, filter)
 	if err != nil {
@@ -390,17 +394,24 @@ func listTasksFromStore(ctx context.Context, st *store.Store, opts TaskListOptio
 	}
 	views := make([]TaskView, 0, len(rows))
 	for _, r := range rows {
-		views = append(views, BuildTaskView(r))
+		views = append(views, buildTaskView(r, false))
 	}
 	attachTaskLinks(ctx, st, views)
 	return views, total, nil
 }
 
 func BuildTaskView(task store.TaskRow) TaskView {
+	return buildTaskView(task, true)
+}
+func buildTaskView(task store.TaskRow, files bool) TaskView {
 	params := decodeParams(task.ParamsJSON)
-	artifacts := readTaskArtifacts(task.TaskDir)
+	var artifacts taskArtifacts
+	if files {
+		artifacts = readTaskArtifacts(task.TaskDir)
+	}
 	view := TaskView{
 		ID:            task.ID,
+		Target:        task.Target,
 		Status:        task.Status,
 		Params:        params,
 		Metrics:       artifacts.Metrics,
@@ -436,35 +447,6 @@ func BuildTaskView(task store.TaskRow) TaskView {
 		}
 	}
 	return view
-}
-
-// BuildDryRunResult expands tasks and adds best-effort preview info.
-// getProject is the backend-specific project lookup.
-// BuildDryRunResult compiles the cheap plan view. wsRootFor overrides the
-// workspace-root preview with the OWNING backend's decision (RQ-65) — nil
-// falls back to the local global-config resolution, which is only correct
-// for local targets.
-func BuildDryRunResult(cfg job.JobConfig, getProject func(string) (*project.Config, error), wsRootFor func(*project.Config) string) (*DryRunResult, error) {
-	tasks, err := job.Expand(&cfg)
-	if err != nil {
-		return nil, err
-	}
-	result := &DryRunResult{Tasks: tasks}
-	if cfg.Project != "" && len(tasks) > 0 {
-		if proj, perr := getProject(cfg.Project); perr == nil {
-			if proj.CmdTemplate != "" {
-				if cmd, rerr := job.Render(proj.CmdTemplate, tasks[0]); rerr == nil {
-					result.SampleCommand = cmd
-				}
-			}
-			if wsRootFor != nil {
-				result.WorkspaceRoot = wsRootFor(proj)
-			} else if storageCfg, cerr := config.Load(); cerr == nil {
-				result.WorkspaceRoot = config.ProspectiveRoot(storageCfg, proj.WorkingDir, proj.ProjectName)
-			}
-		}
-	}
-	return result, nil
 }
 
 // ---- helpers ----
@@ -840,5 +822,24 @@ func parseActivityOutput(stdout string, byPath map[string]int, tasks []TaskActiv
 			}
 		}
 		tasks[idx].Points = append(tasks[idx].Points, pt)
+	}
+}
+
+func attachStoredMetrics(ctx context.Context, st *store.Store, jobID string, views []TaskView) {
+	rows, err := st.ListMetricSummaries(ctx, jobID, "")
+	if err != nil {
+		return
+	}
+	byTask := map[string]map[string]float64{}
+	for _, row := range rows {
+		if byTask[row.TaskID] == nil {
+			byTask[row.TaskID] = map[string]float64{}
+		}
+		byTask[row.TaskID][row.Key] = row.Last
+	}
+	for i := range views {
+		if metrics, ok := byTask[views[i].ID]; ok {
+			views[i].Metrics = metrics
+		}
 	}
 }

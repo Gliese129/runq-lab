@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -50,5 +51,28 @@ func TestPrepareRollsBackWholeSweepWhenAnyTaskInsertFails(t *testing.T) {
 		if got != want {
 			t.Errorf("%s rows after rollback = %d, want %d", table, got, want)
 		}
+	}
+}
+
+func TestV2PreparePersistsEffectiveSnapshot(t *testing.T) {
+	cfg := &config.TargetConfig{Name: "hpc", SubmitTemplate: "submit {{run_sh}}", SubmitIDRegex: `job ([0-9]+)`}
+	b, proj, input := newTestBackend(t, cfg, func(context.Context, string) (string, error) { return "", nil })
+	input.Command = "echo {{lr}}"
+	input.Target = "hpc"
+	input.TargetSource = "cli"
+	jobID, rows, err := b.Prepare(context.Background(), input, proj, SubmitOpts{SkipPreflight: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := b.Store.GetJob(context.Background(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recorded job.JobConfig
+	if err := json.Unmarshal([]byte(saved.ConfigJSON), &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded.Command != input.Command || recorded.Target != "hpc" || recorded.TargetSource != "cli" || recorded.EffectiveConfig == nil || recorded.EffectiveConfig.CmdTemplate != input.Command || !strings.HasPrefix(rows[0].Command, "echo ") {
+		t.Fatalf("snapshot mismatch: %+v", recorded)
 	}
 }

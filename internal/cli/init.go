@@ -36,6 +36,7 @@ Examples:
 
 func init() {
 	initCmd.Flags().StringP("output", "o", ".", "Output directory for generated YAML files")
+	initCmd.Flags().StringP("target", "t", "local", "Project source and default execution target; does not use session target")
 	initCmd.Flags().String("project", "", "Project name (default: current directory name)")
 
 	initCmd.GroupID = groupDiag
@@ -48,6 +49,7 @@ var candidateScripts = []string{"train.py", "main.py"}
 func runInit(cmd *cobra.Command, args []string) error {
 	outDir, _ := cmd.Flags().GetString("output")
 	projectName, _ := cmd.Flags().GetString("project")
+	target, _ := cmd.Flags().GetString("target")
 
 	// Resolve script path.
 	var scriptPath string
@@ -100,7 +102,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Generate project.yaml.
 	projPath := filepath.Join(absOut, "project.yaml")
-	if err := writeProjectYAML(projPath, projectName, filepath.Dir(absScript), scriptPath); err != nil {
+	if err := writeProjectYAML(projPath, projectName, filepath.Dir(absScript), scriptPath, target); err != nil {
 		return err
 	}
 	fmt.Printf("  Created %s\n", projPath)
@@ -132,7 +134,11 @@ func summarizeArgs(args []job.ArgInfo) string {
 }
 
 // writeProjectYAML generates a project.yaml file.
-func writeProjectYAML(path, projectName, workingDir, scriptFile string) error {
+func writeProjectYAML(path, projectName, workingDir, scriptFile string, targets ...string) error {
+	target := "local"
+	if len(targets) > 0 && targets[0] != "" {
+		target = targets[0]
+	}
 	// Check if file already exists.
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("%s already exists (delete it first or use -o to write elsewhere)", path)
@@ -140,9 +146,10 @@ func writeProjectYAML(path, projectName, workingDir, scriptFile string) error {
 
 	scriptBase := filepath.Base(scriptFile)
 	proj := map[string]any{
-		"project_name":     projectName,
-		"working_dir":      workingDir,
-		"command_template": fmt.Sprintf("python %s {{args}}", scriptBase),
+		"project_name": projectName,
+		"working_dir":  workingDir,
+		"target":       target,
+		"command":      fmt.Sprintf("python %s {{args}}", scriptBase),
 		"defaults": map[string]any{
 			"gpus_per_task": 1,
 			"max_retry":     0,

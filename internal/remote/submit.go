@@ -233,6 +233,9 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	}
 
 	now := time.Now()
+	jobCfg.Command = plan.CommandTemplate
+	jobCfg.Target = b.Cfg.Name
+	jobCfg.EffectiveConfig = plan.EffectiveConfig
 	cfgJSON, err := json.Marshal(jobCfg)
 	if err != nil {
 		return "", nil, fmt.Errorf("marshal job config: %w", err)

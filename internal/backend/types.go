@@ -6,9 +6,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/logfile"
 	"github.com/gliese129/runq-lab/internal/preflight"
+	"github.com/gliese129/runq-lab/internal/submitplan"
 )
 
 // View types shared by HTTP responses and CLI --json output.
@@ -20,21 +20,28 @@ import (
 // HF pre-download command into the project's setup command — instead of
 // re-parsing the text blob.
 type PreviewResult struct {
+	Target       string           `json:"target"`
+	TargetSource string           `json:"target_source"`
+	SyncPending  bool             `json:"sync_pending,omitempty"`
+	Plan         *submitplan.Plan `json:"plan,omitempty"`
+
 	Preview   string           `json:"preview"`
 	Preflight preflight.Report `json:"preflight"`
 }
 
 type JobSummary struct {
+	Stale   bool   `json:"stale"`
 	ID      string `json:"id"`
 	Project string `json:"project"`
 	Note    string `json:"note"`
 	// Status: pending / running / paused while live; done / failed /
 	// partial / killed once terminal (see store.TerminalJobStatus).
-	Status    string         `json:"status"`
-	Target    string         `json:"target"`
-	Archived  bool           `json:"archived"`
-	CreatedAt int64          `json:"created_at"`
-	Tasks     TaskCountGroup `json:"tasks"`
+	Status       string         `json:"status"`
+	Target       string         `json:"target"`
+	TargetSource string         `json:"target_source,omitempty"`
+	Archived     bool           `json:"archived"`
+	CreatedAt    int64          `json:"created_at"`
+	Tasks        TaskCountGroup `json:"tasks"`
 	// RefreshedAt: last reconcile from external sources (poll-model backends
 	// only). Omitted in daemon mode — push state is always current.
 	RefreshedAt *int64 `json:"refreshed_at,omitempty"`
@@ -58,11 +65,12 @@ type WandbInfo struct {
 }
 
 type JobDetail struct {
-	Job        JobSummary      `json:"job"`
-	Tasks      []TaskView      `json:"tasks"`
-	MetricKeys []string        `json:"metric_keys"`
-	Wandb      *WandbInfo      `json:"wandb,omitempty"`
-	Config     json.RawMessage `json:"config,omitempty"` // raw JobConfig (re-run as template)
+	Capabilities *Capabilities   `json:"capabilities,omitempty"`
+	Job          JobSummary      `json:"job"`
+	Tasks        []TaskView      `json:"tasks"`
+	MetricKeys   []string        `json:"metric_keys"`
+	Wandb        *WandbInfo      `json:"wandb,omitempty"`
+	Config       json.RawMessage `json:"config,omitempty"` // raw JobConfig (re-run as template)
 	// DataDir is the job's workspace directory (RQ2-1 §F: the Data tab's
 	// fs/list root). ABSOLUTE path with TARGET semantics — it only means
 	// something on the filesystem of job.target; pair it with that target
@@ -75,6 +83,11 @@ type JobDetail struct {
 }
 
 type TaskView struct {
+	Target       string        `json:"target"`
+	Capabilities *Capabilities `json:"capabilities,omitempty"`
+	RefreshedAt  *int64        `json:"refreshed_at,omitempty"`
+	Stale        bool          `json:"stale"`
+
 	ID          string             `json:"id"`
 	Status      string             `json:"status"`
 	Params      map[string]any     `json:"params"`
@@ -209,10 +222,9 @@ type TargetHealth struct {
 // only relays it under --json.
 type Capabilities struct {
 	// Feature bits — "does this concept exist here at all".
-	GPUMap      bool `json:"gpu_map"`
-	PauseResume bool `json:"pause_resume"`
-	LiveLog     bool `json:"live_log"`
-	Retry       bool `json:"retry"`
+	GPUMap  bool `json:"gpu_map"`
+	LiveLog bool `json:"live_log"`
+	Retry   bool `json:"retry"`
 	// State model — "push": a resident process owns the truth, data is
 	// always current. "poll": best-effort projection, only advances on
 	// refresh; consumers must surface staleness (refreshed_at).
@@ -447,15 +459,9 @@ type CleanPreviewItem struct {
 	MetricsBytes int64 `json:"metrics_bytes"`
 }
 
-// DryRunResult is what DryRun returns: expanded tasks plus best-effort
 // preview info (command rendering and prospective workspace root).
 // SampleCommand and WorkspaceRoot may be empty when the project has no
 // command template or the config cannot be loaded.
-type DryRunResult struct {
-	Tasks         []job.TaskParams `json:"tasks"`
-	SampleCommand string           `json:"sample_command,omitempty"`
-	WorkspaceRoot string           `json:"workspace_root,omitempty"`
-}
 
 // ErrorResponse is the v1 error envelope (spec §2): Error is for humans,
 // Code is the stable machine enum — CLI/WebUI branch ONLY on Code.
@@ -536,30 +542,11 @@ type ProjectSummary struct {
 	Archived bool   `json:"archived"`
 }
 
-// Filesystem types for init GUI.
+// Filesystem entries for the job data-directory view.
 
 type FSEntry struct {
 	Name  string `json:"name"`
 	Path  string `json:"path"`
 	IsDir bool   `json:"is_dir"`
 	Size  int64  `json:"size"`
-}
-
-type ParseScriptRequest struct {
-	Path string `json:"path"`
-}
-
-type ParseResult struct {
-	Args []ScriptArg `json:"args"`
-	Env  string      `json:"detected_env,omitempty"`
-	Cmd  string      `json:"suggested_command"`
-}
-
-type ScriptArg struct {
-	Name    string  `json:"name"`
-	Type    string  `json:"type"`
-	Default *string `json:"default,omitempty"`
-	// Style "flag" = argparse store_true switch: bare `--name` when true,
-	// omitted when false (never `--name=false`).
-	Style string `json:"style,omitempty"`
 }
