@@ -826,10 +826,22 @@ func (b *SSHBackend) ListJobs(ctx context.Context, projectScope string) ([]JobSu
 	return out, nil
 }
 
+// jobSettled reports whether a job's state is final in the store. Detail
+// reads of a settled job are served from the store without the SSH freshness
+// pass: terminal history is durable (final reap already ran), so the round
+// trip only made the dashboard wait ~2s per page for nothing. Explicit
+// refreshes (`runq status <job>`, --fresh) still probe.
+func (b *SSHBackend) jobSettled(ctx context.Context, jobID string) bool {
+	j, err := b.store.GetJob(ctx, jobID)
+	return err == nil && j != nil && store.IsTerminalJobStatus(j.Status)
+}
+
 func (b *SSHBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, error) {
 	b.touchActivity()
-	if err := b.backend.EnsureFresh(ctx, jobID, DefaultReadTTL); err != nil {
-		return nil, err
+	if !b.jobSettled(ctx, jobID) {
+		if err := b.backend.EnsureFresh(ctx, jobID, DefaultReadTTL); err != nil {
+			return nil, err
+		}
 	}
 	j, err := b.store.GetJob(ctx, jobID)
 	if err != nil {
@@ -939,7 +951,9 @@ func (b *SSHBackend) GetTask(ctx context.Context, taskID string) (*TaskView, err
 	if task == nil {
 		return nil, fmt.Errorf("task %q: %w", taskID, ErrNotFound)
 	}
-	b.reconcileTask(ctx, taskID, task)
+	if !b.jobSettled(ctx, task.JobID) {
+		b.reconcileTask(ctx, taskID, task)
+	}
 	var view TaskView
 	err = b.store.WithTaskAttemptLock(taskID, func() error {
 		owned, err := b.loadOwnedTask(ctx, taskID, "get task")
