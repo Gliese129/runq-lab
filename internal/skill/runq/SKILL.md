@@ -47,7 +47,8 @@ ls project.yaml job.yaml .rsync 2>/dev/null
 | Targets | `runq target show [name]` · `target check <name>` · `target connect <name>` |
 
 Removed in v0.6 — do not try them: `runq daemon …` (→ `runq serve …`),
-`sweep`, `run` (→ a job.yaml + `submit`), `best`, `collect` (→ `results`),
+`sweep`, `run` (→ a job.yaml + `submit`; a job with only `fixed_params:` and
+no `sweep:` is one task), `best`, `collect` (→ `results`),
 `pause`/`resume`, `thaw`, `target inspect`, `target list --json`.
 `runq logs` without `--no-follow`/`--grep` FOLLOWS and blocks forever — never
 run it bare from a script or tool call.
@@ -75,7 +76,8 @@ then `--project-file` / `runq target check <name>`; config changes hot-reload.
    An unconsumed param is a submit-time error by design.
 2. **A project param's `default` is NOT injected at submit.** It only pre-fills
    the dashboard form. Every placeholder the templates reference must get a
-   value from the job's `sweep:` — use a one-value list for constants. This is
+   value from the job — constants go in `fixed_params:` (every task), swept
+   values in `sweep:`. This is
    what `template references unknown parameter(s): x` means. Do not "fix" it
    with `--no-preflight` (that flag skips preflight checks, not rendering).
 3. A param may appear in only one sweep block (`duplicate parameter`); put

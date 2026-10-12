@@ -12,7 +12,7 @@ step, then act or report. Do not loop retries.
 | `key … is passphrase-protected — add it to ssh-agent` | encrypted key, no agent | `ssh-add <key>` |
 | `unknown host key for …` | first contact / rotated keys | `runq target connect <name>` |
 | `Could not resolve hostname …` / `no such host` | DNS/VPN, or an `~/.ssh/config` alias (runq can't read aliases) | use the real hostname in the target; check the network once |
-| `template references unknown parameter(s): x` | template uses `x` but this job gives it no value (project `default` is not injected) | add `x` to the job's `sweep:` (one-value list is fine) |
+| `template references unknown parameter(s): x` | template uses `x` but this job gives it no value (project `default` is not injected) | add `x` to the job's `fixed_params:` (constant) or `sweep:` |
 | `template has no {{args}} placeholder, but N parameter(s) are not referenced` | a swept param is consumed by nothing | reference it (`{{x}}`), add `{{args}}`, or mark it `scope: scheduler` and use `{{param.x}}` in `submit_template` |
 | `duplicate parameter "x" found across sweep blocks` | `x` in two blocks | keep it in one block; zip pairs in one `list` block |
 | `project "x" already exists` on `project add` | already registered | `runq submit job.yaml --project-file project.yaml` (upserts) |

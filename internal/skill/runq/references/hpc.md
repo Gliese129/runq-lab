@@ -48,9 +48,8 @@ params:
 ```
 ```yaml
 # job.yaml — every referenced param needs a value here (defaults are not injected)
+fixed_params: { node_kind: node_q, model: qwen3-8b }
 sweep:
-  - method: grid
-    parameters: { node_kind: [node_q], model: [qwen3-8b] }
   - method: list
     parameters: { benchmark: [mmlu, gsm8k], h_rt: ["4:00:00", "2:00:00"] }
 ```

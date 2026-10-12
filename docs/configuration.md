@@ -131,6 +131,10 @@ note: "lr-sweep {{date}}"       # placeholders: params, {{project}} {{user}}
                                 # re-running the same named config
                                 # auto-numbers it (foo, foo-v2, foo-v3)
 
+fixed_params:                   # constants for every task (a sweep value of the
+  seed: 42                      # same name overrides). A job with fixed_params
+  data: data/train.jsonl        # and no sweep: is a single task.
+
 sweep:                          # a LIST of blocks; blocks combine via
   - method: grid                # CROSS-PRODUCT (documented semantics)
     parameters:
