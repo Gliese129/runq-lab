@@ -55,48 +55,54 @@ type Deps struct {
 }
 
 type Plan struct {
-	JobID       string
-	Project     string
-	Description string
-	Note        string
-	GPUsPerTask int
-	Wandb       *project.WandbConfig
-	Tasks       []PlannedTask
-	SweepKeys   []string // swept parameter names (sorted), for WANDB_TAGS/RUN_NAME
+	Target           string          `json:"target"`
+	TargetSource     string          `json:"target_source"`
+	CommandTemplate  string          `json:"command"`
+	EffectiveConfig  *project.Config `json:"effective_config"`
+	UnconsumedParams []string        `json:"unconsumed_params"`
+
+	JobID       string               `json:"job_id"`
+	Project     string               `json:"project"`
+	Description string               `json:"description"`
+	Note        string               `json:"note"`
+	GPUsPerTask int                  `json:"gpus_per_task"`
+	Wandb       *project.WandbConfig `json:"wandb"`
+	Tasks       []PlannedTask        `json:"tasks"`
+	SweepKeys   []string             `json:"sweep_keys"` // swept parameter names (sorted), for WANDB_TAGS/RUN_NAME
 	// Preflight is the full three-state report (failed entries already
 	// aborted Build) — callers print it so skips stay visible.
-	Preflight preflight.Report
+	Preflight preflight.Report `json:"preflight"`
 	// Env is the merged JOB-level environment (project environment +
 	// override env + the reserved RUNQ_ENV_FILE) — what setup_command and
 	// the submit prelude export. Per-task rows add their RUNQ_* identity
 	// on top (PlannedTask.Env).
-	Env map[string]string
+	Env map[string]string `json:"env"`
 }
 
 type PlannedTask struct {
-	TaskID        string
-	Name          string // scheduler job name ({{name}} in submit_template), pre-sanitized
-	Command       string
-	Params        job.TaskParams
-	Env           map[string]string
-	GPUsNeeded    int
-	MaxRetry      int
-	Timeout       int
-	LogPath       string
-	WorkingDir    string
-	Resumable     bool
-	ExtraArgs     string
-	UID           int
-	TaskDir       string
-	CheckpointDir string
+	TaskID        string            `json:"task_id"`
+	Name          string            `json:"name"` // scheduler job name ({{name}} in submit_template), pre-sanitized
+	Command       string            `json:"command"`
+	Params        job.TaskParams    `json:"params"`
+	Env           map[string]string `json:"env"`
+	GPUsNeeded    int               `json:"gpus_needed"`
+	MaxRetry      int               `json:"max_retry"`
+	Timeout       int               `json:"timeout"`
+	LogPath       string            `json:"log_path"`
+	WorkingDir    string            `json:"working_dir"`
+	Resumable     bool              `json:"resumable"`
+	ExtraArgs     string            `json:"extra_args"`
+	UID           int               `json:"uid"`
+	TaskDir       string            `json:"task_dir"`
+	CheckpointDir string            `json:"checkpoint_dir"`
 }
 
-// validateStrictChoices enforces strict params: a value outside the
+// validateChoices enforces every nonempty choices list: a value outside the
 // project's Choices list is a submit-time error. Comparison is on the
 // string form (choices are stored as strings; params may be typed).
-func validateStrictChoices(proj *project.Config, tasks []job.TaskParams) error {
+func validateChoices(proj *project.Config, tasks []job.TaskParams) error {
 	for _, def := range proj.Params {
-		if !def.Strict || len(def.Choices) == 0 {
+		if len(def.Choices) == 0 {
 			continue
 		}
 		allowed := make(map[string]bool, len(def.Choices))
@@ -111,7 +117,7 @@ func validateStrictChoices(proj *project.Config, tasks []job.TaskParams) error {
 			s := fmt.Sprintf("%v", v)
 			if !allowed[s] {
 				return fmt.Errorf(
-					"param %q is strict: value %q is not among its choices (%s)",
+					"param %q: value %q is not among its choices (%s)",
 					def.Name, s, strings.Join(def.Choices, ", "))
 			}
 		}
@@ -209,6 +215,14 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 	if proj == nil {
 		return Plan{}, fmt.Errorf("project config is nil")
 	}
+	var err error
+	proj, err = job.EffectiveProject(cfg, proj)
+	if err != nil {
+		return Plan{}, err
+	}
+	if strings.TrimSpace(proj.CmdTemplate) == "" {
+		return Plan{}, fmt.Errorf("command is required in job or project")
+	}
 	idGen := d.IDGen
 	if idGen == nil {
 		idGen = utils.GenerateID
@@ -287,7 +301,7 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 		env["RUNQ_ENV_FILE"] = envFile
 	}
 
-	if err := validateStrictChoices(proj, taskParams); err != nil {
+	if err := validateChoices(proj, taskParams); err != nil {
 		return Plan{}, err
 	}
 	if err := validateParamTypes(proj, taskParams); err != nil {
@@ -341,8 +355,12 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 		nameTmpl = proj.JobName
 	}
 	flagParams := flagParamNames(proj)
+	unconsumed := map[string]bool{}
 	tasks := make([]PlannedTask, 0, len(taskParams))
 	for _, params := range taskParams {
+		for _, key := range job.UnconsumedParams(proj.CmdTemplate, params, schedParams) {
+			unconsumed[key] = true
+		}
 		cmd, err := job.RenderWithFlags(proj.CmdTemplate, params, schedParams, flagParams)
 		if err != nil {
 			return Plan{}, fmt.Errorf("render command failed: %w", err)
@@ -386,7 +404,14 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 	}
 	sort.Strings(sweepKeys)
 
+	keys := make([]string, 0, len(unconsumed))
+	for key := range unconsumed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
 	return Plan{
+		Target: cfg.Target, TargetSource: cfg.TargetSource, CommandTemplate: proj.CmdTemplate,
+		EffectiveConfig: proj, UnconsumedParams: keys,
 		JobID:       jobID,
 		Project:     cfg.Project,
 		Description: cfg.Description,

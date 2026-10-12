@@ -3,11 +3,18 @@ package job
 import (
 	"fmt"
 
+	"github.com/gliese129/runq-lab/internal/project"
 	"gopkg.in/yaml.v3"
 )
 
 // JobConfig represents a parsed job.yaml file.
 type JobConfig struct {
+	Command         string             `yaml:"command,omitempty" json:"command,omitempty"`
+	Target          string             `yaml:"target,omitempty" json:"target,omitempty"`
+	Preflight       *PreflightOverride `yaml:"preflight,omitempty" json:"preflight,omitempty"`
+	TargetSource    string             `yaml:"-" json:"target_source,omitempty"`
+	EffectiveConfig *project.Config    `yaml:"-" json:"effective_config,omitempty"`
+
 	Project     string `yaml:"project" json:"project"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	Note        string `yaml:"note,omitempty" json:"note,omitempty"`

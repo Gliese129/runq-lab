@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path"
 	"regexp"
-	"strings"
 
 	"github.com/gliese129/runq-lab/internal/rfs"
 
@@ -104,7 +103,7 @@ type Config struct {
 	// owns WorkingDir and every other path in this config (RQ-65). All
 	// path semantics — yaml sync, preflight, workspace layout — resolve
 	// on that machine, never on whichever machine happens to run the
-	// daemon. Empty = the local machine.
+	// daemon. New registrations require an explicit target.
 	Target string `yaml:"target,omitempty" json:"target,omitempty"`
 	// Targets is the explicit set of compute targets this project may be
 	// submitted to. Target above is the single source of truth for the
@@ -113,7 +112,7 @@ type Config struct {
 	// Empty preserves the legacy single-target contract (Target only).
 	Targets     []string          `yaml:"targets,omitempty" json:"targets,omitempty"`
 	WorkingDir  string            `yaml:"working_dir" json:"working_dir"`
-	CmdTemplate string            `yaml:"command_template" json:"command_template"`
+	CmdTemplate string            `yaml:"command,omitempty" json:"command,omitempty"`
 	Environment map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
 	// SetupCommand optionally runs ONCE per job submission, on the node where
 	// runq runs (login node in HPC mode), after the plan compiles and before
@@ -203,91 +202,59 @@ func (p *PreflightConfig) ExtraRunOrEmpty() string {
 	return p.ExtraRun
 }
 
-// ParamDef defines a parameter's metadata for the web UI.
-// Discovered from script argparse or manually defined.
+// ParamDef declares submission semantics. Defaults belong in research code.
 type ParamDef struct {
 	Name    string   `yaml:"name" json:"name"`
-	Type    string   `yaml:"type" json:"type"` // int, float, str, bool, file, folder, list
-	Default string   `yaml:"default,omitempty" json:"default,omitempty"`
-	Choices []string `yaml:"choices,omitempty" json:"choices,omitempty"` // selectable values for str/file/folder
-	Min     *float64 `yaml:"min,omitempty" json:"min,omitempty"`         // valid range for int/float
-	Max     *float64 `yaml:"max,omitempty" json:"max,omitempty"`         // valid range for int/float
-	// Include is the user's curation: whether this param appears in the
-	// submit flow's param table. Pointer on purpose — nil means "never
-	// curated" (older configs / fresh discovery), which lets the UI apply
-	// its first-time heuristic exactly once and persist the result.
-	Include *bool `yaml:"include,omitempty" json:"include,omitempty"`
-	// Scope declares who consumes this param: "" / "command" (default —
-	// the workload command) or "scheduler" (the HPC submit_template via
-	// {{param.*}}). Scheduler params are invisible to the command renderer
-	// (no unconsumed error, never injected into {{args}}) — declared here
-	// so job.yaml + project.yaml stay self-describing across machines.
-	Scope string `yaml:"scope,omitempty" json:"scope,omitempty"`
-	// Strict upgrades Choices from suggestions to a contract: any submitted
-	// value outside Choices is a submit-time error (enforced in
-	// submitplan.Build — one point, both CLI and GUI).
-	Strict bool `yaml:"strict,omitempty" json:"strict,omitempty"`
-	// Glob is a path PATTERN whose matches are this param's candidate values
-	// (file/folder params: checkpoint dirs, data shards). The pattern is all
-	// that is stored — "which of today's matches do I want" is a per-submit
-	// choice made in the GUI, never persisted here, so project.yaml never
-	// carries a stale file list. Resolution happens on the owning side via
-	// GET /targets/{name}/fs/glob; a submitted job records the concrete
-	// values it expanded to, which is what makes a re-run reproducible.
-	Glob string `yaml:"glob,omitempty" json:"glob,omitempty"`
-	// Style "flag" marks store_true-style switches (auto-annotated by the
-	// argparse scan): the renderer emits a bare `--name` when the value is
-	// truthy and OMITS the flag entirely otherwise — `--name=false` would
-	// fire a store_true (feedback group 2).
-	Style string `yaml:"style,omitempty" json:"style,omitempty"`
+	Type    string   `yaml:"type,omitempty" json:"type,omitempty"`
+	Choices []string `yaml:"choices,omitempty" json:"choices,omitempty"`
+	Scope   string   `yaml:"scope,omitempty" json:"scope,omitempty"`
+	Style   string   `yaml:"style,omitempty" json:"style,omitempty"`
 }
 
-// UnmarshalYAML accepts non-string `default:` scalars (42, 0.6, false)
-// by coercing them to their string form in the node tree before the
-// normal decode. Hand-written project.yaml files routinely leave number
-// defaults unquoted; rejecting them with a type error taught users to
-// quote-everything instead of fixing anything (feedback group 2).
-func (p *ParamDef) UnmarshalYAML(value *yaml.Node) error {
-	for i := 0; i+1 < len(value.Content); i += 2 {
-		k, v := value.Content[i], value.Content[i+1]
-		if k.Value != "default" || v.Kind != yaml.ScalarNode {
-			continue
-		}
-		if v.Tag == "!!null" {
-			v.Tag, v.Value = "!!str", "" // explicit null = no default
-		} else if v.Tag != "!!str" {
-			v.Tag = "!!str" // keep the literal text (42 → "42", 1e-4 → "1e-4")
+// Legacy command_template is read-only; simultaneous keys are ambiguous.
+func (c *Config) UnmarshalYAML(n *yaml.Node) error {
+	type plain Config
+	var legacy *yaml.Node
+	hasCommand := false
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		switch n.Content[i].Value {
+		case "project":
+			if err := n.Content[i+1].Decode(&c.ProjectName); err != nil {
+				return err
+			}
+		case "command":
+			hasCommand = true
+		case "command_template":
+			legacy = n.Content[i+1]
 		}
 	}
-	type paramDefAlias ParamDef // drops methods: no recursion
-	return value.Decode((*paramDefAlias)(p))
-}
-
-// UnmarshalJSON is the same tolerance on the API face: js-yaml on the
-// dashboard parses `default: 42` to a JS number, and older frontend
-// bundles send it through as-is.
-func (p *ParamDef) UnmarshalJSON(data []byte) error {
-	type paramDefAlias ParamDef
-	aux := struct {
-		*paramDefAlias
-		Default json.RawMessage `json:"default,omitempty"`
-	}{paramDefAlias: (*paramDefAlias)(p)}
-	if err := json.Unmarshal(data, &aux); err != nil {
+	if legacy != nil && hasCommand {
+		return fmt.Errorf("use only command, not both command and command_template")
+	}
+	if err := n.Decode((*plain)(c)); err != nil {
 		return err
 	}
-	raw := strings.TrimSpace(string(aux.Default))
-	switch {
-	case raw == "" || raw == "null":
-		p.Default = ""
-	case raw[0] == '"':
-		var s string
-		if err := json.Unmarshal(aux.Default, &s); err != nil {
-			return fmt.Errorf("param %q: default: %w", p.Name, err)
-		}
-		p.Default = s
-	default:
-		// Number / bool literal: its JSON text IS the string form.
-		p.Default = raw
+	if legacy != nil {
+		return legacy.Decode(&c.CmdTemplate)
+	}
+	return nil
+}
+
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type plain Config
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return err
+	}
+	legacy, old := keys["command_template"]
+	if _, current := keys["command"]; current && old {
+		return fmt.Errorf("use only command, not both command and command_template")
+	}
+	if err := json.Unmarshal(data, (*plain)(c)); err != nil {
+		return err
+	}
+	if old {
+		return json.Unmarshal(legacy, &c.CmdTemplate)
 	}
 	return nil
 }

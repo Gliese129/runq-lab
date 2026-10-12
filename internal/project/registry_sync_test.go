@@ -114,3 +114,27 @@ func TestProjectArchiveRefusesActiveJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCommandlessProjectReloads(t *testing.T) {
+	r := newTestRegistry(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	if err := r.Add(ctx, Config{ProjectName: "p", Target: "local", WorkingDir: dir, CmdTemplate: "echo old"}); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("project_name: p\ntarget: local\nworking_dir: " + dir + "\nenvironment: {MARK: new}\n")
+	if err := os.WriteFile(filepath.Join(dir, "project.yaml"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := r.Get(ctx, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CmdTemplate != "" || cfg.Environment["MARK"] != "new" {
+		t.Fatalf("commandless YAML ignored: %+v", cfg)
+	}
+	cached, err := r.GetCached(ctx, "p")
+	if err != nil || cached.CmdTemplate != "" {
+		t.Fatalf("cache not updated: %+v %v", cached, err)
+	}
+}

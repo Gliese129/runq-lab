@@ -86,13 +86,12 @@ func TestRenderUnconsumedParams(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Render(tt.template, tt.params)
-			if err == nil {
-				t.Fatal("expected error for unconsumed params, got nil")
+			if err != nil {
+				t.Fatal(err)
 			}
-			for _, s := range tt.wantErrHas {
-				if !strings.Contains(err.Error(), s) {
-					t.Errorf("error should mention %q, got: %v", s, err)
-				}
+			got := UnconsumedParams(tt.template, tt.params, nil)
+			if strings.Join(got, ",") != strings.Join(tt.wantErrHas, ",") {
+				t.Fatalf("unconsumed = %v, want %v", got, tt.wantErrHas)
 			}
 		})
 	}

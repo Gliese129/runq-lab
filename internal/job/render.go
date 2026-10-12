@@ -19,7 +19,8 @@ var placeholderRe = regexp.MustCompile(`\{\{(\w+)}}`)
 //
 // Errors:
 //   - Named placeholder references a key not in params.
-//   - Params left unconsumed and no {{args}} in template.
+//
+// Parameters without command placeholders remain available through ctx.params.
 func Render(template string, params TaskParams) (string, error) {
 	return RenderExcluding(template, params, nil)
 }
@@ -84,22 +85,11 @@ func RenderWithFlags(template string, params TaskParams, exclude, flagParams map
 	}
 
 	// ── Pass 2: {{args}} ──
-	hasArgs := strings.Contains(result, "{{args}}")
 	unconsumed := make([]string, 0)
 	for _, key := range sortedKeys(params) {
 		if !consumed[key] {
 			unconsumed = append(unconsumed, key)
 		}
-	}
-
-	if !hasArgs && len(unconsumed) > 0 {
-		return "", fmt.Errorf(
-			"template has no {{args}} placeholder, but %d parameter(s) are not referenced: %s\n"+
-				"Hint: add {{args}} to your command_template, or use {{%s}} to reference them explicitly",
-			len(unconsumed),
-			strings.Join(unconsumed, ", "),
-			unconsumed[0],
-		)
 	}
 
 	parts := make([]string, 0, len(unconsumed))
@@ -143,6 +133,25 @@ func sortedKeys(params TaskParams) []string {
 	keys := make([]string, 0, len(params))
 	for k := range params {
 		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// UnconsumedParams reports values passed only through params.json.
+func UnconsumedParams(template string, params TaskParams, exclude map[string]bool) []string {
+	if strings.Contains(template, "{{args}}") {
+		return nil
+	}
+	used := map[string]bool{}
+	for _, match := range placeholderRe.FindAllStringSubmatch(template, -1) {
+		used[match[1]] = true
+	}
+	var keys []string
+	for key := range params {
+		if !used[key] && !exclude[key] {
+			keys = append(keys, key)
+		}
 	}
 	sort.Strings(keys)
 	return keys

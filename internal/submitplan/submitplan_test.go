@@ -212,7 +212,7 @@ func TestStrictChoices(t *testing.T) {
 	proj := &project.Config{
 		ProjectName: "p", WorkingDir: dir, CmdTemplate: "echo {{provider}}",
 		Params: []project.ParamDef{
-			{Name: "provider", Type: "str", Choices: []string{"vllm", "openai"}, Strict: true},
+			{Name: "provider", Type: "str", Choices: []string{"vllm", "openai"}},
 		},
 	}
 	deps := Deps{Paths: Paths{WorkspaceRoot: dir, LogRoot: dir}, SkipPreflight: true}
@@ -225,13 +225,13 @@ func TestStrictChoices(t *testing.T) {
 		t.Fatalf("allowed value rejected: %v", err)
 	}
 	_, err := Build(context.Background(), cfgFor("deepinfra"), proj, deps)
-	if err == nil || !strings.Contains(err.Error(), "strict") {
+	if err == nil || !strings.Contains(err.Error(), "choices") {
 		t.Fatalf("strict violation should error with explanation, got %v", err)
 	}
 
-	proj.Params[0].Strict = false
+	proj.Params[0].Choices = nil
 	if _, err := Build(context.Background(), cfgFor("deepinfra"), proj, deps); err != nil {
-		t.Fatalf("non-strict choices must stay suggestions: %v", err)
+		t.Fatalf("empty choices must be unconstrained: %v", err)
 	}
 }
 
