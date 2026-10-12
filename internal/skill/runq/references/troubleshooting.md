@@ -28,7 +28,7 @@ step, then act or report. Do not loop retries.
 - **Still `pending`**: the cluster is queueing it. `ssh <host> qstat -j <ext_id>`
   shows the reason/resources. Nothing to fix in runq.
 - **runq says running, user says it finished (or vice versa)**:
-  `runq status <job_id>` (always probes). If it still disagrees with
+  `runq ps <job_id> --fresh --json` (forces a probe). If it still disagrees with
   `qstat` / `qacct -j <ext_id>`, report both values as "unconfirmed /
   conflicting" — don't pick one.
 - **A dead task still "running" blocks new submits (max_inflight)**: after

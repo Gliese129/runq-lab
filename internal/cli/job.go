@@ -10,73 +10,10 @@ import (
 
 var jobCmd = &cobra.Command{
 	Use:   "job",
-	Short: "Manage jobs (sweep submissions)",
-}
-
-var jobLsCmd = &cobra.Command{
-	Use:     "ls",
-	Aliases: []string{"list"},
-	Short:   "List all jobs",
-	RunE:    runJobLs,
-}
-
-// runJobLs lists jobs via the mode-aware backend (daemon socket or HPC store),
-// the same path the WebUI and `runq ps` use — so the list reconciles and
-// projects identically regardless of mode.
-func runJobLs(cmd *cobra.Command, args []string) error {
-	return withBackend(cmd, func(b backend.Backend) error {
-		jobs, err := b.ListJobs(cmd.Context(), "")
-		if err != nil {
-			return err
-		}
-		return printDashboardJobs(jobs)
-	})
-}
-
-var jobShowCmd = &cobra.Command{
-	Use:   "show <job_id>",
-	Short: "Show job details and its tasks",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runJobShow,
-}
-
-func runJobShow(cmd *cobra.Command, args []string) error {
-	return withBackend(cmd, func(b backend.Backend) error {
-		detail, err := b.GetJob(cmd.Context(), args[0])
-		if err != nil {
-			return err
-		}
-		printJSON(detail)
-		return nil
-	})
-}
-
-var jobKillCmd = &cobra.Command{
-	Use:   "kill <job_id>",
-	Short: "Kill all tasks in a job",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runJobKill,
-}
-
-func runJobKill(cmd *cobra.Command, args []string) error {
-	jobID := args[0]
-	return withBackend(cmd, func(b backend.Backend) error {
-		if err := b.KillJob(cmd.Context(), jobID); err != nil {
-			return err
-		}
-		fmt.Printf("job %s killed\n", utils.IDColor(jobID))
-		return nil
-	})
+	Short: "Archive or unarchive jobs (list them with `runq ps`)",
 }
 
 func init() {
-	jobLsCmd.Flags().StringP("target", "t", "", "Filter jobs by compute target")
-	jobCmd.AddCommand(jobLsCmd)
-	// Output is always JSON; --json is accepted for parity with ps/status/kill
-	// so scripted callers can pass it uniformly.
-	jobShowCmd.Flags().Bool("json", true, "output raw JSON (always on; accepted for parity)")
-	jobCmd.AddCommand(jobShowCmd)
-	jobCmd.AddCommand(jobKillCmd)
 	jobCmd.AddCommand(jobArchiveCmd)
 	jobCmd.AddCommand(jobUnarchiveCmd)
 	jobCmd.GroupID = groupManagement

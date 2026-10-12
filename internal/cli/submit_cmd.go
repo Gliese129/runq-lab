@@ -24,20 +24,26 @@ import (
 
 var submitCmd = &cobra.Command{
 	Use:   "submit [job.yaml | .]",
-	Short: "Submit a job for scheduling",
-	Long: `Submit a job from a YAML file. If "." is given, runq looks for
-job.yaml in the current directory.`,
-	Example: `  # Submit from file
-  runq submit experiments/lr_sweep.yaml
+	Short: "Submit a job.yaml (one experiment) — preview first with --dry",
+	Long: `Submit a job.yaml. A job is one experiment of a registered project:
 
-  # Submit from current directory (looks for job.yaml)
-  runq submit .
+  project: my-code-base
+  note: kl-ablation
+  command: python train.py            # optional; overrides the project's command
+  target: tsubame-ar9094              # optional; must be in the project's targets
+  fixed_params: { model: qwen3-8b }   # same value in every task
+  sweep:                              # grid = cross product, list = zip rows
+    - method: grid
+      parameters: { kl: [0, 0.1], seed: [1, 2] }
 
-  # Preview expanded tasks without submitting
-  runq submit job.yaml --dry
-
-  # Submit and watch progress
-  runq submit job.yaml --watch`,
+Every param is written to the task's params.json and read in code with
+ctx.params; only params the command references ({{x}} / {{args}}) appear on
+the command line. Target precedence: -t > job.target > project.target.
+"." means ./job.yaml.`,
+	Example: `  runq submit job.yaml --dry                         # tasks, target, rendered command
+  runq submit job.yaml --json                        # {"job_id": ..., "total_tasks": ...}
+  runq submit job.yaml --project-file project.yaml   # register/update the project, then submit
+  runq submit job.yaml -t tsubame-ar9094 --dry       # same job on another declared target`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		file := args[0]
@@ -232,9 +238,13 @@ func init() {
 		"no-preflight",
 		false,
 		"Skip submit-time checks (imports, pip check, path args, writability). "+
-			"Use when the daemon misclassifies a runtime-only path or conditional import.",
+			"Use when preflight misclassifies a runtime-only path or conditional import.",
 	)
 	submitCmd.Flags().StringP("target", "t", "", "Execution target override (-t > job.target > project.target)")
+	// One documented spelling each. --dry-run is a legacy alias; --watch blocks
+	// the caller (agents should check with `runq ps <job> --json` instead).
+	_ = submitCmd.Flags().MarkHidden("dry-run")
+	_ = submitCmd.Flags().MarkHidden("watch")
 
 	submitCmd.GroupID = groupCore
 	rootCmd.AddCommand(submitCmd)

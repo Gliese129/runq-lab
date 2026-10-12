@@ -60,6 +60,7 @@ func init() {
 	psCmd.Flags().StringP("output", "o", "", "Output format (json)")
 	psCmd.Flags().Bool("json", false, "output raw JSON")
 	psCmd.Flags().StringP("target", "t", "", "Filter by compute target")
+	_ = psCmd.Flags().MarkHidden("output") // legacy spelling of --json
 
 	psCmd.GroupID = groupCore
 	rootCmd.AddCommand(psCmd)

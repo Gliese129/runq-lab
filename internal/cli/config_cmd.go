@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -80,7 +79,7 @@ var configAddCmd = &cobra.Command{
 and signal maps for common HPC schedulers.
 
 Examples:
-  runq target add tsubame --template=slurm --host=login.tsubame.titech.ac.jp --user=alice
+  runq target add tsubame --template=tsubame --host=login.t4.gsic.titech.ac.jp --user=alice
   runq target add local-a100 --gpus=0,1,2,3
   runq target add abci --template=abci --host=es.abci.local`,
 	Args: cobra.ExactArgs(1),
@@ -93,13 +92,6 @@ var configShowCmd = &cobra.Command{
 	Short:   "Show target configuration (all targets or a specific one)",
 	Args:    cobra.MaximumNArgs(1),
 	RunE:    runConfigShow,
-}
-
-var configEditCmd = &cobra.Command{
-	Use:   "edit [<name>]",
-	Short: "Open config.yaml in $EDITOR, then validate",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runConfigEdit,
 }
 
 var configCheckCmd = &cobra.Command{
@@ -124,7 +116,7 @@ func runConfigAdd(cmd *cobra.Command, args []string) error {
 	// Check for duplicate.
 	for _, t := range cfg.Targets {
 		if t.Name == name {
-			return fmt.Errorf("target %q already exists — use `runq target edit %s` to modify", name, name)
+			return fmt.Errorf("target %q already exists — edit it in ~/.runq/config.yaml, then `runq target check %s`", name, name)
 		}
 	}
 
@@ -221,29 +213,6 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.OutOrStdout(), " %s %-16s  %s%s\n", marker, t.Name, typeName, remote)
 	}
 	return nil
-}
-
-func runConfigEdit(cmd *cobra.Command, args []string) error {
-	path := config.ConfigPath()
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return fmt.Errorf("no config at %s — run `runq target add <name>` first", path)
-	}
-
-	editor := os.Getenv("VISUAL")
-	if editor == "" {
-		editor = os.Getenv("EDITOR")
-	}
-	if editor == "" {
-		editor = "vi"
-	}
-	ed := exec.Command(editor, path)
-	ed.Stdin, ed.Stdout, ed.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := ed.Run(); err != nil {
-		return fmt.Errorf("%s exited with error: %w", editor, err)
-	}
-
-	// Re-validate after editing.
-	return runConfigCheck(cmd, args)
 }
 
 func runConfigCheck(cmd *cobra.Command, args []string) error {

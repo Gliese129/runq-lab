@@ -90,7 +90,7 @@ are never synced. A project without `targets` is pinned to its `target`.
 - Each task's `run.sh` writes `status.json` at start, exit, and on scheduler
   kill (signal trap). Reading it is a file read, not a scheduler query.
 - `status_template` probes only cover tasks that died silently; probes are
-  rate-limited. `runq status <job_id>` and `--fresh` force one.
+  rate-limited. `runq ps <job_id> --fresh` forces one.
 - Every submit/kill is logged with the fully rendered command and raw
   scheduler output in `~/.runq/logs/runq.log`.
 - Each task runs from `working_dir`; stdout/stderr go to the task log

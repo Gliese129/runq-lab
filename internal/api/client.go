@@ -141,7 +141,7 @@ func (c *Client) do(ctx context.Context, httpc *http.Client, method, path string
 	resp, err := httpc.Do(req)
 	if err != nil {
 		if os.Getenv("RUNQ_SOCKET") != "" {
-			return nil, fmt.Errorf("%w\n(RUNQ_SOCKET is set — if this socket is forwarded from another machine, the runq daemon there may be offline or the tunnel down)", err)
+			return nil, fmt.Errorf("%w\n(RUNQ_SOCKET is set — if this socket is forwarded from another machine, the runq service there may be offline or the tunnel down)", err)
 		}
 		return nil, err
 	}
@@ -159,7 +159,7 @@ func warnVersionSkew(daemonVersion string) {
 		return
 	}
 	warnSkewOnce.Do(func() {
-		fmt.Fprintf(os.Stderr, "warning: runq %s talking to daemon %s — rerun `runq connect` (remote) or reinstall to match\n",
+		fmt.Fprintf(os.Stderr, "warning: runq %s talking to runq service %s — rerun `runq connect` (remote) or reinstall to match\n",
 			version.Version, daemonVersion)
 	})
 }

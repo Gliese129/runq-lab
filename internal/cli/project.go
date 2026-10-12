@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/gliese129/runq-lab/internal/backend"
@@ -14,7 +13,7 @@ import (
 
 var projectCmd = &cobra.Command{
 	Use:   "project",
-	Short: "Manage projects (experiment types)",
+	Short: "Register and inspect projects (one project per code base)",
 }
 
 var projectAddCmd = &cobra.Command{
@@ -147,67 +146,16 @@ func runProjectShow(cmd *cobra.Command, args []string) error {
 	})
 }
 
-var projectEditCmd = &cobra.Command{
-	Use:   "edit <name>",
-	Short: "Edit project config in $EDITOR",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return withBackend(cmd, func(be backend.Backend) error {
-			ctx := cmd.Context()
-			name := args[0]
-			cfg, err := be.GetProject(ctx, name)
-			if err != nil {
-				return err
-			}
-			temp, err := os.CreateTemp("", fmt.Sprintf("%s-*.yaml", name))
-			if err != nil {
-				return err
-			}
-			defer os.Remove(temp.Name())
-			content, _ := yaml.Marshal(cfg)
-			if err := os.WriteFile(temp.Name(), content, 0644); err != nil {
-				return fmt.Errorf("failed to write temp file: %w", err)
-			}
-
-			editor := os.Getenv("EDITOR")
-			if editor == "" {
-				editor = "vim"
-			}
-			editorCmd := exec.Command(editor, temp.Name())
-			editorCmd.Stdin = os.Stdin
-			editorCmd.Stdout = os.Stdout
-			editorCmd.Stderr = os.Stderr
-			if err := editorCmd.Run(); err != nil {
-				return err
-			}
-			content, err = os.ReadFile(temp.Name())
-			if err != nil {
-				return err
-			}
-			var updated project.Config
-			if err := yaml.Unmarshal(content, &updated); err != nil {
-				return err
-			}
-			if err := be.UpdateProject(ctx, updated); err != nil {
-				return err
-			}
-			fmt.Printf("project %q updated\n", name)
-			return nil
-		})
-	},
-}
-
 func init() {
 	// Flags for project add
 	projectAddCmd.Flags().StringP("file", "f", "", "Path to project.yaml")
 	projectAddCmd.Flags().String("dir", "", "Working directory")
 	projectAddCmd.Flags().StringP("target", "t", "", "Project source/default execution target (registration only)")
-	projectAddCmd.Flags().String("cmd", "", "Command template")
+	projectAddCmd.Flags().String("cmd", "", "Default command (a job.yaml `command:` overrides it)")
 
 	projectCmd.AddCommand(projectAddCmd)
 	projectCmd.AddCommand(projectLsCmd)
 	projectCmd.AddCommand(projectShowCmd)
-	projectCmd.AddCommand(projectEditCmd)
 	projectCmd.AddCommand(projectArchiveCmd)
 	projectCmd.AddCommand(projectUnarchiveCmd)
 	projectCmd.GroupID = groupManagement

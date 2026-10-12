@@ -119,13 +119,13 @@ func runDoctorRemote() error {
 
 	fmt.Println("Forwarded socket:")
 	if _, err := os.Stat(sock); err != nil {
-		d.check(false, "", fmt.Sprintf("%s: not present — the forward is not established. It comes up automatically when the daemon on your own machine is running (or run `runq connect %s` there).", sock, target))
+		d.check(false, "", fmt.Sprintf("%s: not present — the forward is not established. It comes up automatically when the runq service on your own machine is running (or run `runq connect %s` there).", sock, target))
 		d.summary()
 		return nil
 	}
 	d.check(true, sock, "")
 
-	fmt.Println("Client daemon (other side of the forward):")
+	fmt.Println("runq service (other side of the forward):")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	client := api.NewClient(sock)
@@ -134,7 +134,7 @@ func runDoctorRemote() error {
 		// The socket file exists but nobody answers: the OWNING side is
 		// gone (laptop asleep / offline / daemon stopped) — say exactly
 		// that instead of misdiagnosing a "local" daemon.
-		d.check(false, "", "socket exists but does not respond — the daemon on your own machine is disconnected (asleep/offline/stopped). It reconnects automatically once it is back; nothing to fix on this login node.")
+		d.check(false, "", "socket exists but does not respond — the runq service on your own machine is disconnected (asleep/offline/stopped). It reconnects automatically once it is back; nothing to fix on this login node.")
 		d.summary()
 		return nil
 	}
@@ -151,7 +151,7 @@ func runDoctorRemote() error {
 	}
 	owner := h.Hostname
 	if owner == "" {
-		owner = "(unknown host — older daemon build)"
+		owner = "(unknown host — older runq build)"
 	}
 	// Owner identity matters: with several machines forwarding to one
 	// cluster account, this line is what catches "the socket answers, but
@@ -265,7 +265,7 @@ func doctorTargets(d *doctorChecks, cfg *config.GlobalConfig, dataDir string, da
 				status, ok = "disconnected — start runqd independently or set RUNQD_SOCKET", false
 			}
 		} else if !daemonUp {
-			status, ok = "status unknown (daemon offline)", true
+			status, ok = "status unknown (runq service offline)", true
 		} else if h, found := health[t.Name]; found && h.checked > 0 {
 			if h.reachable {
 				status, ok = "alive"+h.age, true
@@ -273,7 +273,7 @@ func doctorTargets(d *doctorChecks, cfg *config.GlobalConfig, dataDir string, da
 				status, ok = "unreachable"+h.age+h.lastErr, false
 			}
 		} else {
-			status, ok = "no contact yet (reachability is recorded passively as the daemon works)", true
+			status, ok = "no contact yet (reachability is recorded passively as the runq service works)", true
 		}
 
 		switch {
@@ -433,7 +433,7 @@ func doctorExecutor(d *doctorChecks, cfg *config.GlobalConfig) {
 		d.check(false, "", "not found next to runq or on PATH — local targets cannot execute")
 	}
 
-	fmt.Println("runqd daemon:")
+	fmt.Println("runqd (GPU executor):")
 	socket := utils.RunqdSocketPath()
 	if checkSocketAlive(socket) {
 		d.check(true, "running and answering on the socket", "")

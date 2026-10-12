@@ -27,7 +27,7 @@ import (
 
 var targetCmd = &cobra.Command{
 	Use:   "target",
-	Short: "Manage compute targets (add, inspect, connect, select)",
+	Short: "Configure compute targets (add, show, check, connect, select)",
 }
 
 var targetUseCmd = &cobra.Command{
@@ -103,7 +103,7 @@ func runTargetDisconnect(cmd *cobra.Command, args []string) error {
 func init() {
 	targetUseCmd.Flags().BoolP("persist", "p", false, "Write to config default_target instead of session file")
 
-	targetCmd.AddCommand(configAddCmd, configShowCmd, configEditCmd, configCheckCmd)
+	targetCmd.AddCommand(configAddCmd, configShowCmd, configCheckCmd)
 	targetCmd.AddCommand(targetUseCmd, connectCmd, targetDisconnectCmd)
 	targetCmd.GroupID = groupManagement
 	rootCmd.AddCommand(targetCmd)

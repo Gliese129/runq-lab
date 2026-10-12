@@ -58,6 +58,7 @@ func init() {
 var connectAliasCmd = &cobra.Command{
 	Use:          "connect [name...]",
 	Short:        "Alias of `runq target connect`",
+	Hidden:       true, // one spelling in help; the alias keeps old scripts working
 	Args:         cobra.ArbitraryArgs,
 	RunE:         runConnect,
 	GroupID:      groupDiag,
@@ -191,7 +192,7 @@ func connectOne(cmd *cobra.Command, cfg *config.GlobalConfig, name string) error
 	}
 	fmt.Println("socket forward starting; verifying the remote round trip ...")
 	if err := waitForwardReady(ctx, fsys, socket, controller, name); err != nil {
-		return fmt.Errorf("forward readiness: %w; inspect `runq doctor` and daemon logs", err)
+		return fmt.Errorf("forward readiness: %w; inspect `runq doctor` and the service log (`runq serve status`)", err)
 	}
 	fmt.Println("✓ ready (controller and target verified through the remote socket)")
 	return nil
@@ -219,7 +220,7 @@ func localController(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if len(body.ControllerID) != 12 {
-		return "", fmt.Errorf("daemon has no controller identity; upgrade/restart required")
+		return "", fmt.Errorf("runq service has no controller identity; run `runq serve restart` (upgrade if it persists)")
 	}
 	return body.ControllerID, nil
 }
@@ -231,7 +232,7 @@ func notifyDaemonForward(ctx context.Context, name string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("daemon returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		return fmt.Errorf("runq service returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return nil
 }

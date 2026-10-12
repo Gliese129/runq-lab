@@ -15,6 +15,15 @@ var helpFuncs = template.FuncMap{
 	"bold":      func(s string) string { return utils.Bold(s) },
 	"underline": func(s string) string { return utils.Underline(s) },
 	"dim":       func(s string) string { return utils.Dimf("%s", s) },
+	"ungroupedCommands": func(cmd *cobra.Command) []*cobra.Command {
+		var commands []*cobra.Command
+		for _, child := range cmd.Commands() {
+			if child.GroupID == "" && !child.Hidden && child.IsAvailableCommand() && child.Name() != "help" {
+				commands = append(commands, child)
+			}
+		}
+		return commands
+	},
 	"commandsWithGroup": func(cmd *cobra.Command, groupID string) []*cobra.Command {
 		var commands []*cobra.Command
 		for _, child := range cmd.Commands() {
@@ -35,14 +44,23 @@ const (
 
 var rootCmd = &cobra.Command{
 	Use:   "runq",
-	Short: "A lightweight GPU job scheduler for research labs",
-	Long: `runq — a GPU job scheduler for research labs
+	Short: "Run ablation sweeps on HPC clusters — built to be driven by AI agents",
+	Long: `runq — run ablation sweeps on HPC clusters, built to be driven by AI agents.
 
-  Get started in 3 steps:
+  A project is a code base; a job.yaml is one experiment (command, target,
+  fixed_params, sweep). Every task gets its own workspace, log and params.json;
+  the training code reads swept values with the Python SDK (ctx.params), so
+  ablation axes need no command-line plumbing and no wrapper scripts.
 
-    1. runq init                   Scan your train.py and generate configs
-    2. runq project add .          Register the project
-    3. runq submit job.yaml        Submit and go`,
+  Typical loop:
+    runq project add -f project.yaml        register the code base (once)
+    runq submit job.yaml --dry              preview tasks + rendered command
+    runq submit job.yaml --json             submit -> {job_id, total_tasks}
+    runq ps <job_id> --json --fresh         task states
+    runq logs <task_id> --grep 'loss' -n 20 last matching log lines
+    runq kill <job_id|task_id>
+
+  Agents: run "runq skill install" once — the skill has the rules and recipes.`,
 	// main() prints the returned error; without this cobra prints it too
 	// and every failure shows up twice.
 	SilenceErrors: true,
@@ -55,7 +73,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.PersistentFlags().String("socket", "", "path to daemon unix socket")
+	rootCmd.PersistentFlags().String("socket", "", "path to the runq service socket (default: the local service)")
 	// --fresh（spec §7 全局 flag）：绕过 daemon 缓存 TTL 强制刷新（受服务端
 	// 5min 下限保护）；未真刷时提示「x 秒前已刷新」而非静默 no-op（D22）。
 	rootCmd.PersistentFlags().Bool("fresh", false, "force-refresh cached target data before the command (rate-limited server-side)")
@@ -74,6 +92,10 @@ func init() {
 
 	// Custom help template with bold headers and underlined section titles.
 	rootCmd.SetUsageTemplate(usageTemplate)
+	// Every usage section opens with its own blank line, so the description
+	// is followed by exactly one newline (cobra's default adds two).
+	rootCmd.SetHelpTemplate(`{{with (or .Long .Short)}}{{. | trimTrailingWhitespaces}}
+{{end}}{{if or .Runnable .HasSubCommands}}{{.UsageString}}{{end}}`)
 
 	// Merge help functions for bold/underline.
 	cobra.AddTemplateFuncs(helpFuncs)
@@ -91,7 +113,7 @@ func Execute() error {
 		// Remote-CLI perspective (RQ-74): a dead forwarded socket means the
 		// OWNING machine is gone, not this login node — every command says
 		// so, not just doctor, and says what (not) to do about it.
-		return fmt.Errorf("%w\n\nremote CLI: the runq daemon on your own machine is not reachable through the forward (asleep / offline / stopped). It reconnects automatically once that machine is back — nothing to fix on this login node. Details: runq doctor", err)
+		return fmt.Errorf("%w\n\nremote CLI: the runq service on your own machine is not reachable through the forward (asleep / offline / stopped). It reconnects automatically once that machine is back — nothing to fix on this login node. Details: runq doctor", err)
 	}
 	return err
 }
@@ -139,47 +161,36 @@ func printRemoteContextBanner() {
 // usageTemplate renders USAGE ONLY — no .Short/.Long here: cobra's help
 // template already prints LongOrShort before calling usage, so including
 // them again double-prints every description (RQ-65 #6).
-const usageTemplate = `{{if .Runnable}}{{underline "Usage:"}}
+const usageTemplate = `{{- if .Runnable}}
+{{underline "Usage:"}}
   {{.UseLine}}
 {{end}}
-{{- if .HasAvailableSubCommands}}
-{{- range .Groups}}
-
-{{bold .Title}}
-{{- range (commandsWithGroup $ .ID)}}
+{{- range $g := .Groups}}{{with (commandsWithGroup $ $g.ID)}}
+{{bold $g.Title}}
+{{- range .}}
   {{rpad .Name .NamePadding}}  {{.Short}}
 {{- end}}
-{{- end}}
-
-{{- if not .AllChildCommandsHaveGroup}}
-
-{{underline "Additional Commands:"}}
-{{- range .Commands}}
-{{- if (and (eq .GroupID "") (not .Hidden) .IsAvailableCommand)}}
+{{end}}{{end}}
+{{- with (ungroupedCommands .)}}
+{{underline "Commands:"}}
+{{- range .}}
   {{rpad .Name .NamePadding}}  {{.Short}}
 {{- end}}
-{{- end}}
-{{- end}}
-{{- end}}
-
+{{end}}
 {{- if .HasAvailableLocalFlags}}
-
 {{underline "Flags:"}}
 {{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}
-{{- end}}
-
+{{end}}
 {{- if .HasAvailableInheritedFlags}}
-
 {{underline "Global Flags:"}}
 {{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}
-{{- end}}
-
+{{end}}
 {{- if .HasExample}}
-
 {{underline "Examples:"}}
 {{.Example}}
-{{- end}}
-
+{{end}}
+{{- if .HasAvailableSubCommands}}
 Use "{{.CommandPath}} [command] --help" for more information about a command.
+{{end}}
 {{dim "Docs & annotated config examples: https://github.com/gliese129/runq-lab — docs/ and examples/"}}
 `

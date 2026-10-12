@@ -13,7 +13,7 @@ import (
 
 var taskCmd = &cobra.Command{
 	Use:   "task",
-	Short: "Manage individual tasks",
+	Short: "Inspect or retry a single task",
 }
 
 var taskShowCmd = &cobra.Command{

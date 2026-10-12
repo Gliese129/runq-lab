@@ -15,6 +15,8 @@ import (
 var gpuCmd = &cobra.Command{
 	Use:   "gpu",
 	Short: "Show GPU allocation status",
+	// Local runqd targets only; HPC users never need it, so keep help short.
+	Hidden: true,
 	RunE:  runGPU,
 }
 
@@ -38,7 +40,7 @@ func runGPU(cmd *cobra.Command, args []string) error {
 	return withBackend(cmd, func(be backend.Backend) error {
 		p, ok := be.(*api.Proxy)
 		if !ok {
-			return fmt.Errorf("gpu status requires the daemon proxy")
+			return fmt.Errorf("gpu status requires the runq service (`runq serve -d`)")
 		}
 		byTarget, err := p.GPUStatusByTarget(cmd.Context())
 		if err != nil {

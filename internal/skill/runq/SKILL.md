@@ -49,12 +49,14 @@ ls project.yaml job.yaml .rsync 2>/dev/null
 Removed in v0.6 — do not try them: `runq daemon …` (→ `runq serve …`),
 `sweep`, `run` (→ a job.yaml + `submit`; a job with only `fixed_params:` and
 no `sweep:` is one task), `best`, `collect` (→ `results`),
-`pause`/`resume`, `thaw`, `target inspect`, `target list --json`.
+`pause`/`resume`, `thaw`, `target inspect`, `target list --json`, `status`
+(→ `ps <job> --fresh`), `job ls`/`job show`/`job kill` (→ `ps` / `kill`), `init`,
+`project edit`/`target edit`.
 `runq logs` without `--no-follow`/`--grep` FOLLOWS and blocks forever — never
 run it bare from a script or tool call.
-`runq project edit` and `runq target edit` open `$EDITOR` — interactive, never
-call them. Edit the YAML file (`project.yaml`, `~/.runq/config.yaml`) instead,
-then `--project-file` / `runq target check <name>`; config changes hot-reload.
+To change a project or target, edit the YAML file (`project.yaml`,
+`~/.runq/config.yaml`), then `submit --project-file` / `runq target check <name>`;
+config changes hot-reload.
 
 ## 2. Mental model
 
