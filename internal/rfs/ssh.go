@@ -418,3 +418,9 @@ func (s *sshStream) Close() error {
 	s.once.Do(func() { _ = s.ReadCloser.Close(); s.err = s.closeSession() })
 	return s.err
 }
+
+// RemoveContext allows bounded cleanup with a context independent of a failed
+// transfer while retaining the manager's connection/setup time bounds.
+func (s *SSHFS) RemoveContext(ctx context.Context, path string) error {
+	return s.WithContext(ctx).Remove(path)
+}

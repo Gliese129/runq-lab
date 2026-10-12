@@ -68,8 +68,9 @@ type RemoteForwardConfig struct {
 // Forward reconnect/keepalive tuning. Backoff max and keepalive interval
 // were tightened from 60s/30s (RQ-74): after a laptop wakes from sleep the
 // forward should be back within seconds, not "keepalive lag + a minute of
-// backoff". Worst case is now ~25s (one keepalive round to notice + one
-// max-backoff wait); the extra traffic is one tiny SSH request per 15s.
+// backoff". Keepalive detection is bounded by interval + liveness timeout;
+// recovery additionally includes backoff, authentication, and bind. Measure
+// end-to-end recovery rather than deriving a guarantee from these constants.
 const (
 	forwardBackoffMin   = 2 * time.Second
 	forwardBackoffMax   = 10 * time.Second

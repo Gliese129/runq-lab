@@ -26,6 +26,18 @@
 - 本机安装 `v0.6.0rc2-dev+connections`，Unix health 返回 200。实际集群 tsubame、tsubame-ar9055、tsubame-ar9094、tsubame-c0-evaluation 四个 target 的 connect 均退出 0，确认 controller/target/version；重复连接验证了 OpenSSH 隐藏 errno 的陈旧 socket 恢复。
 - 未进行真实笔记本睡眠/切换网络实验；该部分以故障注入覆盖，不能将其写成已完成的实机测试。
 
+## 连接收尾验收（2026-10-12）
+
+- 上传清理在第一笔写入前注册，使用独立 3 秒 context；清理失败可见。失败与取消测试检查旧二进制内容/权限不变，其他会话临时文件保留，本次临时文件被删除。
+- Agent 使用真实本地 Unix socket/keyring 和 SSH 公钥认证。完成认证后重启同路径 agent，再次建立 SSH/SFTP 成功；修改 shell SSH_AUTH_SOCK 后原配置仍使用原路径，原 agent 失效时不会悄悄改用另一 agent。
+- Keepalive 黑洞用真实 SSH fixture 丢弃回复，并保持 TCP 打开。使用生产 15 秒周期和 5 秒超时：一次 race 测试检测 20.006 秒、恢复 22.032 秒。这是受控测量，不是所有网络条件的上界。
+- 超时关闭旧 SSH transport，旧 Wait 返回；恢复用新连接。第二次 keepalive 已阻塞时 Close 完成，supervisor 被等待退出，退避周期后连接数不再增长。全过程没有执行提交命令。
+- 全套 Go 回归与相关包 race 测试验证本次实现。
+
+收尾修正已原子安装到本机 CLI；当前服务保持原 PID 运行，无数据库迁移。实机验收基线保存于 `/Users/miaozean/Desktop/workspace/JobScheduler/.cache/verification/connection-real-baseline-20261012-171922.json`（169 个 task、controller、四个 forward）。
+
+实机休眠/网络切换仍待用户配合：先保存 task ID/external ID、controller/forward 状态和时间；进行一次短暂断网或休眠；恢复后核对四个 target 的 health/connect 身份、原任务归属和 external ID，以及日志中的检测/恢复时间。计算任务终态可以自然推进，但连接恢复不应产生额外 submit。验收时避免使用 --fresh；新提交只用于单独授权的实验。
+
 ## 数据库迁移
 
 正常停止旧服务后，执行 `artifacts/migrations/rc2_connections.py`：SQLite backup API 包含 WAL，备份完整性检查通过。事务内只修改 projects/jobs 的 config_json；其余所有列及其余表逐行哈希完全一致。

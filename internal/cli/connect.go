@@ -7,8 +7,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -363,20 +366,35 @@ func installRemoteBinary(ctx context.Context, fsys *rfs.SSHFS, binPath, binary s
 	if len(data) == 0 {
 		return fmt.Errorf("empty remote binary")
 	}
+	return installRemoteBinaryData(ctx, fsys, binPath, data)
+}
+
+// Installation owns only its uniquely named temporary file. Cleanup must be
+// registered before the first write and must survive upload cancellation.
+type remoteBinaryInstaller interface {
+	WriteFileContext(context.Context, string, []byte, os.FileMode) error
+	Exec(context.Context, string, ...string) ([]byte, []byte, int, error)
+	Rename(string, string) error
+	RemoveContext(context.Context, string) error
+}
+
+func installRemoteBinaryData(ctx context.Context, fsys remoteBinaryInstaller, binPath string, data []byte) error {
 	var nonce [8]byte
-	if _, err = rand.Read(nonce[:]); err != nil {
+	if _, err := rand.Read(nonce[:]); err != nil {
 		return err
 	}
 	tmp := binPath + ".tmp-" + hex.EncodeToString(nonce[:])
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := fsys.RemoveContext(cleanup, tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			slog.Warn("remote temporary binary cleanup failed", "path", tmp, "error", err)
+		}
+	}()
 	fmt.Printf("Uploading matching remote CLI (%.1f MiB) ...\n", float64(len(data))/(1<<20))
 	if err := fsys.WriteFileContext(ctx, tmp, data, 0755); err != nil {
 		return fmt.Errorf("upload temporary executable: %w", err)
 	}
-	defer func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = fsys.WithContext(cleanup).Remove(tmp)
-	}()
 	// Executing only the temporary file validates platform and exact version;
 	// the current executable stays intact on every failure.
 	out, se, exit, err := fsys.Exec(ctx, utils.ShellQuote(tmp)+" version")
@@ -384,7 +402,7 @@ func installRemoteBinary(ctx context.Context, fsys *rfs.SSHFS, binPath, binary s
 		return fmt.Errorf("verify temporary executable: %w", err)
 	}
 	if exit != 0 || strings.TrimSpace(string(out)) != version.Version {
-		return fmt.Errorf("remote binary must run on %s/%s and report %s (exit %d): %s", goos, arch, version.Version, exit, strings.TrimSpace(string(se)))
+		return fmt.Errorf("temporary remote binary must report %s (exit %d): %s", version.Version, exit, strings.TrimSpace(string(se)))
 	}
 	if err := fsys.Rename(tmp, binPath); err != nil {
 		return fmt.Errorf("atomic remote install: %w", err)

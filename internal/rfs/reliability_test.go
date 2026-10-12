@@ -21,14 +21,16 @@ import (
 )
 
 type faultSSH struct {
-	listener net.Listener
-	cfg      SSHConfig
-	root     string
-	mode     atomic.Int32
-	mu       sync.Mutex
-	conns    []net.Conn
-	sockets  map[string]net.Listener
-	wg       sync.WaitGroup
+	listener          net.Listener
+	cfg               SSHConfig
+	root              string
+	mode              atomic.Int32
+	mu                sync.Mutex
+	conns             []net.Conn
+	sockets           map[string]net.Listener
+	wg                sync.WaitGroup
+	keepaliveRequests atomic.Int32
+	execRequests      atomic.Int32
 }
 
 const (
@@ -38,9 +40,10 @@ const (
 	faultExec         = 4
 	faultFile         = 5
 	faultMaskedSocket = 6
+	faultKeepalive    = 7
 )
 
-func newFaultSSH(t *testing.T) *faultSSH {
+func newFaultSSH(t *testing.T, configure ...func(*ssh.ServerConfig)) *faultSSH {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "rq-")
 	if err != nil {
@@ -50,6 +53,9 @@ func newFaultSSH(t *testing.T) *faultSSH {
 	signer, _ := ssh.NewSignerFromKey(priv)
 	config := &ssh.ServerConfig{NoClientAuth: true}
 	config.AddHostKey(signer)
+	for _, fn := range configure {
+		fn(config)
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -140,6 +146,7 @@ func newFaultSSH(t *testing.T) *faultSSH {
 								_ = srv.Close()
 								return
 							case "exec":
+								f.execRequests.Add(1)
 								_ = r.Reply(true, nil)
 								if f.mode.Load() == faultExec {
 									_ = server.Close()
@@ -210,6 +217,11 @@ func (f *faultSSH) requests(server *ssh.ServerConn, reqs <-chan *ssh.Request) {
 		var payload struct{ Path string }
 		_ = ssh.Unmarshal(r.Payload, &payload)
 		switch r.Type {
+		case "keepalive@runq":
+			f.keepaliveRequests.Add(1)
+			if f.mode.Load() != faultKeepalive {
+				_ = r.Reply(false, nil)
+			}
 		case "streamlocal-forward@openssh.com":
 			if f.mode.Load() == faultBind {
 				continue
@@ -453,5 +465,87 @@ func TestForwardReconnectAndBackoffCancellation(t *testing.T) {
 	_ = fw.Close()
 	if time.Since(started) > 2*time.Second {
 		t.Fatal("Close waited for backoff")
+	}
+}
+
+func TestKeepaliveBlackholeRecoveryAndClose(t *testing.T) {
+	f := newFaultSSH(t)
+	fw := NewRemoteForward(RemoteForwardConfig{SSH: f.cfg, SocketPath: filepath.Join(f.root, "blackhole/rq.sock"), Owner: "c:t", Serve: func(ln net.Listener) error { return http.Serve(ln, http.NotFoundHandler()) }})
+	go fw.Run(context.Background())
+	defer fw.Close()
+	waitUp(t, fw)
+	fw.mu.Lock()
+	old := fw.client
+	fw.mu.Unlock()
+	f.mode.Store(faultKeepalive)
+	started := time.Now()
+	// Exercise the production 15s keepalive + 5s deadline, not a second mock
+	// watchdog. Leave TCP open while dropping keepalive replies.
+	deadline := time.Now().Add(forwardKeepalive + livenessTimeout + 5*time.Second)
+	for time.Now().Before(deadline) {
+		if fw.Status().State == ForwardReconnecting {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if fw.Status().State != ForwardReconnecting {
+		t.Fatalf("blackhole was never detected: %+v", fw.Status())
+	}
+	transportDone := make(chan error, 1)
+	go func() { transportDone <- old.Wait() }()
+	select {
+	case <-transportDone:
+	case <-time.After(time.Second):
+		t.Fatal("timeout did not close the real SSH transport")
+	}
+	f.mode.Store(0)
+	dropped := time.Since(started)
+	deadline = time.Now().Add(forwardBackoffMin + 4*time.Second)
+	for time.Now().Before(deadline) {
+		fw.mu.Lock()
+		changed := fw.client != nil && fw.client != old
+		fw.mu.Unlock()
+		if changed && fw.Status().State == ForwardUp {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if fw.Status().State != ForwardUp {
+		t.Fatalf("blackhole did not recover: %+v", fw.Status())
+	}
+	t.Logf("production cadence: detected in %v, recovered in %v", dropped, time.Since(started))
+	// Once another keepalive is actually waiting, Close must join the blocked
+	// request immediately and never create another connection in backoff.
+	f.mode.Store(faultKeepalive)
+	requests := f.keepaliveRequests.Load()
+	deadline = time.Now().Add(forwardKeepalive + 3*time.Second)
+	for f.keepaliveRequests.Load() == requests && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if f.keepaliveRequests.Load() == requests {
+		t.Fatal("second keepalive did not start")
+	}
+	started = time.Now()
+	_ = fw.Close()
+	if time.Since(started) > time.Second {
+		t.Fatalf("Close hung on keepalive: %v", time.Since(started))
+	}
+	select {
+	case <-fw.runDone:
+	default:
+		t.Fatal("supervisor not joined")
+	}
+	f.mu.Lock()
+	connections := len(f.conns)
+	f.mu.Unlock()
+	time.Sleep(forwardBackoffMin + 100*time.Millisecond)
+	f.mu.Lock()
+	after := len(f.conns)
+	f.mu.Unlock()
+	if after != connections || fw.Status().State != ForwardClosed {
+		t.Fatal("closed forward kept reconnecting")
+	}
+	if f.execRequests.Load() != 0 {
+		t.Fatal("forward recovery replayed a command")
 	}
 }
