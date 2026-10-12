@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased (next rc)
+
+### Breaking
+
+- Removed `runq status` (use `runq ps <job> --fresh`), `runq job ls|show|kill`
+  (use `ps` / `kill`; `job` keeps archive/unarchive), `runq project edit` and
+  `runq target edit` (edit the YAML, then `submit --project-file` /
+  `target check`), and `runq init` (param defaults now live in code).
+- Hidden but still accepted: `runq connect` (alias of `target connect`),
+  `runq gpu`, `submit --dry-run` / `--watch`, `ps -o json`.
+
+### Changes
+
+- Help leads with what runq is for and the agent loop; `submit --help` shows
+  the job shape (command/target/fixed_params/sweep, ctx.params, target
+  precedence); user-facing messages say "runq service" instead of "daemon".
+- Docs rewritten around one story (project = code base, job = experiment,
+  params via ctx.params, no wrapper scripts); internal design notes moved out
+  of `docs/`. A test now fails if README, docs, examples or the skill show a
+  command or flag that doesn't exist or is hidden.
+- Built-in skill rewritten, including a "no wrapper scripts" mapping from what
+  agents put in `.sh` files to what runq declares (env, `.env`, target
+  `env_setup`, `python_env`, `setup_command`, task dirs, preflight, resume, sync).
+- Removed ~1.6k lines of code left unreachable by the v0.6 cuts.
+
 ## v0.6.0rc3 — 2026-10-12
 
 - Isolate remote sockets by controller/target; bounded SSH/SFTP cancellation, verified forward readiness and unified SSH configuration/background recovery.
