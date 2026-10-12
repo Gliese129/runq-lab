@@ -17,7 +17,7 @@ var gpuCmd = &cobra.Command{
 	Short: "Show GPU allocation status",
 	// Local runqd targets only; HPC users never need it, so keep help short.
 	Hidden: true,
-	RunE:  runGPU,
+	RunE:   runGPU,
 }
 
 func runGPU(cmd *cobra.Command, args []string) error {

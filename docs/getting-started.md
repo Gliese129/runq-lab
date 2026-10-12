@@ -1,155 +1,144 @@
-# Getting started — your first sweep in 5 minutes
+# Getting started — your first ablation sweep
 
-This walkthrough assumes a shared lab machine with NVIDIA GPUs. For HPC
-clusters (SLURM / PBS / SGE) do steps 1–3 here, then switch to
-[hpc.md](./hpc.md).
+This walkthrough uses an SGE/UGE cluster (TSUBAME); Slurm and PBS differ only
+in the target preset. For a local GPU machine see the last section.
 
-## 1. Install and check
+## 1. Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Gliese129/runq-lab/main/install.sh | sh
+runq serve -d          # local runq service: CLI backend + dashboard (http://127.0.0.1:8077)
+runq skill install     # if an agent (Codex / Claude Code) will drive runq
 runq doctor
 ```
 
-The runq-lab installer supports Linux and macOS on amd64/arm64. It asks
-whether to install the embedded UI build, verifies the downloaded checksum,
-and installs only `runq`. It does not install `runqd` and does not start a
-daemon unless explicitly requested. Install `runqd` separately on the Linux
-GPU host from the
-[`runq-executor`](https://github.com/Gliese129/runq-executor) repository, then
-use `doctor` to check the client side.
+The installer replaces only the `runq` binary; configuration and the database
+are untouched. Re-run `runq serve restart` and `runq skill install` after
+every upgrade.
 
-The one-liner remains scriptable: set `RUNQ_WITH_UI=0` or `1`,
-`RUNQ_START_DAEMON=1` to opt into client startup, `RUNQ_INSTALL_DIR` for a custom
-destination, and `RUNQ_VERSION=v…` to pin a release.
-
-Rerunning the installer updates the binary atomically and leaves the database
-and configuration untouched. An existing daemon is restarted only when
-`RUNQ_START_DAEMON=1` is set.
+## 2. Add the cluster
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Gliese129/runq-lab/main/install.sh \
-  | RUNQ_WITH_UI=1 RUNQ_VERSION=v0.5.0 sh
+runq target add tsubame --template=tsubame --host=login.t4.gsic.titech.ac.jp --user=alice
+runq target check tsubame       # renders every template with sample values — free
+runq target connect tsubame     # trusts the host key, installs the remote CLI
 ```
 
-## 2. Start the two independent services
+The preset is a starting point: adjust `submit_template` (group, resource
+flags) in `~/.runq/config.yaml`, then `runq target check tsubame` again.
+SSH settings come from your `~/.ssh/config` (evaluated with `ssh -G`:
+aliases, identity files, IdentityAgent); ProxyJump/ProxyCommand are not
+supported. See [hpc.md](./hpc.md).
 
-```bash
-runq target add local       # explicit: a fresh client has no implicit executor
-runqd serve                 # Linux execution host; normally use systemd
-runq serve -d
-```
-
-`runq` owns experiment intent, targets, and the optional dashboard. `runqd`
-owns execution on one machine — start it independently (see the
-[`runq-executor` docs](https://github.com/Gliese129/runq-executor) for setup).
-A fresh runq client has no target, so `target add local` is the
-explicit opt-in to this machine's runqd. The client never starts or
-supervises `runqd`. If the endpoint is unavailable, client-daemon startup
-reports the connection error and how to fix it. `runq status` shows the
-client-side view.
-
-## 3. Turn your script into a project
-
-```bash
-cd ~/experiments/resnet50
-runq init train.py
-```
-
-`init` scans `train.py`'s argparse arguments and generates two files:
-
-- **project.yaml** — the parameter *catalog*: every argument it found, with
-  optional parameter constraints, plus `command`, `target`, `working_dir` and resource defaults. One codebase keeps one project; experiment differences belong in jobs.
-- **job.yaml** — one *selection* over that catalog: which values to sweep
-  *this time*.
-
-Open project.yaml and sanity-check three things: `working_dir` (must
-exist), `command` (how your script is invoked; `{{args}}` expands
-to `--key=value` for every parameter), and `defaults.gpus_per_task`.
-
-Your script doesn't use argparse? Copy the annotated examples in
-[configuration.md](./configuration.md) and fill in the params by hand.
-
-Then register:
-
-```bash
-runq project add .
-```
-
-## 4. Describe the sweep
-
-Edit job.yaml:
+## 3. Register the code base (once)
 
 ```yaml
-project: resnet50
-note: "first sweep"           # human label; shows up in runq ps
-sweep:
-  - method: grid              # cartesian product
-    parameters:
-      lr: [0.001, 0.01, 0.1]
-      batch_size: [32, 64]
+# project.yaml
+project_name: grpo
+target: tsubame
+working_dir: /gs/fs/me/grpo            # code on the cluster; tasks run from here
+command: python train.py
+environment: { HF_HOME: /gs/bs/me/hf }
+defaults: { gpus_per_task: 2, timeout: 12h, max_retry: 1 }
 ```
 
-## 5. Preview, then submit
+```bash
+runq project add -f project.yaml
+```
+
+One project per code base. Later changes: edit the file and pass
+`--project-file project.yaml` on the next submit.
+
+## 4. Read parameters in code
+
+```python
+# train.py
+import runq
+
+ctx = runq.context()
+kl = ctx.params.get("kl", 0.0)          # swept value, or the default when run by hand
+seed = ctx.params.get("seed", 0)
+...
+runq.report({"loss": loss}, step=step)               # dashboard curves
+runq.record({"acc": acc}, kl=kl, seed=seed)          # one comparable row per cell
+# outputs → ctx.output_dir, checkpoints → ctx.checkpoint_dir (kept across retries)
+```
+
+No argparse plumbing is needed: every swept value is in `ctx.params`. Outside
+runq the same script still runs (`ctx.params` is empty, defaults apply).
+
+## 5. Describe the experiment
+
+```yaml
+# job.yaml
+project: grpo
+note: kl-ablation                        # shows in runq ps and names the task dirs
+fixed_params: { model: qwen3-8b }        # same in every task
+sweep:
+  - method: grid                         # cross product
+    parameters: { kl: [0.0, 0.05, 0.1], seed: [1, 2] }
+```
+
+A smoke test, a resume, or the same sweep on a reservation is another job
+file — it may set its own `command:`, `target:` or `overrides:` — not
+another project.
+
+## 6. Preview, then submit
 
 ```bash
 runq submit job.yaml --dry
 ```
 
-`--dry` prints the exact expanded task list — `lr(3) × batch_size(2) = 6
-tasks` — and submits nothing. It costs nothing; make it a habit. When the
-expansion looks right:
+`--dry` shows `kl(3) × seed(2) = 6 tasks`, the target, the generated `run.sh`
+and the exact `qsub` line, and which params reach the code only via
+`ctx.params`. It submits nothing. When it looks right:
 
 ```bash
-runq submit job.yaml
+runq submit job.yaml --json      # {"job_id": "jb…", "total_tasks": 6}
 ```
 
-runq queues 6 tasks; GPUs are assigned as they become available. runq
-retries failures up to `max_retry`, and gives each task its own log tagged
-with its exact params.
-
-## 6. Watch, and collect results
+## 7. Watch
 
 ```bash
-runq ps                      # job table: id, status, done/total, note
-runq ps <job_id>             # that job's tasks with their params
-runq gpu                     # who is on which GPU
-runq logs <task_id>          # tail + follow (Ctrl-C to stop; --no-follow to just print)
-runq logs <task_id> --grep 'val_loss'   # last matching lines only
+runq ps <job_id> --json                    # task states (cached; add --fresh to probe now)
+runq logs <task_id> --grep 'loss' -n 20    # last matching lines, grepped on the cluster
+runq task show <task_id>                   # command, dirs, scheduler id, links
+runq results <job_id> --json               # rows from runq.record
 ```
 
-If your script reports metrics (`runq.report()`) or results (`runq.record()`)
-through the Python SDK, the dashboard charts them and `runq results <job_id>`
-prints the result records.
+The dashboard shows the same jobs, logs, curves and results. `pending` means
+the cluster is queueing the task.
 
-## 7. When something goes wrong
+## 8. When something goes wrong
 
 ```bash
-runq task show <task_id>     # params, status, retry count, log path
-runq task retry <task_id>    # requeue just that one
-runq kill <task_id>          # stop one task
-runq kill <job_id>           # stop the whole job
+runq task retry <task_id>     # requeue one task
+runq kill <job_id>            # stop a whole job
 ```
 
-runq's own operation log (every submit/kill with the rendered command) is
-at `~/.runq/logs/runq.log`. And when a run is truly over:
-
-```bash
-runq clean --show            # preview what would be deleted
-runq clean --older-than 720h # delete finished tasks + artifacts (IRREVERSIBLE)
-```
+Every submit/kill with the fully rendered command and the scheduler's raw
+reply is in `~/.runq/logs/runq.log`. Common errors and fixes:
+`runq skill show references/troubleshooting.md`.
 
 ## Where things live
 
 | Path | What |
 |---|---|
-| `~/.runq/config.yaml` | Global config + HPC targets |
-| `~/.local/share/runq/runq.db` | Client queue/projection state (override the root with `RUNQ_DATA_DIR`) |
-| `<working_dir>/.runq/<note>-<job_id>/<task_id>/` | Per-task workspace: log, params.json, metrics.jsonl, results.jsonl, checkpoints/ |
+| `~/.runq/config.yaml` | Global config and targets |
+| `~/.local/share/runq/` | Service data: database, logs, socket (`runq serve status` prints them) |
+| `<working_dir>/.runq/<note>-<job_id>/<task_id>/` | Task workspace: log, `params.json`, `metrics.jsonl`, `results.jsonl`, `outputs/`, `checkpoints/`, `run.sh`, `status.json` |
 
-The job directory starts with your `note`, so `ls .runq/` reads like an
-experiment log. Don't parse these paths in scripts — use `--json` output.
+Set `data_path` in `~/.runq/config.yaml` to keep task workspaces on bulk
+storage (`.runq` becomes a symlink). Don't parse these paths — use `--json`.
 
-Next steps: [configuration.md](./configuration.md) for the full YAML
-reference · [hpc.md](./hpc.md) to run the same workflow on a cluster ·
-[cli.md](./cli.md) for stable commands and machine-readable JSON output.
+When a run is truly over: `runq clean --job <job_id> --show`, then `-y`
+(irreversible: task directories, outputs and checkpoints are deleted).
+
+## Local GPU machine
+
+Install `runqd` (the GPU executor) from
+[`runq-executor`](https://github.com/Gliese129/runq-executor) and start it
+(normally via systemd), then `runq target add local` and use
+`target: local` in the project. Everything else above is the same.
+
+Next: [configuration.md](./configuration.md) · [hpc.md](./hpc.md) · [cli.md](./cli.md)

@@ -1,107 +1,91 @@
 # CLI reference
 
 Conventions: job ids look like `jb…`, task ids like `tk…` — take them from
-`--json` output rather than parsing tables. Every read command supports
-`--json`. `-t <target>` routes any command to an HPC target; `--fresh`
-forces a cache refresh (rate-limited server-side). Errors are documentation:
-they state what's wrong and how to fix it, and exit non-zero.
+`--json` output instead of parsing tables. Every read command supports `--json`.
+`--fresh` (global) forces one scheduler probe before the read (rate-limited
+server-side). Errors say what is wrong and how to fix it, and exit non-zero.
+`runq <command> --help` is always the authoritative, current form.
 
-## Core
-
-| Command | What it does |
-|---|---|
-| `runq init [script.py]` | Scan argparse → generate project.yaml + job.yaml; auto-detect uv/venv/conda |
-| `runq submit <job.yaml \| .>` | Submit a job. `--dry` preview (nothing submitted) · `--watch` live progress · `--note` label · `--project` / `--project-file` override · `--json` → `{job_id, total_tasks}` |
-
-## Monitoring
+## Run an experiment
 
 | Command | What it does |
 |---|---|
-| `runq ps` (alias `ls`) | Job table: id, status, done/total, note |
-| `runq ps <job_id>` | That job's tasks with params |
-| `runq status` | Daemon / queue summary |
-| `runq status <job_id>` | Refresh + show one job's tasks |
-| `runq gpu` | Per-GPU allocation on this machine |
-| `runq logs <task_id>` | Tail + **follow** (blocks). `--no-follow` prints and exits · `-n N` tail size · `--grep <regex>` last N matching lines, grepped on the target (no follow) |
-| `runq task show <task_id>` | Params, status, GPU, retry count, log path |
+| `runq submit <job.yaml \| .> --dry` | Preview: expanded tasks, chosen target, rendered command (HPC: run.sh + submit line), params that reach the code only via `ctx.params`. Submits nothing |
+| `runq submit <job.yaml \| .> --json` | Submit → `{"job_id", "total_tasks"}`. `-t <target>` overrides the target (`-t` > `job.target` > `project.target`) · `-n/--note` label · `--project-file project.yaml` registers/updates the project first (also on `--dry`) · `--no-preflight` skips submit-time checks |
+| `runq kill <task_id \| job_id>` | Cancel a task, or every task of a job |
+| `runq task retry <task_id>` | Requeue a failed task (`-y` if the target config changed since submit) |
 
-## Control
+## Watch it
 
 | Command | What it does |
 |---|---|
-| `runq kill <task_id \| job_id>` | Kill a task, or every task in a job |
-| `runq task retry <task_id>` | Requeue a failed task |
-| `runq job archive / unarchive <job_id>` | Hide from default lists — reversible, data untouched |
-| `runq project archive / unarchive <name>` | Same, for a project and its jobs |
+| `runq ps --json` | Jobs: id, status, counts, note (alias `ls`; `-t` filters by target) |
+| `runq ps <job_id> --json` | That job's tasks: status, scheduler state, queue, retry, step, elapsed, params |
+| `runq ps <job_id> --fresh --json` | Same, after forcing a scheduler probe |
+| `runq task show <task_id>` | One task as JSON: command, dirs, external id, status source, links |
+| `runq logs <task_id> --no-follow -n 200` | Last 200 log lines, then exit |
+| `runq logs <task_id> --grep '<regex>' -n 20` | Last 20 lines matching an extended regex, grepped on the target |
+| `runq logs <task_id>` | Tail **and follow** (blocks — interactive use only) |
+| `runq results <job_id> --json` | Result rows written by `runq.record(...)` |
 
-## Projects
-
-| Command | What it does |
-|---|---|
-| `runq project add <name \| .>` | Register a project (reads ./project.yaml) |
-| `runq project ls / show / edit` | List, inspect, or open in `$EDITOR` |
-
-project.yaml is the source of truth: hand-edits are picked up on submission/preview.
-A new project must declare target; command may be supplied by each job.
-Use `--project-file project.yaml` to upsert an existing project instead of inventing another name.
-
-Submission uses **`-t > job.target > project.target`**, independently of session/environment/global target.
-`--dry` uses the service's common plan for local/runqd/HPC and lists parameters available through ctx.params.
-`--project-file` also updates registered configuration during dry-run.
-The dashboard supports observation, stop/retry and archive; editing and submission use files/CLI.
-
-## Daemons
+## Projects (one per code base)
 
 | Command | What it does |
 |---|---|
-| `runq serve [-d]` | Start the runq service — dashboard + CLI backend (`-d` = background; not runqd); local targets require an independently started `runqd` endpoint |
-| `runq serve stop / restart` | Stop / restart the runq service (restart always backgrounds) |
-| `runq serve status` | Running or not, plus data dir, socket, log and access-log paths |
-| `runq doctor` | Static self-check of this machine, with fixes |
+| `runq project add -f project.yaml` | Register a project (`project add .` reads `./project.yaml`; `--dir`/`--cmd`/`-t` for a flag-only project) |
+| `runq submit job.yaml --project-file project.yaml` | Update an existing project from its YAML (upsert), then submit |
+| `runq project ls` / `runq project show <name>` | List / inspect (alias `list`) |
+| `runq project archive <name>` / `runq project unarchive <name>` | Hide a project and its jobs from default lists — reversible |
+| `runq job archive <job_id>` / `runq job unarchive <job_id>` | Same, for one job |
 
-With no configured targets, the client daemon still starts and serves status,
-settings, history, and the dashboard. `runq status` reports `target_state` as
-`unconfigured`; submission and target-dependent operations explain how to add
-one. Empty configuration never implies a local executor.
+A new project must declare `target`. Experiments differ by job, not by project:
+a job may carry its own `command`, `target` and `preflight`.
 
-`runqd` is the separate Linux-only executor. The client does not locate,
-launch, or supervise it — start runqd independently (see runqd docs).
-macOS installs only `runq` and can control remote Linux `runqd` or HPC
-targets.
-
-## HPC targets
+## Targets (where tasks run)
 
 | Command | What it does |
 |---|---|
-| `runq target add <name> --template=<slurm\|pbs\|sge\|tsubame\|abci> --host=… --user=…` | Add a target from a preset |
-| `runq target add local` | Explicitly configure this client to use the independently running local runqd |
-| `runq target check [<name>]` | Validate templates: placeholders, regex, sample render — free |
-| `runq target show / edit` | Inspect, or open config.yaml in `$EDITOR` + validate |
-| `runq connect <name>` | Verify SSH + host key, install remote CLI, start forward |
-| `runq target disconnect <name>` | Stop the forward, disable remote_cli |
-| `runq target use <name> [-p]` | Scope queries to a target (`-p` = persist); does not override submission |
+| `runq target add <name> --template=<slurm\|pbs\|sge\|tsubame\|abci> --host=… --user=…` | Add an HPC target from a preset to `~/.runq/config.yaml` |
+| `runq target add local` | Use the independently running local `runqd` (GPU executor) |
+| `runq target check [<name>]` | Validate templates: placeholders, id regex, sample render — free, local |
+| `runq target connect <name>` | Verify SSH + host key, install the remote CLI, start the socket forward |
+| `runq target disconnect <name>` | Stop the forward |
+| `runq target show [<name>]` | Current definition (alias `ls`) |
+| `runq target use <name> [-p]` | Scope *queries* to a target (`-p` persists); never changes where a submit goes |
 
-## Housekeeping
+To change a target, edit `~/.runq/config.yaml` and run `runq target check <name>`;
+the service hot-reloads the file.
+
+## Service and setup
 
 | Command | What it does |
 |---|---|
-| `runq clean` | Delete finished tasks **and all their artifacts — irreversible**. Interactive; `--show` previews without deleting · `-y` skips confirmation · `--older-than 720h` · `--orphan` · `--archived` |
-| `runq config get / set / list` | Global config keys (e.g. `data_path`, `default_target`) |
+| `runq serve -d` | Start the runq service (CLI backend + dashboard) in the background |
+| `runq serve status` | Running? plus data dir, socket, service log and access log |
+| `runq serve restart` / `runq serve stop` | Restart (always backgrounds) / stop |
+| `runq doctor` | Self-check of this machine's setup, with fixes |
+| `runq skill install [--dir <root>]` | Install the agent skill into `~/.codex/skills/runq` and `~/.claude/skills/runq` (re-run after upgrading); `runq skill show [file]` prints it |
+| `runq config list` / `runq config get <key>` / `runq config set <key>=<value>` | Global keys such as `data_path`, `default_target` |
 | `runq version` | Build version |
-| `runq skill install [--dir <root>]` | Install the built-in agent skill into `~/.codex/skills/runq` and `~/.claude/skills/runq` (matches this binary — re-run after upgrading) · `runq skill show [file]` prints it |
 
-## Plumbing (you rarely need these)
+`runq serve` is not `runqd`: runqd is the Linux GPU executor installed
+separately on GPU machines. With no targets configured the service still
+starts and serves history and the dashboard.
 
-`runq metrics-index build` builds the metrics pyramid index (run by the HPC wrapper). `--socket`
-selects a non-default runq client socket. Machine execution is handled by
-runqd's own CLI — see runqd docs.
+## Clean up
+
+| Command | What it does |
+|---|---|
+| `runq clean --job <job_id> --show` | Preview what would be deleted |
+| `runq clean --job <job_id> -y` | Delete the job's task directories, logs and records — **irreversible** |
+
+Selectors: `--job`, `--task`, `--older-than 7d` (units h/d/w/m/y), `--orphan`,
+`--archived`, `-t <target>`. Without `-y` on a terminal, an interactive picker
+walks project → job → confirmation.
 
 ## Notes for scripts and agents
 
-- `runq submit` without `--dry` mutates the queue — never use it to
-  "explore" the CLI.
-- `runq logs` follows by default and will block a non-interactive caller;
-  always pass `--no-follow` in scripts.
-- `runq clean` is irreversible; preview with `--show` first.
-- Machine-readable state: `runq ps --json`, `runq ps <job_id> --json`,
-  `runq status <job_id> --json`, `runq submit … --json`.
+- `runq submit` without `--dry` queues real cluster jobs — never use it to explore.
+- `runq logs` follows by default and blocks; pass `--no-follow` or `--grep`.
+- Check progress with one `runq ps <job_id> --json`; don't loop.
+- `runq clean` is irreversible; preview with `--show`.

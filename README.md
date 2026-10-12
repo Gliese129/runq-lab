@@ -1,293 +1,145 @@
 # runq-lab
 
-A sweep-first experiment runner for research labs — local machines and HPC
-clusters, same commands.
+Run ablation sweeps on HPC clusters — built to be driven by AI agents.
 
 ![runq overview poster](assets/poster-en.png)
 
-## The problem
+## What it is
 
-If your lab's GPU workflow looks like this:
+You (or your coding agent) describe an experiment in a small `job.yaml`;
+runq expands the sweep, submits one scheduler job per cell, tracks every task,
+and keeps each cell's log, params and outputs together. The researcher watches
+a dashboard; the agent drives the CLI.
 
-```bash
-export CUDA_VISIBLE_DEVICES=3
-nohup python train.py --lr 0.001 --batch_size 32 > log1.txt &
-# wait... check... done?
-export CUDA_VISIBLE_DEVICES=3
-nohup python train.py --lr 0.01 --batch_size 32 > log2.txt &
-# repeat 4 more times, Ctrl+C when something goes wrong
-# go to bed, wake up to 6 hours of idle GPUs
-# next morning: which log was the lr=0.01 run again?
-```
+- **A project is a code base. A job is one experiment.** Smoke tests, resumes,
+  a different reservation — each is just another `job.yaml` (it can carry its
+  own `command` and `target`), not another project.
+- **No plumbing for ablation axes.** Every swept value is written to the
+  task's `params.json`; training code reads it with `ctx.params.get("kl", 0.0)`.
+  Defaults live in your code. Delete the few `runq` lines before publishing
+  and nothing else changes.
+- **No wrapper scripts.** Environment, setup commands, output/checkpoint
+  directories, retries, cross-machine code sync and scheduler resources are
+  declared in YAML, so the command stays `python train.py`.
+- **Cheap for agents.** One way to do each thing, `--json` everywhere,
+  `--dry` previews for free, `runq logs --grep` returns only matching lines,
+  and a built-in skill (`runq skill install`) teaches the rules.
 
-Or on an HPC cluster:
-
-```bash
-for lr in 0.001 0.01 0.1; do
-  for bs in 32 64; do
-    sed "s/{{LR}}/$lr/g; s/{{BS}}/$bs/g" submit.sh.tmpl > submit_${lr}_${bs}.sh
-    qsub submit_${lr}_${bs}.sh
-  done
-done
-# 6 scripts, 6 qsub calls, hope you didn't typo the template
-```
-
-runq turns both into:
-
-```bash
-runq submit job.yaml        # sweep: {lr: [0.001, 0.01, 0.1], batch_size: [32, 64]}
-# 6 tasks queued. GPUs assigned. Failures retried. You go to sleep.
-```
-
-No containers, no cluster admin. Each task gets its own log, tagged with the
-exact parameters that produced it.
-
-## How it compares
-
-| | runq-lab | tmux + nohup | SLURM / PBS |
-|---|---|---|---|
-| Setup | `runq` client + `runqd` on the GPU host | Already there | Need a cluster admin |
-| GPU assignment | Automatic, no conflicts | Manual `CUDA_VISIBLE_DEVICES` | Automatic |
-| Parameter sweep | One YAML block | Hand-written for loop | sbatch arrays |
-| "Which log had lr=0.01?" | `runq task show <id>` | Good luck | Job name conventions |
-| Task fails at 3 AM | Auto-retry, next task starts | Dead. GPUs idle till morning | Depends on config |
-| Lab has 3 users | One visible queue | "Hey, are you using GPU 2?" | Built-in, but overkill |
-| Works on HPC | Yes — same workflow, target mode | No | It *is* SLURM |
-
-runq-lab fills the gap between "everyone just runs stuff manually" and "we
-need a full cluster scheduler." It also works *on top of* SLURM, PBS, and
-SGE: runq handles sweep expansion, param injection, and log management; the
-cluster's own scheduler keeps scheduling.
-
-## Architecture
-
-runq-lab is two independent programs:
-
-- **`runq`** — the client and experiment coordinator. Cross-platform
-  (Linux / macOS). Manages projects, expands sweeps, routes to targets,
-  serves the optional web dashboard.
-- **`runqd`** — the machine execution daemon. Linux-only. Owns the GPU
-  queue, process lifecycle, and recovery on one machine.
-
-Neither embeds the other. `runq` talks to `runqd` over a Unix socket for
-local execution, and to HPC clusters over SSH. macOS users run `runq`
-locally and point it at a remote Linux `runqd` or an HPC target.
+runq works on top of SGE/UGE, Slurm and PBS (presets for TSUBAME and ABCI);
+the cluster keeps scheduling. Local GPU machines are supported through the
+separately installed executor `runqd`.
 
 ## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Gliese129/runq-lab/main/install.sh | sh
+runq serve -d          # start the local runq service (CLI backend + dashboard)
+runq skill install     # teach Codex / Claude Code how to use runq (re-run after upgrades)
 ```
 
-The installer detects Linux/macOS and amd64/arm64, asks whether to install
-the embedded web UI, verifies SHA-256 checksums, and atomically installs or
-updates only `runq`. Existing configuration and database files are untouched.
-
-For automation:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Gliese129/runq-lab/main/install.sh \
-  | RUNQ_WITH_UI=1 RUNQ_VERSION=v0.6.0rc1 sh
-```
+The installer detects Linux/macOS and amd64/arm64, asks whether to include the
+web dashboard, verifies checksums, and replaces only the `runq` binary.
 
 | Env var | Effect |
 |---|---|
-| `RUNQ_WITH_UI=0\|1` | Skip the UI prompt |
-| `RUNQ_START_DAEMON=1` | Start the client daemon after install |
+| `RUNQ_WITH_UI=0\|1` | Skip the dashboard prompt |
+| `RUNQ_START_DAEMON=1` | Start (or restart) the runq service after install |
 | `RUNQ_INSTALL_DIR=…` | Custom install path |
-| `RUNQ_VERSION=v…` | Pin a release version |
+| `RUNQ_VERSION=v…` | Pin a release, e.g. `v0.6.0rc3` |
 
-By default an update replaces only the binary; an already-running client
-daemon keeps running until you restart it. Set `RUNQ_START_DAEMON=1` when
-installing to start or restart that daemon after the verified replacement.
+Python SDK: `pip install runq-sdk`.
 
-### Release artifacts
-
-| Artifact | What | When you need it |
-|---|---|---|
-| `runq-{linux,darwin}-{amd64,arm64}` | CLI / client core | Always |
-| `runq-dashboard-{linux,darwin}-{amd64,arm64}` | CLI with web dashboard embedded | You want a GUI |
-| `runq-sdk` on PyPI | Python SDK | Metrics / checkpoints in training code |
-
-Install `runqd` from the
-[`runq-executor`](https://github.com/Gliese129/runq-executor) repository on
-every Linux GPU host. Check client setup with `runq doctor`, and execution
-readiness with `runqd health`.
-
-## Quickstart — local GPU machine
-
-```bash
-# 1. Start services
-runqd serve                 # on the GPU host (normally via systemd)
-runq target add local       # opt this client into local execution
-runq serve -d        # client daemon (background)
-
-# 2. Set up a project
-cd ~/experiments/resnet50
-runq init train.py          # scans argparse → project.yaml + job.yaml
-runq project add .          # register it
-
-# 3. Submit
-runq submit job.yaml --dry  # preview the expansion — nothing submitted
-runq submit job.yaml        # go
-```
-
-Then monitor:
-
-```bash
-runq ps                     # job table
-runq ps <job_id>            # that job's tasks
-runq gpu                    # per-GPU allocation
-runq logs <task_id>         # tail + follow (--no-follow to print and exit)
-runq logs <task_id> --grep 'loss|step'   # last matching lines only
-```
-
-Full walkthrough: [docs/getting-started.md](./docs/getting-started.md)
-
-## Quickstart — HPC cluster (SLURM / PBS / SGE)
-
-runq compiles your sweep, writes per-task workspaces, and delegates
-scheduling to the cluster's native job manager.
+## Quickstart (HPC)
 
 ```bash
 runq target add tsubame --template=tsubame --host=login.t4.gsic.titech.ac.jp --user=alice
-runq target check tsubame   # validate templates — free
-runq connect tsubame        # verify SSH, install remote CLI, start forward
-
-runq submit job.yaml -t tsubame --dry
-runq submit job.yaml -t tsubame
+runq target check tsubame      # validate templates (free, local)
+runq target connect tsubame    # verify SSH, install the remote CLI
 ```
 
-After `target add`, customise `submit_template` / `submit_id_regex` /
-`kill_template` in `~/.runq/config.yaml` for your cluster. Presets for
-SLURM, PBS, SGE, TSUBAME, and ABCI are included.
+```yaml
+# project.yaml — the code base (register once)
+project_name: grpo
+target: tsubame
+working_dir: /gs/fs/me/grpo
+command: python train.py
+environment: { HF_HOME: /gs/bs/me/hf }
+defaults: { gpus_per_task: 2, timeout: 12h }
+```
 
-Details: [docs/hpc.md](./docs/hpc.md)
+```yaml
+# job.yaml — one experiment
+project: grpo
+note: kl-ablation
+fixed_params: { model: qwen3-8b }
+sweep:
+  - method: grid
+    parameters: { kl: [0.0, 0.05, 0.1], seed: [1, 2] }   # 6 tasks
+```
+
+```bash
+runq project add -f project.yaml
+runq submit job.yaml --dry             # tasks, target, rendered command — nothing submitted
+runq submit job.yaml --json            # {"job_id": "jb…", "total_tasks": 6}
+runq ps <job_id> --json --fresh        # task states
+runq logs <task_id> --grep 'loss' -n 20
+runq kill <job_id>
+```
+
+```python
+# train.py
+import runq
+ctx = runq.context()
+kl = ctx.params.get("kl", 0.0)          # default lives in code
+...
+runq.report({"loss": loss}, step=step)  # dashboard curves
+runq.record({"acc": acc}, kl=kl, seed=ctx.params.get("seed", 0))  # one comparable row per cell
+# write outputs to ctx.output_dir, checkpoints to ctx.checkpoint_dir (kept across retries)
+```
+
+Walkthrough: [docs/getting-started.md](./docs/getting-started.md) ·
+HPC details (templates, reservations, sync): [docs/hpc.md](./docs/hpc.md)
 
 ## Everyday commands
 
 ```bash
-runq ps [job_id]             # jobs, or one job's tasks
-runq status [job_id]         # daemon / queue summary
-runq logs <task_id>          # tail + follow
-runq kill <task_id|job_id>   # stop a task or job
-runq task retry <task_id>    # requeue a failed task
-runq job archive <id>        # hide from lists (reversible)
-runq clean --show            # preview cleanup (runq clean deletes IRREVERSIBLY)
+runq submit job.yaml --dry | --json   # preview / submit
+runq ps [job_id] --json [--fresh]     # jobs, or one job's tasks
+runq task show <task_id>              # command, dirs, status evidence (JSON)
+runq logs <task_id> --no-follow -n 200
+runq logs <task_id> --grep '<regex>' -n 20
+runq results <job_id> --json          # rows written by runq.record
+runq kill <task_id|job_id>
+runq task retry <task_id>
+runq clean --job <job_id> --show      # preview; deletion is irreversible
 ```
 
-Every read command supports `--json`. Job ids look like `jb…`, task ids
-like `tk…`.
+Every read command supports `--json`. Job ids look like `jb…`, task ids like `tk…`.
+Full reference: [docs/cli.md](./docs/cli.md)
 
-Complete reference: [docs/cli.md](./docs/cli.md)
+## For agents
 
-## Configuration
+Run `runq skill install` once per machine. The short version:
 
-Two files, one rule:
-
-- **project.yaml** — one codebase, its source/default target and stable execution configuration.
-- **job.yaml** — one *selection*: what varies this time.
-
-```yaml
-# project.yaml
-project_name: resnet50
-target: local
-working_dir: /home/user/experiments/resnet50
-command: python train.py {{args}}
-environment:
-  WANDB_PROJECT: resnet-experiments
-params:
-  - { name: lr, type: float }
-  - { name: optimizer, type: str, choices: [adam, sgd] }
-defaults:
-  gpus_per_task: 1
-  max_retry: 3
-```
-
-```yaml
-# job.yaml
-project: resnet50
-sweep:
-  - method: grid
-    parameters: { lr: [0.001, 0.01, 0.1], optimizer: [adam, sgd] }
-  - method: list
-    parameters: { batch_size: [32, 64], num_workers: [4, 8] }
-# grid(3×2) × list(2) = 12 tasks
-```
-
-Keep train, smoke and reservation-specific runs as jobs under the same project.
-Jobs may override `command`, `target` and `preflight`; resources use `overrides`.
-Submit selects `-t > job.target > project.target`. Parameters may go directly to
-`ctx.params`; defaults live in research code. Nonempty `choices` always constrain values.
-The dashboard observes local task snapshots and supports stop, retry and archive.
-Archived history is hidden by default and loaded in pages when opened.
-
-`project.yaml` is the source of truth — hand-edits are picked up on the
-next use; CLI and dashboard can never disagree. Secrets go in
-`working_dir/.env`, sourced at task start, never stored by runq.
-
-Full reference: [docs/configuration.md](./docs/configuration.md) ·
-Copy-paste starters: [examples/](./examples/)
-
-## Python SDK
-
-`pip install runq-sdk` integrates with your training script.
-
-```python
-import runq
-
-@runq.dataclass(auto_overwrite=True)
-class Params:
-    lr: float = 0.001
-
-cfg = Params()                       # sweep (ablation) params merged in
-for step in range(1000):
-    runq.report({"loss": train_step(cfg)}, step=step)
-runq.record({"acc": evaluate()}, split="val")   # axis-keyed result row
-```
-
-Features: typed param auto-merge from sweeps, step metrics (`log_metric`,
-`report`, `log_group` prefixes), axis-keyed result records (`record`) that
-make ablation cells comparable, and a stable per-task `checkpoint_dir`.
-Early stopping and checkpoint retention stay in your training script. Works
-in daemon mode, file-only mode (HPC), or standalone with no runq
-infrastructure.
-
-SDK reference: [docs/sdk_reference.md](./docs/sdk_reference.md)
-
-## Scheduling and reliability
-
-runq-lab dispatches in FIFO order and enforces each target's
-`max_inflight` limit. GPU placement and process isolation belong to runqd
-(local) or the cluster scheduler (HPC).
-
-Built for the "submit before going home" workflow: durable pre-submit
-intent, auto-retry up to `max_retry`, optional per-task timeout, and
-crash recovery from durable state. A lost submit response becomes
-`unknown` instead of being silently retried into a duplicate.
-
-## For scripts and agents
-
-- Every read command supports `--json` for structured output.
-- `runq submit` without `--dry` mutates the queue — never use it to
-  explore.
-- `runq logs` follows by default — always pass `--no-follow` in scripts.
-- `runq clean` is irreversible — preview with `--show` first.
-- `runq submit --dry` is free and side-effect-free.
+- Preview with `submit --dry`; a real `submit` queues real cluster jobs.
+- One project per code base; new experiment = new `job.yaml`.
+- Read state with one `runq ps <job> --json`; never write polling loops.
+- `runq logs` follows by default — use `--no-follow` or `--grep`.
+- If runq and the scheduler disagree, report "unconfirmed" with both facts.
+- Don't write wrapper scripts for things runq declares (env, dirs, retries, sync).
 
 ## Documentation
 
-| Doc | Audience |
+| Doc | What |
 |---|---|
-| [docs/getting-started.md](./docs/getting-started.md) | First sweep in 5 minutes |
-| [docs/concepts.md](./docs/concepts.md) | How runq-lab thinks: projects, jobs, tasks, targets |
-| [docs/dfa-ir.md](./docs/dfa-ir.md) | Transition-function audit projection and resolved state issues |
-| [docs/repository-split.md](./docs/repository-split.md) | runq-lab / runq-executor authority and release boundary |
-| [docs/configuration.md](./docs/configuration.md) | project.yaml / job.yaml full reference |
-| [docs/hpc.md](./docs/hpc.md) | HPC targets: setup, templates, login-node behavior |
+| [docs/getting-started.md](./docs/getting-started.md) | First sweep end to end |
+| [docs/concepts.md](./docs/concepts.md) | Projects, jobs, tasks, targets, the service |
+| [docs/configuration.md](./docs/configuration.md) | project.yaml / job.yaml reference |
+| [docs/hpc.md](./docs/hpc.md) | HPC targets, templates, reservations, sync |
 | [docs/cli.md](./docs/cli.md) | Every command and flag |
-| [docs/sdk_reference.md](./docs/sdk_reference.md) | Python SDK API reference |
-| [examples/](./examples/) | Annotated config starting points |
+| [docs/sdk_reference.md](./docs/sdk_reference.md) | Python SDK |
+| [examples/](./examples/) | Annotated configs |
+| [CHANGELOG.md](./CHANGELOG.md) | What changed per release |
 
 ## License
 

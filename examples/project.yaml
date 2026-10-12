@@ -1,17 +1,17 @@
 # runq project configuration — one codebase and stable execution defaults
 #
-# Register with:  runq project add .          (from this directory)
-#            or:  runq project add myname     (override name via CLI)
+# Register once:  runq project add -f project.yaml
+# After editing:  runq submit job.yaml --project-file project.yaml   (upserts)
 #
-# This file is the source of truth: hand-edits are picked up automatically
-# on the next use (the DB copy is a self-healing cache). No re-registration.
+# One project per code base. Experiments differ by job.yaml (which may set
+# its own command / target / preflight), never by a new project.
 # Config priority: CLI flag > job.yaml override > this file > built-in default.
 
 project_name: resnet50
 target: local
 working_dir: /home/user/projects/resnet50    # must exist at submit time
-command: python train.py {{args}}
-# command placeholders:
+command: python test_train.py     # swept values reach the code via ctx.params
+# Optional command placeholders (only if the script wants flags):
 #   {{args}}        → --key=value for every param not otherwise consumed
 #   {{lr}} etc.     → one param's value, anywhere (even inside quoted strings)
 #   {{project}} {{task_id}} → identity of the current project / task
@@ -35,8 +35,8 @@ params:
   - { name: h_rt, type: str, scope: scheduler }
 
 # Defaults (overridable per-job in job.yaml → overrides).
-# gpus_per_task is THE way to ask for GPUs — runq assigns the actual
-# devices via CUDA_VISIBLE_DEVICES; never hardcode GPU indices anywhere.
+# gpus_per_task is THE way to ask for GPUs; never hardcode GPU indices
+# (local runqd sets CUDA_VISIBLE_DEVICES; on HPC the scheduler decides).
 defaults:
   gpus_per_task: 1
   max_retry: 3       # 0 = no retry; -1 = unlimited retries
@@ -58,9 +58,9 @@ resume:
   extra_args: --resume --ckpt latest
 
 # Optional wandb integration. When present, runq writes
-# <task_dir>/wandb_config.json and the Python SDK exposes it as
-# ctx.wandb_cfg — spread it into wandb.init(**ctx.wandb_cfg). Omit the
-# block to disable; SDK metrics still land in metrics.jsonl locally.
+# <task_dir>/wandb_config.json and the SDK folds it into ctx.wandb_like_cfg:
+#   run = wandb.init(**ctx.wandb_like_cfg); ctx.link_wandb(run)
+# Omit the block to disable; SDK metrics still land in metrics.jsonl.
 # wandb:
 #   project: my-experiment
 #   entity:  my-team             # optional

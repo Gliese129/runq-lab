@@ -18,8 +18,8 @@ project_name: resnet50
 target: server-a                   # authoritative project filesystem
 targets: [server-a, server-b]      # allowed submit/sync destinations
 working_dir: /home/user/experiments/resnet50   # must exist at submit time
-command: python train.py {{args}}
-
+command: python train.py       # params reach the code via ctx.params; add
+                                # {{args}} or {{lr}} only if the script wants them as flags
 environment:                    # injected into every task; in HPC mode also
   WANDB_PROJECT: resnet-exp     # prefixed onto the submit command, so
                                 # $VAR references in submit_template resolve
@@ -87,8 +87,6 @@ selected by the whitelist are overwritten and stale selected files are
 deleted, while every other destination file is untouched. `.runq/` and `.git/`
 are never traversed. Symbolic links selected for sync are rejected explicitly.
 
-Use `runq project sync <name> --from <target>` for a one-time sync from another declared target. This does not change project.target.
-
 ### command placeholders
 
 | Placeholder | Expands to |
@@ -111,9 +109,13 @@ Labels belong in the job `note`, not in params.
 
 ### Python environments
 
-uv / venv / conda in the project directory are auto-detected during
-`runq init` and activated per task. Override in project.yaml if detection
-picks the wrong one.
+```yaml
+python_env: { type: uv, path: .venv }      # or { type: venv, path: .venv } / { type: conda, name: myenv }
+```
+
+runq activates it around the task's command. Without `python_env` the command
+runs with whatever `PATH` the task inherits (`environment:`, `setup_command`,
+`.env`); nothing is auto-detected.
 
 ## Job command and preflight overrides
 
@@ -190,7 +192,19 @@ By default task workspaces live under `<working_dir>/.runq/`. Set
 | Path (per task) | What |
 |---|---|
 | `params.json` | the exact sweep-expanded parameters |
-| `metrics.jsonl` | per-step metric stream (SDK `report` / `log_metric`) — feeds `best`/`collect` |
-| `results.jsonl` | result records (SDK `record(metrics, **axes)`) — feeds `runq results` and the dashboard results view |
-| `checkpoints/` | `RUNQ_CHECKPOINT_DIR` — your script writes checkpoints here; stable across retries |
+| `metrics.jsonl` | per-step metric stream (SDK `report` / `log_metric`) — dashboard curves |
+| `results.jsonl` | result records (SDK `record(metrics, **axes)`) — `runq results` and the dashboard results view |
+| `links.json` | external pages reported by SDK `runq.link` / `ctx.link_wandb` (e.g. the W&B run) |
+| `outputs/` | `RUNQ_OUTPUT_DIR` / `ctx.output_dir` — write training outputs here |
+| `checkpoints/` | `RUNQ_CHECKPOINT_DIR` / `ctx.checkpoint_dir` — stable across retries |
+| (task root) | `WANDB_DIR` / `ctx.wandb_dir` — W&B creates its own `wandb/` under it |
 | `run.sh` / `status.json` | HPC only: generated wrapper + self-reported status |
+
+To keep task workspaces on bulk storage, set `data_path` (above) — each task
+still gets its own directories. Setting `RUNQ_OUTPUT_DIR` / `RUNQ_CHECKPOINT_DIR`
+/ `WANDB_DIR` in `environment:` or `overrides.env` instead points **every task
+of the job at the same directory** (values are not templated; relative paths
+resolve against `working_dir`) — only do that for a single-task job or a
+deliberately shared directory. runq creates and permission-checks the
+directories on the target before submitting. `runq clean` deletes task
+directories only; overridden paths outside them survive.

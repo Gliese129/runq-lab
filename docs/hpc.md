@@ -12,7 +12,7 @@ user, and all scheduler dialect lives in *your* config.
 runq target add tsubame --template=tsubame \
     --host=login.t4.gsic.titech.ac.jp --user=alice
 runq target check tsubame
-runq connect tsubame
+runq target connect tsubame
 ```
 
 - `target add` writes a **preset** (slurm | pbs | sge | tsubame | abci)
@@ -41,7 +41,7 @@ matching remote executable explicitly:
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
   -ldflags "-X github.com/gliese129/runq-lab/internal/version.Version=$VERSION" \
   -o /tmp/runq-linux-amd64 ./cmd/runq
-runq connect tsubame --remote-binary /tmp/runq-linux-amd64 --timeout 2m
+runq target connect tsubame --remote-binary /tmp/runq-linux-amd64 --timeout 2m
 ```
 
 `VERSION` must match the local `runq version`. Published versions can download
@@ -73,10 +73,25 @@ scope queries only; they do not override experiment submission.
 ```bash
 runq submit job.yaml --project-file project.yaml -t tsubame --dry
 runq submit job.yaml --project-file project.yaml -t tsubame
-runq ps                          # target-aware; same commands as local
-runq status <job_id>             # refresh + show tasks
+runq ps <job_id> --json --fresh  # task states after one scheduler probe
 runq kill <job_id|task_id>       # cancels via your kill_template
 ```
+
+## Advance reservations (SGE `qsub -ar`)
+
+A reservation is modelled as its own target, not as a runq feature:
+
+1. In `~/.runq/config.yaml`, copy the base target under a new name (e.g.
+   `tsubame-ar9094`), keep host/user/status/kill templates, and add
+   `-ar <id>` plus the reservation's resource shape to `submit_template`
+   (check it with `qrstat -ar <id>`).
+2. `runq target check tsubame-ar9094`, and list it in the project's `targets:`.
+3. Point the job at it — `target: tsubame-ar9094` in job.yaml or
+   `-t tsubame-ar9094` — and confirm `-ar <id>` appears in the `--dry` submit line.
+
+Code is mirrored automatically when a job runs on a target other than the
+project's source target (`targets:` + `<working_dir>/.rsync`, see
+[configuration.md](./configuration.md#cross-target-project-sync)).
 
 ## Per-task scheduler knobs (walltime, queue)
 
@@ -94,9 +109,10 @@ params:
 ```yaml
 # job.yaml — pair each benchmark with ITS walltime via zip. Every param a
 # template references needs an explicit job value; defaults belong in code.
+fixed_params: { node_kind: node_q }
 sweep:
   - method: grid
-    parameters: { model: [llama3-8b, qwen2-7b], node_kind: [node_q] }
+    parameters: { model: [llama3-8b, qwen2-7b] }
   - method: list
     parameters:
       benchmark: [mmlu, gsm8k, humaneval]
@@ -120,7 +136,7 @@ and — via a signal trap — when the scheduler kills the task (walltime,
 `qdel`): those are local file reads, not scheduler queries. The
 `status_template` probe only covers tasks that died without last words, is
 rate-limited per job (20s floor for the dashboard's automatic polling;
-explicit `runq status` always probes), and listing-style templates like
+`--fresh` forces one), and listing-style templates like
 the presets' full `qstat` cost ONE scheduler call per pass regardless of
 task count. When nothing asks, nothing polls.
 

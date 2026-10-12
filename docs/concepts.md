@@ -2,20 +2,17 @@
 
 How runq-lab thinks about experiments, and what each piece does.
 
-## The two programs
+## The pieces
 
-**`runq`** is the client. It runs on your laptop or any machine where
-you manage experiments. It handles projects, sweep expansion, target
-routing, and the optional web dashboard.
-
-**`runqd`** is the executor. It runs on a Linux machine with GPUs. It
-owns the queue, GPU allocation, process lifecycle, and crash recovery for
-that one machine.
-
-They communicate over a Unix socket. Neither embeds the other.
-
-On an HPC cluster, you don't need `runqd` at all — `runq` talks to the
-cluster's scheduler (SLURM, PBS, SGE) over SSH.
+- **`runq` (CLI)** — what you or your agent type. Every command talks to
+  the local runq service over a Unix socket.
+- **The runq service (`runq serve -d`)** — runs on your own machine. It
+  owns the database, expands sweeps, routes tasks to targets over SSH,
+  watches them, and serves the dashboard. `runq serve status` shows where
+  its files are.
+- **Targets** — where tasks run: an HPC login node (SGE/UGE, Slurm, PBS via
+  submit/status/kill templates) or a Linux GPU machine running **`runqd`**,
+  the separately installed GPU executor. On a cluster you don't need runqd.
 
 ## Projects, jobs, and tasks
 
@@ -62,17 +59,18 @@ the source project's `.rsync`; `!pattern` excludes paths from that
 whitelist. This keeps project files single-source while allowing the same job
 YAML to run on several targets.
 
-## Configuration priority
+## Where each setting comes from
 
-When a parameter has multiple sources, this is the order:
+| Setting | Order |
+|---|---|
+| Target | `-t` > `job.target` > `project.target` |
+| Command / preflight | `job.yaml` > `project.yaml` |
+| Resources (gpus, timeout, retries, env) | `job.overrides` > `project.defaults` / `environment` > built-in |
+| Parameter values | the job's `fixed_params` / `sweep`; defaults live in the training code |
 
-```
-CLI flag  >  job.yaml override  >  project.yaml default  >  built-in
-```
-
-`project.yaml` is always the source of truth for the catalog. The
-database is a self-healing cache — if you edit project.yaml by hand,
-the next submission/preview picks it up. Dashboard status reads the controller database snapshot.
+`project.yaml` is the source of truth for the project; register it once and
+update it with `submit --project-file`. Dashboard pages read the service's
+database snapshot, labelled with when each value was observed.
 
 ## Workspace and storage
 
@@ -82,7 +80,9 @@ Each task gets a workspace under `<working_dir>/.runq/<note>-<job_id>/<task_id>/
 params.json       — exact parameters for this task
 metrics.jsonl     — metric stream (log_metric / report)
 results.jsonl     — result records (runq.record)
-checkpoints/      — RUNQ_CHECKPOINT_DIR; your script writes here (stable across retries)
+links.json        — external pages (runq.link / ctx.link_wandb)
+outputs/          — RUNQ_OUTPUT_DIR / ctx.output_dir
+checkpoints/      — RUNQ_CHECKPOINT_DIR / ctx.checkpoint_dir (stable across retries)
 run.sh            — HPC only: generated wrapper script
 status.json       — HPC only: self-reported status
 ```
@@ -116,9 +116,9 @@ The SDK runs *inside* your training script. It receives parameters from
 the sweep (ablation axes), reports step metrics and axis-keyed result
 records back, and gives each task a stable checkpoint directory.
 
-The SDK works in three modes: connected to `runqd` (full features),
-file-only (HPC, no socket), or standalone (no runq at all — useful for
-local debugging). Your script doesn't need to know which mode it's in.
+The SDK works the same under a local runqd, on HPC (file-only), or with no
+runq at all (manual mode: files go to the current directory and
+`ctx.params` is empty, so the defaults in your code apply).
 
 See [sdk_reference.md](./sdk_reference.md) for the full API.
 
