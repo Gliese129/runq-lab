@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"github.com/gliese129/runq-lab/internal/store"
 	"time"
 )
 
@@ -69,12 +70,19 @@ func (s *Scheduler) dispatch(task *Task) {
 	// queued) and reconcile owns later transitions.
 	now := time.Now()
 	dbCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
-	err = s.store.UpdateTaskStatus(dbCtx, task.ID, string(StatusSubmitting), map[string]any{
-		"external_id":    nil,
-		"status_source":  "submit",
-		"failure_detail": nil,
-		"started_at":     now.Unix(),
-	})
+	row, readErr := s.store.GetTask(dbCtx, task.ID)
+	fields := map[string]any{"external_id": nil, "status_source": "submit", "failure_detail": nil, "started_at": nil}
+	if readErr == nil && row != nil {
+		for k, v := range store.ControllerTime(*row, "dispatch_started_at", now) {
+			fields[k] = v
+		}
+	}
+	if readErr != nil {
+		err = readErr
+	} else {
+		err = s.store.UpdateTaskStatus(dbCtx, task.ID, string(StatusSubmitting), fields)
+	}
+
 	cancel()
 	if err != nil {
 		s.logger.Error("persist submitting intent failed", "task", task.ID, "error", err)

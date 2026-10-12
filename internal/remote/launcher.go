@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/gliese129/runq-lab/internal/store"
+	"io/fs"
 	"path"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gliese129/runq-lab/internal/rfs"
 	"github.com/gliese129/runq-lab/internal/scheduler"
@@ -63,6 +67,21 @@ func (l *Launcher) Launch(ctx context.Context, t *scheduler.Task) error {
 		return fmt.Errorf("%w: %v", scheduler.ErrLaunchTransient, werr)
 	}
 
+	// Bake the immutable attempt into the script so scheduler environment
+	// export policies cannot accidentally label every retry as attempt zero.
+	scriptPath := path.Join(t.TaskDir, "run.sh")
+	script, serr := l.b.FS.ReadFile(scriptPath)
+	if serr != nil && !errors.Is(serr, fs.ErrNotExist) {
+		return fmt.Errorf("%w: read wrapper attempt: %v", scheduler.ErrLaunchTransient, serr)
+	}
+	if serr == nil {
+		updated := regexp.MustCompile(`(?m)^_RUNQ_ATTEMPT=[0-9]+$`).ReplaceAll(script, []byte(fmt.Sprintf("_RUNQ_ATTEMPT=%d", t.RetryCount)))
+		if string(updated) != string(script) {
+			if err := l.b.FS.WriteFile(scriptPath, updated, 0755); err != nil {
+				return fmt.Errorf("%w: stamp wrapper attempt: %v", scheduler.ErrLaunchTransient, err)
+			}
+		}
+	}
 	// RQ-69: deterministic per-attempt cancel handle, known BEFORE the
 	// submit. The runqd preset's `runqd submit` adopts it as the remote task
 	// id (external_id = handle — the "submit id was lost" class dies for
@@ -71,7 +90,7 @@ func (l *Launcher) Launch(ctx context.Context, t *scheduler.Task) error {
 	// being attributed to this one. RetryCount is the durable attempt epoch:
 	// both automatic and explicit retries advance it before relaunch.
 	handle := attemptHandle(t.ID, t.RetryCount)
-	cmd := "export RUNQ_SUBMIT_HANDLE=" + utils.ShellQuote(handle) + "\n" + string(cmdBytes)
+	cmd := "export RUNQ_ATTEMPT=" + utils.ShellQuote(fmt.Sprint(t.RetryCount)) + "\n" + "export RUNQ_SUBMIT_HANDLE=" + utils.ShellQuote(handle) + "\n" + string(cmdBytes)
 
 	out, exitCode, rerr := l.b.shellRunClassified(ctx, cmd)
 	if rerr != nil {
@@ -114,10 +133,15 @@ func (l *Launcher) Launch(ctx context.Context, t *scheduler.Task) error {
 
 	// failure_detail: nil clears a transient "will retry" note from earlier
 	// ticks (RQ-74) — the handoff has now succeeded, the wait is over.
-	if uerr := l.b.Store.UpdateTaskStatus(ctx, t.ID, "pending", map[string]any{
-		"external_id":    extID,
-		"failure_detail": nil,
-	}); uerr != nil {
+	row, gerr := l.b.Store.GetTask(ctx, t.ID)
+	if gerr != nil || row == nil {
+		return fmt.Errorf("%w: cannot load accepted attempt: %v", scheduler.ErrLaunchUntracked, gerr)
+	}
+	fields := store.ControllerTime(*row, "submitted_at", time.Now())
+	fields["external_id"] = extID
+	fields["failure_detail"] = nil
+	store.FenceTaskStatusUpdate(fields, *row)
+	if uerr := l.b.Store.UpdateTaskStatus(ctx, t.ID, "pending", fields); uerr != nil {
 		return fmt.Errorf(
 			"%w: record external id %s for %s: %v", scheduler.ErrLaunchUntracked, extID, t.ID, uerr)
 	}

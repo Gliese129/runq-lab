@@ -371,20 +371,41 @@ func (b *Backend) buildRunScript(t submitplan.PlannedTask, plan submitplan.Plan)
 	// code expands natively), then env_setup, then the ambient .env, then
 	// the explicit exports which must win. Placed after the log redirect
 	// so env_setup output lands in the task log.
-	s.WriteString(b.envPrelude(env).Render())
 	fmt.Fprintf(&s, "STATUS_FILE=%s\n", utils.ShellQuote(path.Join(t.TaskDir, statusFileName)))
-	s.WriteString(`_runq_status() { printf '%s\n' "$1" > "$STATUS_FILE.tmp" && mv "$STATUS_FILE.tmp" "$STATUS_FILE"; }` + "\n")
-	// Done marker: written AFTER the terminal status.json, so a marker's
-	// presence guarantees the status file is readable. The daemon's marker
-	// scan turns one readdir into "which tasks finished since last look".
-	s.WriteString(`_runq_done() { if [ -n "$RUNQ_DONE_DIR" ]; then mkdir -p "$RUNQ_DONE_DIR" 2>/dev/null; : > "$RUNQ_DONE_DIR/$RUNQ_TASK_ID"; fi; }` + "\n")
-	// Last words: schedulers send TERM (qdel/scancel/walltime) with a grace
-	// period before KILL — write a terminal status while we still can, so
-	// the kill becomes a wrapper FACT instead of a qstat inference.
-	// Deliberately NOT trapping USR1/USR2: training frameworks use those
-	// for checkpoint signaling and runq must not intercept them.
-	s.WriteString(`trap 'kill $_RUNQ_ACTIVITY_PID 2>/dev/null; _runq_status "$(printf '\''{"status":"killed","exit_code":143,"finished_at":%s}'\'' "$(date +%s)")"; _runq_done; exit 143' TERM INT HUP` + "\n")
-	s.WriteString(`_runq_status "$(printf '{"status":"running","started_at":%s}' "$(date +%s)")"` + "\n")
+	for _, key := range []string{"RUNQ_DONE_DIR", "RUNQ_TASK_ID", "RUNQ_TASK_DIR"} {
+		if env[key] != "" {
+			fmt.Fprintf(&s, "export %s=%s\n", key, utils.ShellQuote(env[key]))
+		}
+	}
+	s.WriteString(`_RUNQ_ATTEMPT=0
+_RUNQ_WRAPPER_START=$(date +%s)
+_RUNQ_EXEC_START=0
+_RUNQ_EXEC_FINISH=0
+_RUNQ_ACTIVITY_PID=
+_runq_status() {
+ printf '{"time_version":1,"attempt":%s,"status":"%s","exit_code":%s,"wrapper_started_at":%s,"execution_started_at":%s,"execution_finished_at":%s,"started_at":%s,"finished_at":%s}\n' "$_RUNQ_ATTEMPT" "$1" "$2" "$_RUNQ_WRAPPER_START" "$_RUNQ_EXEC_START" "$_RUNQ_EXEC_FINISH" "$_RUNQ_EXEC_START" "$3" > "$STATUS_FILE.tmp" && mv "$STATUS_FILE.tmp" "$STATUS_FILE"
+}
+_runq_done() { if [ -n "$RUNQ_DONE_DIR" ]; then mkdir -p "$RUNQ_DONE_DIR" 2>/dev/null; : > "$RUNQ_DONE_DIR/$RUNQ_TASK_ID"; fi; }
+_runq_finish() {
+ code=$1
+ trap - EXIT TERM INT HUP
+ [ -z "$_RUNQ_ACTIVITY_PID" ] || kill "$_RUNQ_ACTIVITY_PID" 2>/dev/null || true
+ _finish=$(date +%s)
+ [ "$_RUNQ_EXEC_START" -eq 0 ] || _RUNQ_EXEC_FINISH=$_finish
+ if [ "$code" -eq 0 ]; then _st=success; elif [ "$code" -eq 143 ]; then _st=killed; else _st=failed; fi
+ _runq_status "$_st" "$code" "$_finish"
+ if [ -n "$RUNQ_BIN" ]; then "$RUNQ_BIN" metrics-index build --task-dir "$RUNQ_TASK_DIR" >/dev/null 2>&1 || true; fi
+ _runq_done
+ exit "$code"
+}
+trap '_runq_finish $?' EXIT
+trap 'exit 143' TERM INT HUP
+_runq_status running 0 0
+set -e
+`)
+	// Record wrapper entrance and arm exit capture before environment setup.
+	s.WriteString(b.envPrelude(env).Render())
+	s.WriteString("set +e\n")
 	// Activity sidecar: sample log file size + incremental line count every 60s
 	// into 3-column activity.tsv {ts, bytes, lines}. The trap kills the sidecar
 	// on exit. Byte count is O(1) (fstat); line count reads only the delta bytes
@@ -409,20 +430,10 @@ func (b *Backend) buildRunScript(t submitplan.PlannedTask, plan submitplan.Plan)
 	// schedulers start jobs in $HOME, where relative script paths break.
 	wd := utils.ShellQuote(t.WorkingDir)
 	fmt.Fprintf(&s, "if cd %s; then\n", wd)
+	s.WriteString("_RUNQ_EXEC_START=$(date +%s)\n_runq_status running 0 0\n")
 	s.WriteString(t.Command + "\n")
 	s.WriteString("code=$?\n")
 	fmt.Fprintf(&s, "else\n  echo \"runq: cannot cd into working_dir %s\"\n  code=1\nfi\n", wd)
-	s.WriteString("kill $_RUNQ_ACTIVITY_PID 2>/dev/null\n")
-	s.WriteString(`if [ "$code" -eq 0 ]; then _st=success; else _st=failed; fi` + "\n")
-	s.WriteString(`_runq_status "$(printf '{"status":"%s","exit_code":%s,"finished_at":%s}' "$_st" "$code" "$(date +%s)")"` + "\n")
-	// Metrics pyramid: built HERE, on the compute node, where metrics.jsonl
-	// lives — the login node never carries this. Before the done marker so
-	// a marker's presence implies the index (when configured) had its
-	// chance; `|| true` because an index is an accelerator and must never
-	// pollute the task's terminal status. Skipped in the TERM trap: the
-	// kill grace period is for the status write.
-	s.WriteString(`if [ -n "$RUNQ_BIN" ]; then "$RUNQ_BIN" metrics-index build --task-dir "$RUNQ_TASK_DIR" >/dev/null 2>&1 || true; fi` + "\n")
-	s.WriteString("_runq_done\n")
 	s.WriteString("exit $code\n")
 	return s.String()
 }

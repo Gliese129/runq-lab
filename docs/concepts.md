@@ -121,3 +121,13 @@ file-only (HPC, no socket), or standalone (no runq at all — useful for
 local debugging). Your script doesn't need to know which mode it's in.
 
 See [sdk_reference.md](./sdk_reference.md) for the full API.
+
+### Task times
+
+`elapsed_seconds` is script execution time, excluding queueing and environment
+setup. `queue_seconds` measures scheduler waiting; `scheduler_seconds` measures
+resource allocation when native timestamps are available. Unknown values stay
+absent; a zero-second execution is valid. An `≈` marks estimates. Task detail
+includes UTC timestamp evidence, its source/observation time and attempt history.
+Retries retain history and begin a fresh execution interval. Legacy database
+`started_at` values alone do not establish an execution start.

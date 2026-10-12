@@ -50,6 +50,9 @@
                 {{ t('job.step') }} {{ sortIndicator('step') }}
               </button>
             </th>
+            <th v-for="col in ['queue_seconds', 'scheduler_seconds']" :key="col" :aria-sort="ariaSort(col)">
+              <button type="button" class="th-sort-btn" @click="setSort(col)">{{ t(`job.${col}`) }} {{ sortIndicator(col) }}</button>
+            </th>
             <th :aria-sort="ariaSort('elapsed')">
               <button type="button" class="th-sort-btn" @click="setSort('elapsed')">
                 {{ t('job.elapsed') }} {{ sortIndicator('elapsed') }}
@@ -89,7 +92,9 @@
               {{ task.params[col] ?? task.metrics?.[col] ?? '—' }}
             </td>
             <td>{{ task.current_step ?? '—' }}</td>
-            <td class="text-on-surface-variant">{{ task.elapsed_seconds ? formatDuration(task.elapsed_seconds) : '—' }}</td>
+            <td class="text-on-surface-variant">{{ formatTaskDuration(task.queue_seconds, task.queue_estimated) }}</td>
+            <td class="text-on-surface-variant">{{ formatTaskDuration(task.scheduler_seconds) }}</td>
+            <td class="text-on-surface-variant">{{ formatTaskDuration(task.elapsed_seconds, task.time_estimated) }}</td>
             <td v-if="hasHPC" class="text-on-surface-variant">{{ task.native_state || '—' }}</td>
             <td v-if="hasHPC" class="text-on-surface-variant">{{ task.queue || '—' }}</td>
             <td v-if="hasWandb">
@@ -128,7 +133,7 @@ import { useI18n } from 'vue-i18n'
 import type { TaskView, WandbInfo } from '@/types/api'
 import { usePreferences } from '@/composables/usePreferences'
 import StatusDot from '@/components/StatusDot.vue'
-import { formatDuration } from '@/utils/relativeTime'
+import { formatTaskDuration } from '@/utils/relativeTime'
 
 const { t } = useI18n()
 const prefs = usePreferences()
@@ -220,7 +225,8 @@ const sortedTasks = computed(() => {
     if (key === 'id') { va = a.id; vb = b.id }
     else if (key === 'ext_id') { va = a.external_id ?? ''; vb = b.external_id ?? '' }
     else if (key === 'step') { va = a.current_step ?? -1; vb = b.current_step ?? -1 }
-    else if (key === 'elapsed') { va = a.elapsed_seconds ?? 0; vb = b.elapsed_seconds ?? 0 }
+    else if (key === 'elapsed') { va = a.elapsed_seconds; vb = b.elapsed_seconds }
+    else if (key === 'queue_seconds' || key === 'scheduler_seconds') { va = a[key]; vb = b[key] }
     else if (key === 'native_state') { va = a.native_state ?? ''; vb = b.native_state ?? '' }
     else if (key === 'queue') { va = a.queue ?? ''; vb = b.queue ?? '' }
     else {
@@ -228,6 +234,7 @@ const sortedTasks = computed(() => {
       va = a.params?.[key] ?? a.metrics?.[key] ?? ''
       vb = b.params?.[key] ?? b.metrics?.[key] ?? ''
     }
+    if (va == null || vb == null) return va == null ? (vb == null ? 0 : 1) : -1
     // Numeric comparison if both are numbers
     const na = Number(va), nb = Number(vb)
     if (!isNaN(na) && !isNaN(nb)) {

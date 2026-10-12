@@ -198,6 +198,9 @@ func (s *Store) addMissingColumns(ctx context.Context) error {
 	if err := addColumnIfMissing(ctx, s.db, "tasks", "failure_detail", "TEXT"); err != nil {
 		return fmt.Errorf("add tasks.failure_detail: %w", err)
 	}
+	if err := addColumnIfMissing(ctx, s.db, "tasks", "timing_json", "TEXT"); err != nil {
+		return err
+	}
 	return nil
 }
 

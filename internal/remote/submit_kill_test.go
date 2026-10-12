@@ -252,7 +252,7 @@ func TestRunScriptCdsAndRedirects(t *testing.T) {
 	cdPos := strings.Index(script, "if cd ")
 	cmdPos := strings.Index(script, "bash scripts/run.sh")
 	execPos := strings.Index(script, "exec >>")
-	statusPos := strings.Index(script, "_runq_status \"$(printf '{\"status\":\"running\"")
+	statusPos := strings.Index(script, "_runq_status running 0 0")
 	if !(execPos < statusPos && cdPos < cmdPos) {
 		t.Errorf("order wrong (exec=%d status=%d cd=%d cmd=%d):\n%s", execPos, statusPos, cdPos, cmdPos, script)
 	}

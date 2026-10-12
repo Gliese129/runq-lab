@@ -375,3 +375,22 @@ func TestTerminalPersistenceFailureRetainsSubmissionSlot(t *testing.T) {
 		t.Fatal("submission slot released before the terminal transition became durable")
 	}
 }
+
+func TestAutomaticRetryRetainsCompletedAttemptTimes(t *testing.T) {
+	s, q, _ := newKillRaceHarness(t, &fakeRemoteLauncher{})
+	task := seedRunningTask(t, s, q, "t-time-retry")
+	task.MaxRetry = 1
+	row, err := s.store.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := store.TimingFields(*row, map[string]store.TimeEvidence{"execution_started_at": {At: 100, Source: "wrapper"}, "execution_finished_at": {At: 101, Source: "wrapper"}})
+	s.FinishTask(task, StatusFailed, fields)
+	row, err = s.store.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.RetryCount != 1 || len(store.CurrentTaskTimes(*row)) != 0 || store.ParseTaskTimes(row.TimingJSON)["0"]["execution_finished_at"].At != 101 {
+		t.Fatalf("retry timing history lost: %+v", row)
+	}
+}

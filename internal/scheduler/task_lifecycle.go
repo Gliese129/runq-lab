@@ -425,6 +425,10 @@ func (s *Scheduler) handleFailure(task *Task, extra map[string]any) bool {
 		// Keep that predicate even though terminal evidence fields themselves
 		// do not belong on the fresh pending epoch.
 		store.CarryTaskStatusFence(fields, extra)
+		// Preserve the completed attempt's timing before advancing the epoch.
+		if timing, ok := extra["timing_json"]; ok {
+			fields["timing_json"] = timing
+		}
 		if err := s.store.UpdateTaskStatus(dbCtx, task.ID, "pending", fields); err != nil {
 			s.logger.Error("persist requeue failed; queue left unchanged", "task", task.ID, "error", err)
 			return false

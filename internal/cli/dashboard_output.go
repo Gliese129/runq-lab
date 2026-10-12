@@ -44,9 +44,9 @@ func printDashboardDetail(detail *backend.JobDetail) error {
 
 	w := newTable()
 	if hasHPC {
-		fmt.Fprintf(w, "TASK_ID\tEXT_ID\tSTATUS\tSCHED_STATE\tQUEUE\tRETRY\tSTEP\tELAPSED\tPARAMS\n")
+		fmt.Fprintf(w, "TASK_ID\tEXT_ID\tSTATUS\tSCHED_STATE\tQUEUE\tRETRY\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
 	} else {
-		fmt.Fprintf(w, "TASK_ID\tSTATUS\tRETRY\tSTEP\tELAPSED\tPARAMS\n")
+		fmt.Fprintf(w, "TASK_ID\tSTATUS\tRETRY\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
 	}
 	for _, task := range detail.Tasks {
 		step := "-"
@@ -55,18 +55,18 @@ func printDashboardDetail(detail *backend.JobDetail) error {
 		}
 		elapsed := "-"
 		if task.ElapsedSec != nil {
-			elapsed = fmt.Sprintf("%.0fs", *task.ElapsedSec)
+			elapsed = formatTaskDuration(task.ElapsedSec, task.TimeEstimated)
 		}
 		status := utils.StatusColor(task.Status)
 		if hasHPC {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
 				utils.IDColor(task.ID), task.ExternalID, status,
 				task.NativeState, task.Queue,
-				task.RetryCount, step, elapsed, compactJSON(task.Params))
+				task.RetryCount, step, formatTaskDuration(task.QueueSec, task.QueueEstimated), formatTaskDuration(task.SchedulerSec, false), elapsed, compactJSON(task.Params))
 		} else {
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\n",
+			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
 				utils.IDColor(task.ID), status, task.RetryCount,
-				step, elapsed, compactJSON(task.Params))
+				step, formatTaskDuration(task.QueueSec, task.QueueEstimated), formatTaskDuration(task.SchedulerSec, false), elapsed, compactJSON(task.Params))
 		}
 	}
 	return w.Flush()
@@ -88,9 +88,9 @@ func printDashboardTasks(tasks []backend.TaskView) error {
 	}
 	w := newTable()
 	if hasHPC {
-		fmt.Fprintf(w, "TASK_ID\tEXT_ID\tSTATUS\tSCHED_STATE\tQUEUE\tRETRY\tSTEP\tELAPSED\tPARAMS\n")
+		fmt.Fprintf(w, "TASK_ID\tEXT_ID\tSTATUS\tSCHED_STATE\tQUEUE\tRETRY\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
 	} else {
-		fmt.Fprintf(w, "TASK_ID\tSTATUS\tRETRY\tSTEP\tELAPSED\tPARAMS\n")
+		fmt.Fprintf(w, "TASK_ID\tSTATUS\tRETRY\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
 	}
 	for _, task := range tasks {
 		step := "-"
@@ -99,18 +99,18 @@ func printDashboardTasks(tasks []backend.TaskView) error {
 		}
 		elapsed := "-"
 		if task.ElapsedSec != nil {
-			elapsed = fmt.Sprintf("%.0fs", *task.ElapsedSec)
+			elapsed = formatTaskDuration(task.ElapsedSec, task.TimeEstimated)
 		}
 		status := utils.StatusColor(task.Status)
 		if hasHPC {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
 				utils.IDColor(task.ID), task.ExternalID, status,
 				task.NativeState, task.Queue,
-				task.RetryCount, step, elapsed, compactJSON(task.Params))
+				task.RetryCount, step, formatTaskDuration(task.QueueSec, task.QueueEstimated), formatTaskDuration(task.SchedulerSec, false), elapsed, compactJSON(task.Params))
 		} else {
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\n",
+			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
 				utils.IDColor(task.ID), status, task.RetryCount,
-				step, elapsed, compactJSON(task.Params))
+				step, formatTaskDuration(task.QueueSec, task.QueueEstimated), formatTaskDuration(task.SchedulerSec, false), elapsed, compactJSON(task.Params))
 		}
 	}
 	if err := w.Flush(); err != nil {
@@ -159,4 +159,15 @@ func compactJSON(v any) string {
 		return fmt.Sprint(v)
 	}
 	return strings.TrimSpace(string(buf))
+}
+
+func formatTaskDuration(seconds *float64, estimated bool) string {
+	if seconds == nil {
+		return "-"
+	}
+	prefix := ""
+	if estimated {
+		prefix = "≈"
+	}
+	return fmt.Sprintf("%s%.0fs", prefix, *seconds)
 }

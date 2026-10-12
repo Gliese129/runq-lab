@@ -40,7 +40,7 @@
         <v-col cols="6" sm="3">
           <div class="text-caption text-on-surface-variant">{{ t('job.elapsed') }}</div>
           <div class="text-body-2 font-weight-medium">
-            {{ task.elapsed_seconds ? formatDuration(task.elapsed_seconds) : '—' }}
+            {{ formatTaskDuration(task.elapsed_seconds, task.time_estimated) }}
           </div>
         </v-col>
         <v-col cols="6" sm="3">
@@ -59,6 +59,21 @@
           <div class="text-body-2 font-weight-medium">{{ task.gpus || '—' }}</div>
         </v-col>
       </v-row>
+      <v-row dense class="mt-1">
+        <v-col cols="6" sm="4"><div class="text-caption text-on-surface-variant">{{ t('job.queue_seconds') }}</div>{{ formatTaskDuration(task.queue_seconds, task.queue_estimated) }}</v-col>
+        <v-col cols="6" sm="4"><div class="text-caption text-on-surface-variant">{{ t('job.scheduler_seconds') }}</div>{{ formatTaskDuration(task.scheduler_seconds) }}</v-col>
+        <v-col cols="6" sm="4"><div class="text-caption text-on-surface-variant">{{ t('job.total_seconds') }}</div>{{ formatTaskDuration(task.total_seconds) }}</v-col>
+      </v-row>
+      <details v-if="task.time_history && Object.keys(task.time_history).length" class="mt-3 text-caption">
+        <summary>{{ t('task.time_evidence') }}</summary>
+        <div v-for="(events, attempt) in task.time_history" :key="attempt" class="mt-2">
+          <strong>{{ t('task.attempt') }} {{ attempt }}</strong>
+          <div v-for="(event, name) in events" :key="name" class="mt-1">
+            <code>{{ name }}</code>: {{ event.estimated ? '≈' : '' }}{{ new Date(event.at * 1000).toISOString() }}
+            · {{ event.source }} · {{ t('task.observed_at') }} {{ new Date(event.observed_at * 1000).toISOString() }}
+          </div>
+        </div>
+      </details>
       <!-- Params ARE the identity of a task — above the fold on both tabs;
            swept ones (the job's axes) carry the accent. -->
       <div class="d-flex ga-1 flex-wrap mt-3">
@@ -181,7 +196,7 @@
         <div class="kv-row"><span class="kv-key">{{ t('job.exit_code') }}</span><code>{{ task.exit_code ?? '—' }}</code></div>
         <div class="kv-row">
           <span class="kv-key">{{ t('job.elapsed') }}</span>
-          <code>{{ task.elapsed_seconds ? formatDuration(task.elapsed_seconds) : '—' }}</code>
+          <code>{{ formatTaskDuration(task.elapsed_seconds, task.time_estimated) }}</code>
         </div>
       </v-card>
     </div>
@@ -341,7 +356,7 @@ import type { ActivityPoint, LogPage } from '@/types/api'
 import { trimLogBuffer } from '@/utils/log/buffer'
 import { applyPage as applyCursorPage } from '@/utils/log/cursor'
 import { useLogSurface } from '@/composables/useLogSurface'
-import { formatDuration } from '@/utils/relativeTime'
+import { formatTaskDuration } from '@/utils/relativeTime'
 
 const props = defineProps<{ project: string; jobId: string; taskId: string }>()
 const route = useRoute()

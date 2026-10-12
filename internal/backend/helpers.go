@@ -428,24 +428,7 @@ func buildTaskView(task store.TaskRow, files bool) TaskView {
 		Queue:         task.Queue,
 		LogPath:       task.LogPath,
 	}
-	if task.StartedAt != nil {
-		sec := task.StartedAt.Unix()
-		view.StartedAt = &sec
-	}
-	if task.FinishedAt != nil {
-		sec := task.FinishedAt.Unix()
-		view.FinishedAt = &sec
-	}
-	if task.StartedAt != nil {
-		end := time.Now()
-		if task.FinishedAt != nil {
-			end = *task.FinishedAt
-		}
-		elapsed := end.Sub(*task.StartedAt).Seconds()
-		if elapsed >= 0 {
-			view.ElapsedSec = &elapsed
-		}
-	}
+	applyTaskTiming(&view, task)
 	return view
 }
 
@@ -584,6 +567,11 @@ func TaskRowToSchedulerTask(row *store.TaskRow) *scheduler.Task {
 	if row.TaskDir != "" {
 		ckptDir = filepath.Join(row.TaskDir, "checkpoints")
 	}
+	dispatchAt := row.StartedAt // legacy dispatch baseline retained for recovery
+	if e, ok := store.CurrentTaskTimes(*row)["dispatch_started_at"]; ok {
+		at := time.Unix(e.At, 0)
+		dispatchAt = &at
+	}
 	return &scheduler.Task{
 		ID:            row.ID,
 		JobID:         row.JobID,
@@ -600,7 +588,7 @@ func TaskRowToSchedulerTask(row *store.TaskRow) *scheduler.Task {
 		WorkingDir:    row.WorkingDir,
 		Env:           env,
 		EnqueuedAt:    row.EnqueuedAt,
-		StartedAt:     row.StartedAt,
+		StartedAt:     dispatchAt,
 		FinishedAt:    row.FinishedAt,
 		Resumable:     row.Resumable,
 		ExtraArgs:     row.ExtraArgs,

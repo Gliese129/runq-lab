@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/gliese129/runq-lab/internal/store"
 	"time"
 
 	"github.com/gliese129/runq-lab/internal/logfile"
@@ -88,19 +89,26 @@ type TaskView struct {
 	RefreshedAt  *int64        `json:"refreshed_at,omitempty"`
 	Stale        bool          `json:"stale"`
 
-	ID          string             `json:"id"`
-	Status      string             `json:"status"`
-	Params      map[string]any     `json:"params"`
-	Metrics     map[string]float64 `json:"metrics,omitempty"`
-	CurrentStep *int               `json:"current_step,omitempty"`
-	StartedAt   *int64             `json:"started_at,omitempty"`
-	FinishedAt  *int64             `json:"finished_at,omitempty"`
-	ElapsedSec  *float64           `json:"elapsed_seconds,omitempty"`
-	ExitCode    *int               `json:"exit_code,omitempty"`
-	RetryCount  int                `json:"retry_count"`
-	MaxRetry    int                `json:"max_retry"`
-	GPUs        string             `json:"gpus,omitempty"`
-	WandbRunID  string             `json:"wandb_run_id,omitempty"`
+	ID             string                        `json:"id"`
+	Status         string                        `json:"status"`
+	Params         map[string]any                `json:"params"`
+	Metrics        map[string]float64            `json:"metrics,omitempty"`
+	CurrentStep    *int                          `json:"current_step,omitempty"`
+	StartedAt      *int64                        `json:"started_at,omitempty"`
+	FinishedAt     *int64                        `json:"finished_at,omitempty"`
+	QueueSec       *float64                      `json:"queue_seconds,omitempty"`
+	SchedulerSec   *float64                      `json:"scheduler_seconds,omitempty"`
+	TotalSec       *float64                      `json:"total_seconds,omitempty"`
+	TimeEstimated  bool                          `json:"time_estimated,omitempty"`
+	QueueEstimated bool                          `json:"queue_estimated,omitempty"`
+	Times          map[string]store.TimeEvidence `json:"times,omitempty"`
+	TimeHistory    store.TaskTimeHistory         `json:"time_history,omitempty"`
+	ElapsedSec     *float64                      `json:"elapsed_seconds,omitempty"`
+	ExitCode       *int                          `json:"exit_code,omitempty"`
+	RetryCount     int                           `json:"retry_count"`
+	MaxRetry       int                           `json:"max_retry"`
+	GPUs           string                        `json:"gpus,omitempty"`
+	WandbRunID     string                        `json:"wandb_run_id,omitempty"`
 	// Links the task reported via SDK runq.link(name, url), e.g. "wandb" →
 	// its W&B run page. Name → URL.
 	Links map[string]string `json:"links,omitempty"`

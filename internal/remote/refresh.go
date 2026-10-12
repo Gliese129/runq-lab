@@ -20,10 +20,15 @@ import (
 
 // statusFile is the shape run.sh writes to <task_dir>/status.json.
 type statusFile struct {
-	Status     string `json:"status"`
-	ExitCode   *int   `json:"exit_code"`
-	StartedAt  int64  `json:"started_at"`
-	FinishedAt int64  `json:"finished_at"`
+	TimeVersion         int    `json:"time_version"`
+	Attempt             *int   `json:"attempt"`
+	WrapperStartedAt    int64  `json:"wrapper_started_at"`
+	ExecutionStartedAt  int64  `json:"execution_started_at"`
+	ExecutionFinishedAt int64  `json:"execution_finished_at"`
+	Status              string `json:"status"`
+	ExitCode            *int   `json:"exit_code"`
+	StartedAt           int64  `json:"started_at"`
+	FinishedAt          int64  `json:"finished_at"`
 }
 
 // readStatusObserved distinguishes an absent status file (a normal
@@ -181,6 +186,11 @@ func (b *Backend) HeartbeatProbe(ctx context.Context, silenceAfter time.Duration
 		var last time.Time
 		if tk.StartedAt != nil {
 			last = *tk.StartedAt
+		}
+		for _, key := range []string{"wrapper_started_at", "execution_started_at", "submitted_at", "dispatch_started_at"} {
+			if e, ok := store.CurrentTaskTimes(tk)[key]; ok && time.Unix(e.At, 0).After(last) {
+				last = time.Unix(e.At, 0)
+			}
 		}
 		streams := []string{tk.LogPath, workspace.ActivityPath(tk.TaskDir), workspace.MetricsPath(tk.TaskDir)}
 		for _, p := range streams {
@@ -475,12 +485,26 @@ func (b *Backend) reconcileWith(ctx context.Context, jobID string, probe bool, p
 		// Only wrapper and runq terminals are hard-final (skip re-probe).
 		// Scheduler / submit / inferred terminals stay correctable so a late
 		// wrapper signal can overturn them.
-		if isTerminal(tk.Status) && (tk.StatusSource == SourceWrapper || tk.StatusSource == SourceRunq) {
-			continue
-		}
 		sf, statusErr := readStatusObserved(rfs.WithContext(b.FS, ctx), tk.TaskDir)
+		sf = statusForAttempt(tk, sf)
 		if statusErr != nil {
 			observationErrs = append(observationErrs, fmt.Errorf("observe task %s: %w", tk.ID, statusErr))
+		}
+		timeFields := observationTimeFields(tk, sf, ProbeResult{})
+		if hardFinal {
+			// A forced/native observation may repair resource timing while
+			// the verdict remains immutable.
+			if probe && tk.ExternalID != "" {
+				pr, err := b.probeSchedulerObservedWith(ctx, probeRun, tk.ExternalID)
+				if err != nil {
+					observationErrs = append(observationErrs, err)
+				}
+				timeFields = observationTimeFields(tk, sf, pr)
+			}
+			if err := b.applyTimeOnly(ctx, tk, timeFields); err != nil {
+				return err
+			}
+			continue
 		}
 		var pr ProbeResult
 		if probe {
@@ -499,7 +523,9 @@ func (b *Backend) reconcileWith(ctx context.Context, jobID string, probe bool, p
 
 		// Build extra fields. native_state and queue are only written when
 		// a probe ran — local-only reconcile must not overwrite existing values.
-		fields := map[string]any{"status_source": d.Source}
+		fields := observationTimeFields(tk, sf, pr)
+		timingChanged := len(fields) > 0
+		fields["status_source"] = d.Source
 		if probe && pr.NativeState != "" {
 			fields["native_state"] = pr.NativeState
 		}
@@ -510,7 +536,7 @@ func (b *Backend) reconcileWith(ctx context.Context, jobID string, probe bool, p
 		statusChanged := d.Status != tk.Status || d.Source != tk.StatusSource
 		hpcFieldsChanged := (probe && pr.NativeState != "" && pr.NativeState != tk.NativeState) ||
 			(probe && pr.Queue != "" && pr.Queue != tk.Queue)
-		if !statusChanged && !hpcFieldsChanged {
+		if !statusChanged && !hpcFieldsChanged && !timingChanged {
 			continue // nothing changed
 		}
 
@@ -595,14 +621,19 @@ func (b *Backend) reconcileWithBatch(ctx context.Context, jobID string, signals 
 			continue
 		}
 
-		if hardFinal {
-			continue
-		}
 		sf, statusErr := readStatusObserved(rfs.WithContext(b.FS, ctx), tk.TaskDir)
+		sf = statusForAttempt(tk, sf)
 		if statusErr != nil {
 			observationErrs = append(observationErrs, fmt.Errorf("observe task %s: %w", tk.ID, statusErr))
 		}
 
+		timeFields := observationTimeFields(tk, sf, signals[tk.ExternalID])
+		if hardFinal {
+			if err := b.applyTimeOnly(ctx, tk, timeFields); err != nil {
+				return err
+			}
+			continue
+		}
 		// Look up pre-computed probe result; absent ext_ids are gone.
 		pr := ProbeResult{Signal: SchedUnknown}
 		if tk.ExternalID != "" {
@@ -621,7 +652,9 @@ func (b *Backend) reconcileWithBatch(ctx context.Context, jobID string, signals 
 		})
 
 		// Build extra fields. Batch probe always counts as probe=true.
-		fields := map[string]any{"status_source": d.Source}
+		fields := observationTimeFields(tk, sf, pr)
+		timingChanged := len(fields) > 0
+		fields["status_source"] = d.Source
 		if pr.NativeState != "" {
 			fields["native_state"] = pr.NativeState
 		}
@@ -632,7 +665,7 @@ func (b *Backend) reconcileWithBatch(ctx context.Context, jobID string, signals 
 		statusChanged := d.Status != tk.Status || d.Source != tk.StatusSource
 		hpcFieldsChanged := (pr.NativeState != "" && pr.NativeState != tk.NativeState) ||
 			(pr.Queue != "" && pr.Queue != tk.Queue)
-		if !statusChanged && !hpcFieldsChanged {
+		if !statusChanged && !hpcFieldsChanged && !timingChanged {
 			continue
 		}
 
@@ -720,8 +753,11 @@ func (b *Backend) probeBatch(ctx context.Context) (map[string]ProbeResult, error
 			NativeState: parts[1],
 		}
 		if len(parts) >= 3 {
-			pr.Queue = parts[2]
+			if !strings.Contains(parts[2], "=") {
+				pr.Queue = parts[2]
+			}
 		}
+		parseProbeTimes(&pr, parts[2:])
 		result[parts[0]] = pr
 	}
 
@@ -804,10 +840,10 @@ func (b *Backend) probeSchedulerObservedWith(ctx context.Context, run runner, ex
 		if token == "" {
 			return ProbeResult{Signal: SchedGone}, nil
 		}
-		return ProbeResult{
-			Signal:      MapSignal(b.Cfg, token),
-			NativeState: token,
-		}, nil
+		parts := strings.Fields(token)
+		pr := ProbeResult{Signal: MapSignal(b.Cfg, parts[0]), NativeState: parts[0]}
+		parseProbeTimes(&pr, parts[1:])
+		return pr, nil
 	}
 
 	// No parser: any non-zero exit is "no info" (don't guess).
@@ -818,9 +854,13 @@ func (b *Backend) probeSchedulerObservedWith(ctx context.Context, run runner, ex
 	if token == "" {
 		return ProbeResult{Signal: SchedGone}, nil
 	}
+	parts := strings.Fields(token)
+	token = parts[0]
 	sig := MapSignal(b.Cfg, token)
 	if sig != SchedUnknown {
-		return ProbeResult{Signal: sig, NativeState: token}, nil
+		pr := ProbeResult{Signal: sig, NativeState: token}
+		parseProbeTimes(&pr, parts[1:])
+		return pr, nil
 	}
 	return ProbeResult{Signal: SchedActive, NativeState: token}, nil
 }

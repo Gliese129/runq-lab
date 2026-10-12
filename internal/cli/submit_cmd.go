@@ -198,12 +198,12 @@ func watchJob(ctx context.Context, be backend.Backend, jobID string) error {
 				return err
 			}
 			table := tablewriter.NewTable(writer)
-			table.Header([]string{"ID", "STATUS", "GPUS", "RETRY", "DURATION"})
+			table.Header([]string{"ID", "STATUS", "GPUS", "RETRY", "SCRIPT"})
 			data := make([][]string, 0, len(detail.Tasks))
 			for _, task := range detail.Tasks {
 				duration := "-"
 				if task.ElapsedSec != nil {
-					duration = (time.Duration(*task.ElapsedSec * float64(time.Second))).Round(time.Second).String()
+					duration = formatTaskDuration(task.ElapsedSec, task.TimeEstimated)
 				}
 				data = append(data, []string{
 					task.ID, task.Status, task.GPUs,

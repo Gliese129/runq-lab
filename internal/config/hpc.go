@@ -249,13 +249,13 @@ hpc:
   submit_template: "sbatch --gpus={{gpus}} --job-name={{name}} {{run_sh}}"
   submit_id_regex: "Submitted batch job ([0-9]+)"
 
-  status_template: "sacct -n -X -j {{ext_id}} -o State"
+  status_template: "SLURM_TIME_FORMAT=%s sacct -n -X -j {{ext_id}} --parsable2 -o State,Submit,Start,End"
   status_parser:
-    - awk 'NR==1{print $1}'
+    - awk -F'|' 'NR==1{print $1, "submitted_at=" $2, "started_at=" $3, "finished_at=" $4}'
 
   # Batch probe: one squeue call for all active jobs (dashboard refresh).
   # %P = partition (shown as Queue in the dashboard).
-  status_list_template: "squeue -u $USER -h -o '%i %T %P'"
+  status_list_template: "SLURM_TIME_FORMAT=%s squeue -u $USER -h -o '%i %T %P submitted_at=%V started_at=%S'"
   status_list_parser: []
 
   # Map Slurm-native states to canonical signals. Tokens not listed here

@@ -26,6 +26,9 @@ const (
 // ProbeResult holds the full output of a scheduler probe: the semantic signal
 // for Reconcile, plus raw strings for display in CLI/dashboard.
 type ProbeResult struct {
+	SubmittedAt int64
+	StartedAt   int64
+	FinishedAt  int64
 	Signal      SchedulerSignal
 	NativeState string // raw state token before signal mapping (e.g. "CONFIGURING")
 	Queue       string // scheduler queue/partition, if available

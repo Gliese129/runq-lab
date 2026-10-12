@@ -37,6 +37,7 @@ type TaskRow struct {
 	EnqueuedAt    time.Time
 	StartedAt     *time.Time
 	FinishedAt    *time.Time
+	TimingJSON    string
 
 	// L2-C: per-task workspace at <root>/<job_id>/<task_id>.
 	// Holds params.json, wandb_config.json (optional), metrics.jsonl, checkpoints/.
@@ -82,7 +83,7 @@ type TaskRow struct {
 // TaskFilter holds optional filter criteria for ListTasks.
 // Zero values mean "no filter".
 type TaskFilter struct {
- VisibleOnly bool // default user-facing lists hide archived jobs/projects
+	VisibleOnly bool // default user-facing lists hide archived jobs/projects
 
 	Status string // filter by status; empty = no filter
 	JobID  string // filter by job; empty = no filter
@@ -102,7 +103,7 @@ const allTaskColumns = `id, job_id, project_name, command, params_json,
 	pid, start_time, log_path, working_dir, env_json,
 	resumable, extra_args, uid, timeout,
 	enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-	native_state, queue, failure_detail, target_generation`
+	native_state, queue, failure_detail, target_generation, timing_json`
 
 // scanTask reads one result row into a TaskRow.
 // Column order must match allTaskColumns.
@@ -130,6 +131,7 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 		queue         sql.NullString
 		failureDetail sql.NullString
 		targetGen     sql.NullString
+		timingJSON    sql.NullString
 	)
 
 	var target sql.NullString
@@ -139,7 +141,7 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 		&pid, &startTime, &logPath, &workingDir, &envJSON,
 		&resumable, &extraArgs, &uid, &timeout, &enqueuedAt, &startedAt, &finishedAt,
 		&taskDir, &target, &externalID, &statusSource, &killRequested,
-		&nativeState, &queue, &failureDetail, &targetGen,
+		&nativeState, &queue, &failureDetail, &targetGen, &timingJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -170,20 +172,22 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 	t.Queue = queue.String
 	t.FailureDetail = failureDetail.String
 	t.TargetGeneration = targetGen.String
+	t.TimingJSON = timingJSON.String
 
 	return &t, nil
 }
 
 // InsertTask inserts a single task row.
 func (s *Store) InsertTask(ctx context.Context, t *TaskRow) error {
+	initializeTaskTiming(t)
 	query := `INSERT INTO tasks (
 		id, job_id, project_name, command, params_json,
 		gpus_needed, gpus, status, retry_count, max_retry,
 		pid, start_time, log_path, working_dir, env_json,
 		resumable, extra_args, uid, timeout,
 		enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-		native_state, queue, failure_detail, target_generation
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		native_state, queue, failure_detail, target_generation, timing_json
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	resumable := 0
 	if t.Resumable {
@@ -204,21 +208,22 @@ func (s *Store) InsertTask(ctx context.Context, t *TaskRow) error {
 		nullTimeToUnix(t.StartedAt), nullTimeToUnix(t.FinishedAt),
 		nullString(t.TaskDir), targetOrDefault(t.Target), nullString(t.ExternalID), nullString(t.StatusSource), killRequested,
 		nullString(t.NativeState), nullString(t.Queue), nullString(t.FailureDetail),
-		t.TargetGeneration,
+		t.TargetGeneration, nullString(t.TimingJSON),
 	)
 	return err
 }
 
 // InsertTaskTx inserts a task row within an existing transaction (used by InsertJobWithTasks).
 func (s *Store) InsertTaskTx(ctx context.Context, tx *sql.Tx, t *TaskRow) error {
+	initializeTaskTiming(t)
 	query := `INSERT INTO tasks (
 		id, job_id, project_name, command, params_json,
 		gpus_needed, gpus, status, retry_count, max_retry,
 		pid, start_time, log_path, working_dir, env_json,
 		resumable, extra_args, uid, timeout,
 		enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-		native_state, queue, failure_detail, target_generation
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		native_state, queue, failure_detail, target_generation, timing_json
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	resumable := 0
 	if t.Resumable {
@@ -239,7 +244,7 @@ func (s *Store) InsertTaskTx(ctx context.Context, tx *sql.Tx, t *TaskRow) error 
 		nullTimeToUnix(t.StartedAt), nullTimeToUnix(t.FinishedAt),
 		nullString(t.TaskDir), targetOrDefault(t.Target), nullString(t.ExternalID), nullString(t.StatusSource), killRequested,
 		nullString(t.NativeState), nullString(t.Queue), nullString(t.FailureDetail),
-		t.TargetGeneration,
+		t.TargetGeneration, nullString(t.TimingJSON),
 	)
 	return err
 }
@@ -248,6 +253,7 @@ func (s *Store) InsertTaskTx(ctx context.Context, tx *sql.Tx, t *TaskRow) error 
 // accepts. Any key not in this set is rejected to prevent accidental SQL
 // injection from future callers.
 var allowedStatusFields = map[string]bool{
+	"timing_json":       true,
 	"pid":               true,
 	"gpus":              true,
 	"start_time":        true,
@@ -507,7 +513,9 @@ func (s *Store) ListTasks(ctx context.Context, filter TaskFilter) ([]TaskRow, er
 		where = append(where, "status = ?")
 		args = append(args, filter.Status)
 	}
-    if filter.VisibleOnly { where = append(where, "EXISTS (SELECT 1 FROM jobs j JOIN projects p ON p.name = j.project_name WHERE j.id = tasks.job_id AND j.archived_at IS NULL AND p.archived_at IS NULL)") }
+	if filter.VisibleOnly {
+		where = append(where, "EXISTS (SELECT 1 FROM jobs j JOIN projects p ON p.name = j.project_name WHERE j.id = tasks.job_id AND j.archived_at IS NULL AND p.archived_at IS NULL)")
+	}
 	if filter.JobID != "" {
 		where = append(where, "job_id = ?")
 		args = append(args, filter.JobID)
@@ -558,7 +566,9 @@ func (s *Store) CountTasks(ctx context.Context, filter TaskFilter) (int, error) 
 		where = append(where, "status = ?")
 		args = append(args, filter.Status)
 	}
-    if filter.VisibleOnly { where = append(where, "EXISTS (SELECT 1 FROM jobs j JOIN projects p ON p.name = j.project_name WHERE j.id = tasks.job_id AND j.archived_at IS NULL AND p.archived_at IS NULL)") }
+	if filter.VisibleOnly {
+		where = append(where, "EXISTS (SELECT 1 FROM jobs j JOIN projects p ON p.name = j.project_name WHERE j.id = tasks.job_id AND j.archived_at IS NULL AND p.archived_at IS NULL)")
+	}
 	if filter.JobID != "" {
 		where = append(where, "job_id = ?")
 		args = append(args, filter.JobID)

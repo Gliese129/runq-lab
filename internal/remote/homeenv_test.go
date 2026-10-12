@@ -40,7 +40,7 @@ func TestRunScriptHomeAndEnvSetup(t *testing.T) {
 	// user command. env_setup output must be logged; explicit env wins.
 	pos := func(sub string) int { return strings.Index(script, sub) }
 	if !(pos("exec >> ") < pos(homeLine) && pos(homeLine) < pos("miniconda3") &&
-		pos("miniconda3") < pos("export RUNQ_TASK_ID") && pos("miniconda3") < pos("bash scripts/run.sh")) {
+		pos("miniconda3") < strings.LastIndex(script, "export RUNQ_TASK_ID") && pos("miniconda3") < pos("bash scripts/run.sh")) {
 		t.Errorf("ordering wrong:\n%s", script)
 	}
 

@@ -76,6 +76,14 @@ export interface RawJobConfig {
 
 /** Read alias: raw config as submitted (note keeps its {{...}} form). */
 
+export interface TimeEvidence {
+  at: number
+  source: string
+  observed_at: number
+  attempt: number
+  estimated?: boolean
+}
+
 export interface TaskView {
   target?: string
   capabilities?: Capabilities
@@ -90,6 +98,13 @@ export interface TaskView {
   started_at?: number
   finished_at?: number
   elapsed_seconds?: number
+  queue_seconds?: number
+  scheduler_seconds?: number
+  total_seconds?: number
+  time_estimated?: boolean
+  queue_estimated?: boolean
+  times?: Record<string, TimeEvidence>
+  time_history?: Record<string, Record<string, TimeEvidence>>
   exit_code?: number
   retry_count: number
   max_retry: number

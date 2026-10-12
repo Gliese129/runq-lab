@@ -42,3 +42,8 @@ export function formatDuration(sec: number): string {
   if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
 }
+
+/** Unknown and valid zero remain distinct; estimates keep their provenance. */
+export function formatTaskDuration(sec?: number | null, estimated = false): string {
+  return sec == null ? '—' : `${estimated ? '≈' : ''}${formatDuration(sec)}`
+}

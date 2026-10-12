@@ -73,21 +73,26 @@ func (b *Backend) ScanDoneMarkers(ctx context.Context) error {
 		if b.Scope != nil && tk.TargetGeneration != b.Scope.Generation {
 			continue
 		}
-		if isTerminal(tk.Status) {
-			// Already settled (probe beat the marker, or a rescan): the
-			// marker is stale bookkeeping, safe to clear.
-			cleanup = append(cleanup, path.Join(dir, id))
-			continue
-		}
 		if awaitingRelaunch(*tk) {
 			continue // previous attempt's marker; Launch clears it
 		}
 
 		sf, statusErr := readStatusObserved(rfs.WithContext(b.FS, ctx), tk.TaskDir)
+		sf = statusForAttempt(*tk, sf)
 		if statusErr != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("read completion marker status for %s: %w", tk.ID, statusErr)
 			}
+			continue
+		}
+		if isTerminal(tk.Status) {
+			if err := b.applyTimeOnly(ctx, *tk, observationTimeFields(*tk, sf, ProbeResult{})); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			cleanup = append(cleanup, path.Join(dir, id))
 			continue
 		}
 		if sf.Status == "" {
@@ -108,7 +113,8 @@ func (b *Backend) ScanDoneMarkers(ctx context.Context) error {
 			continue
 		}
 
-		fields := map[string]any{"status_source": d.Source}
+		fields := observationTimeFields(*tk, sf, ProbeResult{})
+		fields["status_source"] = d.Source
 		if sf.FinishedAt > 0 {
 			fields["finished_at"] = sf.FinishedAt
 		} else {
