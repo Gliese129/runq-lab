@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/gliese129/runq-lab/internal/backend"
+	"github.com/gliese129/runq-lab/internal/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -43,6 +46,9 @@ func runPs(cmd *cobra.Command, args []string) error {
 		}
 
 		// Job view.
+		if t, src := implicitTargetScope(cmd); t != "" {
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s\n", utils.Dimf("showing target %q only (set by %s) — pass -t <name> for another target", t, src))
+		}
 		applyFresh(cmd, be, "")
 		jobs, err := be.ListJobs(cmd.Context(), "")
 		if err != nil {

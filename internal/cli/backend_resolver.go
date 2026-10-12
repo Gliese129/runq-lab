@@ -72,6 +72,26 @@ func applyFresh(cmd *cobra.Command, be backend.Backend, jobID string) {
 // submit = daemon's default_target).
 //
 // Priority: --target flag > $RUNQ_TARGET > <configDir>/.active-target
+// implicitTargetScope reports a query scope that the caller did NOT pass on
+// this command line (RUNQ_TARGET or a leftover `runq target use`). An agent
+// that reads "No jobs" without knowing the list was filtered draws the wrong
+// conclusion, so listings name the scope on stderr.
+func implicitTargetScope(cmd *cobra.Command) (target, source string) {
+	if cmd.Flags().Lookup("target") != nil && cmd.Flags().Changed("target") {
+		return "", ""
+	}
+	if t := os.Getenv("RUNQ_TARGET"); t != "" {
+		return t, "RUNQ_TARGET"
+	}
+	path := filepath.Join(config.ConfigDir(), ".active-target")
+	if buf, err := os.ReadFile(path); err == nil {
+		if t := strings.TrimSpace(string(buf)); t != "" {
+			return t, "`runq target use` (" + path + ")"
+		}
+	}
+	return "", ""
+}
+
 func resolveTarget(cmd *cobra.Command) string {
 	if cmd.Flags().Changed("target") {
 		t, _ := cmd.Flags().GetString("target")

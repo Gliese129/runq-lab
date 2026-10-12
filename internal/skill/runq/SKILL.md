@@ -115,6 +115,9 @@ inside the training code over a shell wrapper, and say so when you do.
 
 - `runq ps` shows a **cached** snapshot with observation times; `--fresh` forces one
   probe. `pending` = the cluster is queueing it (`qstat -j <ext_id>` says why).
+- `showing target "X" only` on stderr means the job list is filtered by a
+  leftover `runq target use` / `RUNQ_TARGET` — "no jobs" is not "nothing ran".
+  Pass `-t <name>` per target.
 - Times are separate: `queue_seconds` (waiting), `scheduler_seconds` (allocation,
   when known), `elapsed_seconds` (the script only). Missing means unknown — never
   infer a start time from file mtimes, legacy `started_at` or W&B runtime.
