@@ -127,6 +127,10 @@ Run `runq skill install` once per machine. The short version:
 - `runq logs` follows by default — use `--no-follow` or `--grep`.
 - If runq and the scheduler disagree, report "unconfirmed" with both facts.
 - Don't write wrapper scripts for things runq declares (env, dirs, retries, sync).
+- Check outputs, not counts: look at real generations/losses before reporting a
+  rate or widening a sweep.
+- Keep the repo tidy: one project.yaml, job files per experiment, no `-v2` copies
+  or per-run status docs.
 
 ## Documentation
 

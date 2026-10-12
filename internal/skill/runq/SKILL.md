@@ -127,7 +127,59 @@ inside the training code over a shell wrapper, and say so when you do.
 - "success" = exit 0. Whether the *experiment* succeeded is in its outputs — read
   the fields the user named (`runq logs --grep`, the result file) and quote them.
 
-## 5. Iron rules
+## 5. Check content, not counts
+
+"128 rows generated", "throughput 3.1k tok/s", "loss logged" prove the loop ran —
+not that it ran on the right thing. A real run once reported throughput for ten
+hours while the inference engine served **uninitialized weights**; nobody had
+looked at a single output. So:
+
+1. **Before reporting a rate or scaling up**, open a few actual outputs (decode
+   2–3 generations, print a batch, check loss is finite and moves) and confirm
+   the intended model/data were loaded — the load line in the log, the
+   checkpoint path, the parameter count or checksum.
+2. **Make smokes assert content**: parse rate, expected language, non-empty
+   answers, a known-answer sample. A smoke that only checks "it produced N
+   files" is not a smoke.
+3. **Stop at the first bad batch.** Don't widen a sweep (more questions, more
+   cells, longer runs) until a small run's outputs pass step 1.
+
+## 6. Reporting to the human
+
+1. **Lead with the fact**, then the evidence that shows it (task id, file + field,
+   log line with its time). One short paragraph beats a status essay.
+2. Keep three things apart: **confirmed** (seen just now), **unconfirmed** (say
+   why: cached, probe failed, file not readable), and **next step** (optional,
+   one line).
+3. State results as conditions → metric → value. A weaker metric is a tradeoff
+   to state plainly (`latency 100→60 ms, accuracy 90→89%`), not a verdict.
+4. If the cause is unknown, say "cause unknown" and what would tell — don't
+   invent one. Don't stack hedges ("may possibly suggest"); give the source of
+   the uncertainty instead.
+5. Report changes, not repetition: when nothing changed since the last check,
+   say so in one line.
+
+## 7. Keep the project tidy
+
+Every extra file is something the human must later read or delete.
+
+- **One `project.yaml` per repository**; experiments are job files kept together
+  (e.g. `runq/jobs/<experiment>.yaml`, or wherever the repo already keeps them —
+  follow the repo's existing layout and AGENTS.md).
+- **Edit or reuse before you copy.** Don't create `-v2`, `-fixed`, `-new`
+  variants of jobs or scripts; change the file (git keeps history) or
+  parametrize it through `fixed_params` / `ctx.params`.
+- **A smoke test is a job, not a project or a script**: the same command with
+  small `fixed_params` (`max_steps: 2`, few samples) and `note: smoke`.
+- **No per-run handoff/status markdown.** The run's record is runq itself (note,
+  params, logs, results, links) plus the git commit. Write a document only when
+  the human asks for one.
+- **Outputs go to `ctx.output_dir`**, not ad-hoc `results/<date>-…` folders;
+  scratch files stay inside the task directory.
+- **Reuse existing helpers.** Before writing a script, check the repo for one
+  that already does it and extend that.
+
+## 8. Iron rules
 
 1. **Preview, then submit.** A real `submit` queues real cluster jobs; never
    "try" a command for real.
@@ -144,7 +196,7 @@ inside the training code over a shell wrapper, and say so when you do.
    read runq's Go source only if those don't answer.
 7. **Secrets** only in `<working_dir>/.env`.
 
-## 6. Code freshness
+## 9. Code freshness
 
 `submit` runs the project tree **as it is on the target at that moment**; a
 passing `--dry` doesn't mean remote code is current. With `targets:` + `.rsync`,
@@ -153,7 +205,7 @@ sync your edits to the target before submitting, and say so. `.rsync` uses rsync
 include-file semantics: `/src/**` whole tree, `/configs/**.yaml` files,
 `/data/` traversal only, `!pattern` always excludes.
 
-## 7. W&B
+## 10. W&B
 
 ```python
 run = wandb.init(**ctx.wandb_like_cfg)   # project/entity/tags from the project's wandb: block
@@ -163,7 +215,7 @@ ctx.link_wandb(run)                       # the dashboard and `task show` link t
 Without `ctx.link_wandb(run)` the dashboard cannot open the run. Details (rank
 gating, offline runs, directories): `references/sdk.md`.
 
-## 8. More
+## 11. More
 
 - HPC targets, templates, SSH, reservations (`qsub -ar`) → `references/hpc.md`
 - SDK: params, metrics, results, directories, W&B → `references/sdk.md`
