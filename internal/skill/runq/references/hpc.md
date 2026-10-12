@@ -26,7 +26,14 @@ runq target show [tsubame]       # current definition (alias: target ls)
 ### SSH facts
 - Auth: ssh-agent first (`SSH_AUTH_SOCK`), then key files. A
   passphrase-protected key without an agent fails with a hint: `ssh-add <key>`.
-- The lightweight SSH config reader resolves HostName/User/Port/IdentityFile and host-key policy. Include/Match and ProxyJump are not fully supported by the current connection layer. Authentication uses the service-starting shell's SSH_AUTH_SOCK; restart the service after changing agent environment.
+- SSH settings are resolved with `ssh -G`, so `~/.ssh/config` aliases, Include,
+  Match, User, Port, IdentityFile and IdentityAgent all apply. ProxyJump and
+  ProxyCommand are rejected — use a directly reachable host or a tunnel.
+- The service authenticates with the `SSH_AUTH_SOCK` of the shell that started
+  it. After changing the agent, `runq serve restart` from a shell that has it;
+  a working `ssh` in another shell proves nothing about the service.
+- `module load …` and other cluster profile setup go in the target's
+  `env_setup`; it runs before every task, preflight probe and `setup_command`.
 - Unknown host key → `runq target connect <name>` (asks to trust it).
 
 ## Templates

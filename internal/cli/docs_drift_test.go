@@ -80,7 +80,7 @@ func codeFragments(line string, inFence bool) []string {
 
 func isExemptLine(line string) bool {
 	lower := strings.ToLower(line)
-	for _, marker := range []string{"removed", "unknown command", "do not try", "no longer", "replaced by", "→ `runq"} {
+	for _, marker := range []string{"removed", "gone in", "don't try", "unknown command", "do not try", "no longer", "replaced by", "→ `runq"} {
 		if strings.Contains(lower, marker) {
 			return true
 		}

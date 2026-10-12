@@ -11,9 +11,10 @@ step, then act or report. Do not loop retries.
 | `ssh: handshake failed: unable to authenticate` | no usable key | `ssh-add <key>` (agent is used first) or fix the key path in the target |
 | `key … is passphrase-protected — add it to ssh-agent` | encrypted key, no agent | `ssh-add <key>` |
 | `unknown host key for …` | first contact / rotated keys | `runq target connect <name>` |
-| `Could not resolve hostname …` / `no such host` | DNS/VPN, or an `~/.ssh/config` alias (runq can't read aliases) | use the real hostname in the target; check the network once |
+| `Could not resolve hostname …` / `no such host` | DNS/VPN, or a typo in the target host / `~/.ssh/config` entry | `ssh -G <host>` to see what runq resolves; check the network once |
+| `ProxyJump is not supported by runq's SSH transport` | the host needs a jump host | configure a directly reachable host or a local tunnel |
+| `handshake failed` although `ssh <host>` works in your shell | the service started without your ssh-agent | `runq serve restart` from a shell with `SSH_AUTH_SOCK` |
 | `template references unknown parameter(s): x` | template uses `x` but this job gives it no value (project `default` is not injected) | add `x` to the job's `fixed_params:` (constant) or `sweep:` |
-| `template has no {{args}} placeholder, but N parameter(s) are not referenced` | a swept param is consumed by nothing | reference it (`{{x}}`), add `{{args}}`, or mark it `scope: scheduler` and use `{{param.x}}` in `submit_template` |
 | `duplicate parameter "x" found across sweep blocks` | `x` in two blocks | keep it in one block; zip pairs in one `list` block |
 | `project "x" already exists` on `project add` | already registered | `runq submit job.yaml --project-file project.yaml` (upserts) |
 | `project "x" is archived` | archived | `runq project unarchive x` |

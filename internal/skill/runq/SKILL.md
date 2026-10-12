@@ -1,10 +1,10 @@
 ---
 name: runq
 description: >
-  Operate runq (runq-lab) — the experiment runner that submits sweeps/ablations
+  Operate runq (runq-lab) — the experiment runner that submits ablation sweeps
   to HPC schedulers (SGE/UGE, Slurm, PBS) and local GPU executors, tracks every
   task, and serves a dashboard. Use whenever the user wants to submit, re-run,
-  monitor, debug, kill, retry or clean experiments; edit project.yaml / job.yaml
+  monitor, debug, kill, retry or clean experiments; write project.yaml / job.yaml
   or runq targets; read task logs or results; or wire W&B into a runq task —
   even if they never say "runq". A repo with project.yaml, job.yaml or a .runq/
   directory runs its experiments through runq.
@@ -12,8 +12,9 @@ description: >
 
 # runq — operating guide for agents (v0.6)
 
-You drive runq through its CLI; the human mostly watches the dashboard.
-Every rule below exists because an agent burned hours of tokens without it.
+You drive runq through its CLI; the human watches the dashboard. runq exists so
+experiments need **no wrapper scripts and no babysitting** — every rule below
+exists because an agent burned hours of tokens without it.
 
 ## 0. Orient (once per session)
 
@@ -21,148 +22,148 @@ Every rule below exists because an agent burned hours of tokens without it.
 runq version; runq serve status          # service up? data dir, socket, logs
 runq target show                         # targets + which is default
 runq project ls                          # registered projects
-ls project.yaml job.yaml .rsync 2>/dev/null
+ls project.yaml job*.yaml .rsync 2>/dev/null
 ```
 
 `runq serve status` says "stopped" → `runq serve -d`. A socket error
 (`dial unix … no such file`, `connection refused`) means the service is down
 — not the cluster, not the user's network.
 
-## 1. Commands (v0.6 — older names are gone)
+## 1. Commands
 
 | Goal | Command |
 |---|---|
-| Preview a submit (no submission; project-file upserts) | `runq submit job.yaml --dry -t <target>` |
-| Submit | `runq submit job.yaml --json -t <target>` → `{job_id,total_tasks}` |
-| Jobs / one job's tasks | `runq ps --json` · `runq ps <job_id> --json` |
-| Force a fresh scheduler probe | add `--fresh` (rate-limited server-side) |
-| One task (command, dirs, status source) | `runq task show <task_id>` (JSON) |
+| Preview (submits nothing) | `runq submit job.yaml --dry` |
+| Submit | `runq submit job.yaml --json` → `{job_id,total_tasks}` |
+| Jobs / one job's tasks | `runq ps --json` · `runq ps <job_id> --json` (add `--fresh` to probe the scheduler first) |
+| One task (command, dirs, scheduler id, times, links) | `runq task show <task_id>` |
 | Log tail, non-blocking | `runq logs <task_id> --no-follow -n 200` |
 | Last matching log lines | `runq logs <task_id> --grep 'loss\|step' -n 20` (ERE, runs on the target) |
 | Result rows from `runq.record` | `runq results <job_id> --json` |
 | Kill / retry | `runq kill <task_id\|job_id>` · `runq task retry <task_id>` |
-| Delete finished task dirs | `runq clean --show …` first, then `-y` (irreversible) |
-| Register / update a project from YAML | `runq project add -f project.yaml` (new) · `runq submit job.yaml --project-file project.yaml` (upserts, then submits) |
-| Service | `runq serve -d` · `serve status` · `serve restart` · `serve stop` |
-| Targets | `runq target show [name]` · `target check <name>` · `target connect <name>` |
+| Register a project / update it | `runq project add -f project.yaml` · `runq submit job.yaml --project-file project.yaml` (upsert, also on `--dry`) |
+| Targets | `runq target show [name]` · `runq target check <name>` · `runq target connect <name>` |
+| Service | `runq serve -d` · `runq serve status` · `runq serve restart` |
+| Delete finished tasks | `runq clean --job <job_id> --show`, then `-y` (irreversible) |
 
-Removed in v0.6 — do not try them: `runq daemon …` (→ `runq serve …`),
-`sweep`, `run` (→ a job.yaml + `submit`; a job with only `fixed_params:` and
-no `sweep:` is one task), `best`, `collect` (→ `results`),
-`pause`/`resume`, `thaw`, `target inspect`, `target list --json`, `status`
-(→ `ps <job> --fresh`), `job ls`/`job show`/`job kill` (→ `ps` / `kill`), `init`,
-`project edit`/`target edit`.
-`runq logs` without `--no-follow`/`--grep` FOLLOWS and blocks forever — never
-run it bare from a script or tool call.
-To change a project or target, edit the YAML file (`project.yaml`,
-`~/.runq/config.yaml`), then `submit --project-file` / `runq target check <name>`;
-config changes hot-reload.
+Gone in v0.6 — don't try them: `runq daemon …` (→ `serve`), `sweep`/`run`
+(→ a job.yaml; a job with only `fixed_params:` is one task), `status`
+(→ `ps <job> --fresh`), `job ls/show/kill` (→ `ps` / `kill`), `best`/`collect`
+(→ `results`), `init`, `project edit`/`target edit` (edit the YAML),
+`pause`/`resume`, `thaw`, `target inspect`.
+`runq logs` without `--no-follow`/`--grep` follows and **blocks forever**.
 
 ## 2. Mental model
 
-- **project** (`project.yaml`, registered with `runq project add`): the catalog
-  — one codebase: `working_dir`, optional `command`, parameter constraints, defaults
-  for gpus/retry/timeout, `target` (the machine that holds the project tree).
-- **job** (`job.yaml`): one experiment — optional `command`, `target`, `preflight`, plus `fixed_params`, `note` and `sweep:` blocks. `grid`
-  blocks multiply, `list` blocks zip row-by-row. One job → N tasks.
-- **task**: one command on one target; its workspace is
-  `<working_dir>/.runq/<note>-<job_id>/<task_id>/` (log, params.json,
-  metrics.jsonl, results.jsonl, checkpoints/).
-- **target**: where tasks run, defined in `~/.runq/config.yaml` with
-  `submit_template` / `status_template` / `kill_template` for HPC.
+- **project** = one code base (`project.yaml`, registered once): `project_name`,
+  `target` (where the code lives), optional `targets` (where it may run),
+  `working_dir`, default `command`, `environment`, `defaults{gpus_per_task,timeout,max_retry}`,
+  `resume`, `preflight`, `python_env`, `wandb`, and a few param annotations.
+- **job** = one experiment (`job.yaml`): `project`, `note`, optional `command`,
+  `target`, `preflight`, `overrides{gpus_per_task,timeout,max_retry,env}`,
+  `fixed_params` (same in every task) and `sweep` (`grid` = cross product,
+  `list` = zip rows; blocks multiply).
+- **task** = one cell: own workspace `<working_dir>/.runq/<note>-<job_id>/<task_id>/`
+  with log, `params.json`, `outputs/`, `checkpoints/`, metrics, results.
+- **target** = where tasks run (`~/.runq/config.yaml`): templates, `env_setup`, `max_inflight`.
 
-### Parameters and targets
-1. Parameters go to `ctx.params` by default; `{{x}}` / `{{args}}` are optional command mappings.
-   Dry-run lists command-unconsumed parameters once; they still enter params.json.
-   Give defaults in code: `ctx.params.get("lr", 1e-3)`. params.json records supplied values only.
-2. Every explicit placeholder still needs a job value: constants in `fixed_params`,
-   swept values in `sweep`. `{{param.*}}` is scheduler/preflight syntax, not command syntax.
-   Missing placeholders cannot be repaired with `--no-preflight`.
-3. Nonempty choices are mandatory constraints. Remove old suggestions you don't want enforced.
-   `strict`, parameter `default/min/max/include/glob` are ignored; there is no form preset store.
-4. Submit uses **explicit -t > job.target > project.target**. `RUNQ_TARGET`, active target and
-   global default_target do not affect submission. Register new projects with an explicit target.
-   Changing execution target does not change the code sync source.
-5. Reuse one project for train/smoke/resume/reservation jobs. To update an existing project,
-   use `--project-file` upsert; it also writes when used with `--dry`.
-6. Job preflight fields inherit when absent; false disables, `hf: []` and `extra_run: ""` clear.
-   Project command may be omitted when job.command is provided. Legacy project `command_template`
-   loads as an alias; writing both names fails. Saved jobs include their effective snapshot.
-7. A parameter can appear in only one sweep block. Labels belong in note.
+**A smoke test, a resume, a different script, a reservation = a new job file in
+the same project — never a new project.** `project "x" already exists` means:
+use `--project-file`, don't rename.
 
-Always read the `--dry` output: it shows the expansion and the rendered command
-(HPC targets: the generated run.sh and the exact submit line). Report the arithmetic to the user before a large
-submit (`lr(3) × seed(2) = 6 tasks`).
+### Parameters
+1. Every value in `fixed_params`/`sweep` lands in `params.json`; code reads it with
+   `ctx.params.get("kl", 0.0)` — **defaults live in code**, not YAML.
+2. Put a param on the command line only if the script wants a flag: `{{x}}` or
+   `{{args}}`. A referenced `{{x}}` with no job value is an error
+   (`template references unknown parameter(s)`); `--no-preflight` won't fix it.
+3. Scheduler knobs: annotate `{ name: h_rt, scope: scheduler }` in the project and
+   use `{{param.h_rt}}` in the target's `submit_template`.
+4. Non-empty `choices` are enforced. A param may appear in only one sweep block.
+5. Target precedence: `-t` > `job.target` > `project.target`; `target use` /
+   `RUNQ_TARGET` only scope queries.
 
-SSH authentication uses the service-starting shell's `SSH_AUTH_SOCK`.
-After changing agent environment, run `runq serve restart`; do not assume another shell updates it.
-The dashboard is for state/results/logs and stop/retry/archive. Archived history is loaded on demand.
+Read the `--dry` output before every real submit: task count, target, the
+generated run.sh / submit line, params reaching code only via `ctx.params`, and
+any pending code sync. Tell the user the arithmetic (`kl(3) × seed(2) = 6`).
 
-## 3. Status: what runq knows vs. what is true
+## 3. No wrapper scripts
 
-- runq shows a **cached** snapshot refreshed by a background probe; `--fresh`
-  forces one probe. `pending` means the cluster scheduler is queueing it.
-- Legacy ELAPSED may include dispatch/queue time; use the recorded timestamps as evidence until the time-semantics update.
-- If runq and the scheduler disagree, or a probe fails, **say "unconfirmed"**
-  and show both facts. Never present a cached value as live, and never blame
-  the user's network or the cluster without evidence.
-- Cross-check with the scheduler only when needed: `ssh <host> qstat -j <ext_id>`
-  / `qacct -j <ext_id>` (SGE) — `ext_id` is in `runq task show`.
-- "Success" means the task exited 0. Whether the *experiment* succeeded is a
-  property of its output files — read the specific fields the user named
-  (`runq logs --grep`, or the result file) and quote them.
+Don't write a `.sh` around the command. Map each piece to what runq already does:
 
-## 4. Iron rules
+| Instead of this in a script | Use |
+|---|---|
+| `export HF_HOME=… OMP_NUM_THREADS=…` | project `environment:` (job `overrides.env` for one job) |
+| `source .env`, tokens in scripts | `<working_dir>/.env` — sourced at every task start, never stored |
+| `cd $PROJECT` | nothing — tasks start in `working_dir` |
+| `module load cuda/…`, cluster profile | the target's `env_setup` in `~/.runq/config.yaml` (runs before every task) |
+| `source .venv/bin/activate` | `python_env: { type: uv, path: .venv }` (or `venv`; conda: `{ type: conda, name: … }`) |
+| one-off install / model download before a sweep | `setup_command` (once per submit, on the login node) |
+| `mkdir -p $OUT $CKPT` | nothing — `ctx.output_dir` / `ctx.checkpoint_dir` exist before start |
+| `test -f … \|\| exit`, `python -c 'import x'` | `preflight: { extra_run: "test -f …", imports: true, hf: [repo] }` |
+| assembling `--lr $LR --seed $SEED` | `fixed_params` / `sweep` + `ctx.params` |
+| detecting "resume?" and adding `--resume` | `resume: { enabled: true, extra_args: --resume }` + `ctx.checkpoint_dir` |
+| rsync the code to another cluster | project `targets:` + `<working_dir>/.rsync` (mirrored on submit) |
+| `while true; qstat; sleep` | one `runq ps <job> --json` when asked |
 
-1. **Preview, then submit.** `submit --dry` is free; a real `submit` queues
-   real cluster jobs. Never "try" a command by running it for real.
-2. **No polling loops.** No `while true; runq ps`, no sleep-and-recheck inside
-   one turn, no monitor scripts. One `runq ps <job> --json` per check; the
-   human watches the dashboard (`http://127.0.0.1:8077/` by default).
-3. **Don't rebuild runq.** No hand-written sync scripts, status files,
-   schedulers or dashboards next to it. Project sync is built in (§5).
-4. **runq owns scheduling.** Never set `CUDA_VISIBLE_DEVICES`, GPU indices or
-   ports in the sweep; declare `gpus_per_task`. Inside the payload, discover
-   visible GPUs at runtime and bind port 0.
-5. **Don't edit remote state** (status.json, run.sh, the DB). To change a
-   queued task's resources, kill and resubmit.
-6. **Docs before source.** `runq <cmd> --help`, then the runq repo `docs/`
-   (`cli.md`, `configuration.md`, `hpc.md`, `sdk_reference.md`). Read runq's
-   Go source only when those don't answer it.
-7. **Secrets** live in `<working_dir>/.env` (sourced at task start, never
-   stored by runq). Never put keys in YAML, params or commands.
+Still script territory today (runq has no feature for these yet): computing a
+deadline from the walltime, multi-stage prepare→train→eval with "skip if done",
+in-task sharding (`&` + `wait`), GPU telemetry. Prefer doing them in Python
+inside the training code over a shell wrapper, and say so when you do.
 
-## 5. Code freshness and cross-target sync
+## 4. Status: what runq knows vs. what is true
 
-`submit` renders and runs against the project tree **on the target** as it is
-at that moment; `--dry` passing does not mean the remote code is current.
-- If the project declares `target` (source) and `targets: [...]`, submitting to
-  any other declared target first mirrors the files selected by
-  `<working_dir>/.rsync` from the source — no manual rsync needed.
-- Otherwise (e.g. editing locally, project lives on the cluster), sync your
-  edits to the target *before* submitting, and say so.
+- `runq ps` shows a **cached** snapshot with observation times; `--fresh` forces one
+  probe. `pending` = the cluster is queueing it (`qstat -j <ext_id>` says why).
+- Times are separate: `queue_seconds` (waiting), `scheduler_seconds` (allocation,
+  when known), `elapsed_seconds` (the script only). Missing means unknown — never
+  infer a start time from file mtimes, legacy `started_at` or W&B runtime.
+- If runq and the scheduler disagree, or a probe fails, say **"unconfirmed"** and
+  show both facts. Never present a cached value as live; never blame the network
+  or cluster without evidence. `ext_id` (scheduler job id) is in `runq task show`.
+- "success" = exit 0. Whether the *experiment* succeeded is in its outputs — read
+  the fields the user named (`runq logs --grep`, the result file) and quote them.
 
-`.rsync` uses rsync include-file semantics: `/data/` only permits traversal,
-`/src/**` takes a whole tree, `/configs/**.yaml` picks files, `!pattern`
-always excludes.
+## 5. Iron rules
 
-## 6. Recipes
+1. **Preview, then submit.** A real `submit` queues real cluster jobs; never
+   "try" a command for real.
+2. **No polling loops** — no `while true; runq ps`, no sleep-and-recheck, no
+   monitor scripts. One `runq ps <job> --json` per check; the human has the
+   dashboard (`http://127.0.0.1:8077/`).
+3. **Don't rebuild runq** — no hand-written sync, status files, schedulers,
+   dashboards, or wrapper scripts (§3).
+4. **runq owns scheduling** — never set `CUDA_VISIBLE_DEVICES`, GPU indices or
+   ports in YAML; declare `gpus_per_task`, discover GPUs at runtime, bind port 0.
+5. **Don't edit runq's state** (status.json, run.sh, the DB). To change a queued
+   task's resources: kill and resubmit (tell the user queue time is lost).
+6. **Docs before source** — `runq <cmd> --help`, then `runq skill show references/<file>`;
+   read runq's Go source only if those don't answer.
+7. **Secrets** only in `<working_dir>/.env`.
 
-- **HPC targets, templates, advance reservations (`qsub -ar`)** →
-  `references/hpc.md`
-- **SDK in training code, W&B, `runq.link`** → `references/sdk.md`
-- **Error message → what to do** → `references/troubleshooting.md`
+## 6. Code freshness
 
-Reservation in one line: copy the target in `~/.runq/config.yaml` under a new
-name, put `-ar <id>` (and the reservation's resource shape) in its
-`submit_template`, `runq target check <name>`, submit with `-t <name>`, and
-confirm `-ar` appears in the `--dry` rendered command.
+`submit` runs the project tree **as it is on the target at that moment**; a
+passing `--dry` doesn't mean remote code is current. With `targets:` + `.rsync`,
+submitting to a non-source target mirrors the selected files first. Otherwise
+sync your edits to the target before submitting, and say so. `.rsync` uses rsync
+include-file semantics: `/src/**` whole tree, `/configs/**.yaml` files,
+`/data/` traversal only, `!pattern` always excludes.
 
-## RC3 time and file facts
+## 7. W&B
 
-Use `queue_seconds`, `scheduler_seconds`, and `elapsed_seconds` (script only)
-separately. Unknown timestamps remain absent; `times` and `time_history` retain
-source, observation time and attempt. Never infer a precise script start from
-legacy DB `started_at`, file mtime or W&B cumulative runtime.
-Task detail exposes output/checkpoint/W&B roots; preview uses the same resolver.
-See `references/sdk.md` for explicit overrides, rank gating, links and offline sync.
+```python
+run = wandb.init(**ctx.wandb_like_cfg)   # project/entity/tags from the project's wandb: block
+ctx.link_wandb(run)                       # the dashboard and `task show` link to the run
+```
+
+Without `ctx.link_wandb(run)` the dashboard cannot open the run. Details (rank
+gating, offline runs, directories): `references/sdk.md`.
+
+## 8. More
+
+- HPC targets, templates, SSH, reservations (`qsub -ar`) → `references/hpc.md`
+- SDK: params, metrics, results, directories, W&B → `references/sdk.md`
+- Error message → what to do → `references/troubleshooting.md`
+
+(`runq skill show references/hpc.md` prints any of them.)
