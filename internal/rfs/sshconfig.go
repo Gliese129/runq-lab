@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// Legacy parsing helpers retained for compatibility tests. Production SSH
+// construction uses ResolveTargetSSH (OpenSSH ssh -G) at all three entrances.
+//
 // ── ~/.ssh/config alias resolution ──────────────────────────────────────────
 //
 // `ssh tsubame` works because OpenSSH expands the alias through ssh_config;

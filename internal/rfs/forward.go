@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
+	"os"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,6 +46,7 @@ type RemoteForwardConfig struct {
 	// against the remote user's home (sftp session start dir).
 	// Default: ".runq/runq.sock".
 	SocketPath string
+	Owner      string
 
 	// Serve consumes the remote listener and blocks until the listener
 	// dies (the daemon passes http.Serve with the dashboard mux). It is
@@ -84,8 +88,10 @@ const (
 // exposes and doctor renders ("↻ reconnecting · attempt 3 · last online
 // 12m ago"). All timestamps unix seconds.
 type ForwardStatus struct {
-	State string `json:"state"` // up | reconnecting | closed
-	Since int64  `json:"since"` // when the current state was entered
+	SocketPath string `json:"socket_path,omitempty"`
+	Owner      string `json:"owner,omitempty"`
+	State      string `json:"state"` // up | reconnecting | closed
+	Since      int64  `json:"since"` // when the current state was entered
 	// LastOnline is the last moment the forward was known to be serving:
 	// set on establish and refreshed when a live session drops. 0 = never
 	// online ("no contact yet" ≠ "went down" — doctor renders them apart).
@@ -111,6 +117,10 @@ type RemoteForward struct {
 
 	closeOnce sync.Once
 	done      chan struct{}
+	runMu     sync.Mutex
+	runCancel context.CancelFunc
+	runDone   chan struct{}
+	running   bool
 }
 
 // Status returns a snapshot of the forward's observable state.
@@ -128,7 +138,7 @@ func (f *RemoteForward) markUp() {
 		return
 	}
 	now := time.Now().Unix()
-	f.st = ForwardStatus{State: ForwardUp, Since: now, LastOnline: now}
+	f.st = ForwardStatus{State: ForwardUp, Since: now, LastOnline: now, SocketPath: f.cfg.SocketPath, Owner: f.cfg.Owner}
 }
 
 // markDown records a session ending. err may be nil (orderly serve exit);
@@ -170,13 +180,30 @@ func NewRemoteForward(cfg RemoteForwardConfig) *RemoteForward {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &RemoteForward{cfg: cfg, logger: logger, done: make(chan struct{})}
+	return &RemoteForward{cfg: cfg, logger: logger, done: make(chan struct{}), runDone: make(chan struct{}), st: ForwardStatus{State: ForwardReconnecting, Since: time.Now().Unix(), SocketPath: cfg.SocketPath, Owner: cfg.Owner}}
 }
 
 // Run supervises the forward until ctx is cancelled or Close is called:
 // dial → bind remote socket → Serve, then backoff and repeat. Failures are
 // logged, never fatal — the HPC lane works with or without the forward.
-func (f *RemoteForward) Run(ctx context.Context) {
+func (f *RemoteForward) Run(parent context.Context) {
+	f.runMu.Lock()
+	if f.running {
+		f.runMu.Unlock()
+		return
+	}
+	select {
+	case <-f.done:
+		f.runMu.Unlock()
+		return
+	default:
+	}
+	ctx, cancel := context.WithCancel(parent)
+	f.runCancel = cancel
+	f.running = true
+	f.runMu.Unlock()
+	defer func() { cancel(); close(f.runDone) }()
+
 	backoff := forwardBackoffMin
 	for {
 		select {
@@ -211,22 +238,12 @@ func (f *RemoteForward) Run(ctx context.Context) {
 // session runs one full forward lifetime: dial, prepare the socket dir,
 // bind, serve until the connection or listener dies.
 func (f *RemoteForward) session(ctx context.Context) error {
-	hostKeys := f.cfg.SSH.HostKeyCallback
-	if hostKeys == nil {
-		var err error
-		if hostKeys, err = policyHostKeyCallback(f.cfg.SSH.HostKeyPolicy); err != nil {
-			return err
-		}
-	}
-	client, err := ssh.Dial("tcp", f.cfg.SSH.addr(), &ssh.ClientConfig{
-		User:            f.cfg.SSH.User,
-		Auth:            f.cfg.SSH.AuthMethods,
-		HostKeyCallback: hostKeys,
-		Timeout:         10 * time.Second,
-	})
+	client, err := dialSSH(ctx, f.cfg.SSH)
 	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+		return fmt.Errorf("dial/handshake: %w", err)
 	}
+	stop := context.AfterFunc(ctx, func() { _ = client.Close() })
+	defer stop()
 	f.mu.Lock()
 	select {
 	case <-f.done: // Close raced the dial; don't leak the connection
@@ -244,23 +261,32 @@ func (f *RemoteForward) session(ctx context.Context) error {
 		_ = client.Close()
 	}()
 
-	sockPath, err := f.prepareSocket(client)
+	setup, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	sockPath, err := sshCall(setup, client, func() (string, error) { return f.prepareSocket(client) })
 	if err != nil {
 		return err
 	}
 
-	ln, err := client.ListenUnix(sockPath)
+	ln, err := sshCall(setup, client, func() (net.Listener, error) { return client.ListenUnix(sockPath) })
 	if err != nil {
 		return fmt.Errorf("remote listen %s: %w", sockPath, err)
 	}
 	defer ln.Close()
 
-	// The socket file is created by sshd under the remote umask — clamp it.
-	// Best-effort: the 0700 parent dir is the real boundary.
-	if sc, err := sftp.NewClient(client); err == nil {
-		_ = sc.Chmod(sockPath, 0o600)
-		_ = sc.Close()
+	// Permission clamping is part of readiness, not a best-effort promise.
+	_, err = sshCall(setup, client, func() (bool, error) {
+		sc, e := sftp.NewClient(client)
+		if e != nil {
+			return false, e
+		}
+		defer sc.Close()
+		return true, sc.Chmod(sockPath, 0600)
+	})
+	if err != nil {
+		return fmt.Errorf("socket permissions: %w", err)
 	}
+	cancel()
 
 	// No exec traffic proves this connection alive, so probe it ourselves.
 	// A dead transport makes SendRequest fail → close → Accept unblocks →
@@ -273,7 +299,10 @@ func (f *RemoteForward) session(ctx context.Context) error {
 		for {
 			select {
 			case <-ticker.C:
-				if _, _, err := client.SendRequest("keepalive@runq", true, nil); err != nil {
+				probe, cancel := context.WithTimeout(ctx, livenessTimeout)
+				_, err := sshCall(probe, client, func() (bool, error) { _, _, e := client.SendRequest("keepalive@runq", true, nil); return true, e })
+				cancel()
+				if err != nil {
 					_ = client.Close()
 					return
 				}
@@ -291,7 +320,7 @@ func (f *RemoteForward) session(ctx context.Context) error {
 	if f.cfg.OnEstablished != nil {
 		f.cfg.OnEstablished()
 	}
-	if err := f.cfg.Serve(ln); err != nil {
+	if err := f.cfg.Serve(deadlineListener{ln}); err != nil {
 		return fmt.Errorf("serve: %w", err)
 	}
 	return nil
@@ -325,8 +354,65 @@ func (f *RemoteForward) prepareSocket(client *ssh.Client) (string, error) {
 	if err := sc.Chmod(dir, 0o700); err != nil {
 		return "", fmt.Errorf("chmod %s: %w", dir, err)
 	}
-	if err := sc.Remove(sockPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return "", fmt.Errorf("remove stale socket %s: %w", sockPath, err)
+	if len([]byte(sockPath)) > 103 {
+		return "", fmt.Errorf("remote socket path too long (%d bytes; maximum 103): %s", len([]byte(sockPath)), sockPath)
+	}
+	ownerPath := sockPath + ".owner"
+	owner := f.cfg.Owner
+	if owner == "" {
+		return "", fmt.Errorf("socket owner identity is required")
+	}
+	if fi, err := sc.Lstat(sockPath); err == nil {
+		if fi.Mode()&os.ModeSocket == 0 {
+			return "", fmt.Errorf("refusing to replace non-socket %s", sockPath)
+		}
+		file, err := sc.Open(ownerPath)
+		if err != nil {
+			return "", fmt.Errorf("socket has no ownership proof: %w", err)
+		}
+		data, err := io.ReadAll(io.LimitReader(file, 1024))
+		_ = file.Close()
+		if err != nil || string(data) != owner+"\n" {
+			return "", fmt.Errorf("socket belongs to another session: %s", sockPath)
+		}
+		conn, err := client.Dial("unix", sockPath)
+		if err == nil {
+			_ = conn.Close()
+			return "", fmt.Errorf("socket is already serving; stop its owning controller before reconnecting: %s", sockPath)
+		}
+		// ConnectFailed alone includes permission errors. Only an explicit refusal
+		// proves a dead listener. A transport failure never authorizes unlink.
+		var openErr *ssh.OpenChannelError
+		if !errors.As(err, &openErr) {
+			return "", fmt.Errorf("cannot prove socket stale: %w", err)
+		}
+		if !strings.Contains(strings.ToLower(openErr.Message), "connection refused") {
+			// OpenSSH may deliberately hide errno behind "open failed". Query
+			// the remote kernel without unlinking; only ECONNREFUSED is proof.
+			if probeErr := proveSocketRefused(client, sockPath); probeErr != nil {
+				return "", fmt.Errorf("cannot prove socket stale: %w", probeErr)
+			}
+		}
+		if err := sc.Remove(sockPath); err != nil {
+			return "", err
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	file, err := sc.OpenFile(ownerPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	if err != nil {
+		return "", err
+	}
+	_, err = file.Write([]byte(owner + "\n"))
+	ce := file.Close()
+	if err == nil {
+		err = ce
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := sc.Chmod(ownerPath, 0600); err != nil {
+		return "", err
 	}
 	return sockPath, nil
 }
@@ -336,13 +422,57 @@ func (f *RemoteForward) prepareSocket(client *ssh.Client) (string, error) {
 func (f *RemoteForward) Close() error {
 	f.closeOnce.Do(func() {
 		close(f.done)
-		f.mu.Lock()
-		if f.client != nil {
-			_ = f.client.Close()
-			f.client = nil
+		f.runMu.Lock()
+		if f.runCancel != nil {
+			f.runCancel()
 		}
+		f.runMu.Unlock()
+		f.mu.Lock()
+		client := f.client
 		f.mu.Unlock()
+		if client != nil {
+			_ = client.Close()
+		}
 		f.markClosed()
 	})
+	f.runMu.Lock()
+	running := f.running
+	f.runMu.Unlock()
+	if running {
+		<-f.runDone
+	}
+	// No pathname cleanup here: a delayed old supervisor must never unlink
+	// the socket subsequently installed by its replacement.
 	return nil
+}
+
+// proveSocketRefused performs a read-only Unix connect on the login node.
+// Python is required only for servers that mask the SSH channel-open errno.
+func proveSocketRefused(client *ssh.Client, socketPath string) error {
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	script := `# RUNQ_SOCKET_PROBE
+import errno, socket, sys
+s=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(2)
+try:
+    s.connect(sys.argv[1])
+except OSError as e:
+    sys.exit(3 if e.errno == errno.ECONNREFUSED else 2)
+else:
+    s.close()
+    sys.exit(0)
+`
+	err = session.Run(buildCmdLine("python3", []string{"-c", script, socketPath}))
+	var exit *ssh.ExitError
+	if errors.As(err, &exit) && exit.ExitStatus() == 3 {
+		return nil
+	}
+	if err == nil {
+		return fmt.Errorf("socket is still serving: %s", socketPath)
+	}
+	return fmt.Errorf("remote socket errno probe failed (python3 required): %w", err)
 }

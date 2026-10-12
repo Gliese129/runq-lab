@@ -3,11 +3,17 @@ package cli
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"runtime"
 	"strings"
 	"time"
@@ -40,6 +46,10 @@ func init() {
 	// top-level `runq connect` is a thin alias — the first command a new
 	// user runs deserves a short spelling.
 	rootCmd.AddCommand(connectAliasCmd)
+	for _, cmd := range []*cobra.Command{connectCmd, connectAliasCmd} {
+		cmd.Flags().String("remote-binary", "", "Matching remote-platform binary for unpublished/development versions")
+		cmd.Flags().Duration("timeout", 2*time.Minute, "Total timeout per target, including forward readiness")
+	}
 }
 
 var connectAliasCmd = &cobra.Command{
@@ -115,29 +125,23 @@ func connectOne(cmd *cobra.Command, cfg *config.GlobalConfig, name string) error
 		return fmt.Errorf("target %q has no ssh section (local target) — nothing to connect to", name)
 	}
 
-	// ── connection test with the stored SSH config; TOFU prompt only when
-	// the host key is genuinely unknown ──
-	// `host:` may be an ~/.ssh/config alias — resolve it the way OpenSSH
-	// would (explicit target fields win) and SHOW the expansion, so the
-	// user sees the same thing `ssh -G` would tell them.
-	sshHost, sshPort, sshUser, sshKey := rfs.ResolveSSHConfigDefaults(
-		tc.SSH.Host, tc.SSH.Port, tc.SSH.User, tc.SSH.Key)
-	host := sshHost
-	if sshPort > 0 {
-		host = fmt.Sprintf("%s:%d", sshHost, sshPort)
+	timeout, _ := cmd.Flags().GetDuration("timeout")
+	if timeout <= 0 {
+		return fmt.Errorf("timeout must be positive")
 	}
-	if sshHost != tc.SSH.Host {
-		fmt.Printf("Connecting to %s (%s via ~/.ssh/config) ...\n", host, tc.SSH.Host)
-	} else {
-		fmt.Printf("Connecting to %s ...\n", host)
+	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+	defer cancel()
+	sshCfg, err := rfs.ResolveTargetSSH(tc.SSH.Host, tc.SSH.Port, tc.SSH.User, tc.SSH.Key, tc.SSH.ProxyJump)
+	if err != nil {
+		return fmt.Errorf("SSH configuration: %w", err)
 	}
+	fmt.Printf("Connecting to %s ...\n", sshCfg.Host)
 	// RQ-74: `StrictHostKeyChecking accept-new` in ~/.ssh/config skips the
 	// TOFU prompt — the user already told ssh to trust new hosts silently,
 	// and runq follows their config instead of adding ceremony. One line
 	// says so (self-report: silence is fine, invisibility is not).
 	var hostKeys ssh.HostKeyCallback
-	var err error
-	if rfs.ResolveHostKeyPolicy(tc.SSH.Host) == rfs.HostKeyAcceptNew {
+	if sshCfg.HostKeyPolicy == rfs.HostKeyAcceptNew {
 		fmt.Println("host key: new hosts auto-trusted (StrictHostKeyChecking accept-new in ~/.ssh/config)")
 		hostKeys, err = rfs.AcceptNewHostKeyCallback()
 	} else {
@@ -151,28 +155,27 @@ func connectOne(cmd *cobra.Command, cfg *config.GlobalConfig, name string) error
 	if err != nil {
 		return err
 	}
-	auth, err := rfs.ResolveAuthMethods(sshKey)
-	if err != nil {
-		return err
-	}
-	fsys := rfs.NewSSHFS(rfs.SSHConfig{
-		Host:            host,
-		User:            sshUser,
-		AuthMethods:     auth,
-		HostKeyCallback: hostKeys,
-		IdleTimeout:     time.Minute,
-	})
+	sshCfg.HostKeyCallback = hostKeys
+	sshCfg.IdleTimeout = time.Minute
+	sshCfg.OperationTimeout = 30 * time.Second
+	fsys := rfs.NewSSHFS(sshCfg).WithContext(ctx)
 	defer fsys.Close()
-
-	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
-	defer cancel()
+	// A running controller is required before provisioning its scoped env.
+	controller, err := localController(ctx)
+	if err != nil {
+		return fmt.Errorf("controller readiness: %w; start/restart the local service with the current binary", err)
+	}
 	if _, _, _, err := fsys.Exec(ctx, "true"); err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
-	fmt.Println("✓ connected")
+	fmt.Println("✓ SSH verified")
 
 	// ── provision the remote CLI and enable the forward ──
-	setupRemoteCLI(cmd.Context(), fsys, name)
+	binary, _ := cmd.Flags().GetString("remote-binary")
+	socket, err := setupRemoteCLI(ctx, fsys, name, controller, binary)
+	if err != nil {
+		return fmt.Errorf("remote CLI setup: %w", err)
+	}
 	if !tc.RemoteCLI {
 		tc.RemoteCLI = true
 		if err := config.SaveGlobal(cfg); err != nil {
@@ -180,7 +183,14 @@ func connectOne(cmd *cobra.Command, cfg *config.GlobalConfig, name string) error
 		}
 		fmt.Printf("✓ remote_cli enabled for %q\n", name)
 	}
-	notifyDaemonForward(cmd.Context(), name)
+	if err := notifyDaemonForward(ctx, name); err != nil {
+		return fmt.Errorf("start forward: %w", err)
+	}
+	fmt.Println("socket forward starting; verifying the remote round trip ...")
+	if err := waitForwardReady(ctx, fsys, socket, controller, name); err != nil {
+		return fmt.Errorf("forward readiness: %w; inspect `runq doctor` and daemon logs", err)
+	}
+	fmt.Println("✓ ready (controller and target verified through the remote socket)")
 	return nil
 }
 
@@ -190,120 +200,216 @@ func connectOne(cmd *cobra.Command, cfg *config.GlobalConfig, name string) error
 // the forward comes up with it; lane missing (target added after daemon
 // start) → restart is genuinely required; old daemon without the endpoint
 // → restart covers it too.
-func notifyDaemonForward(ctx context.Context, name string) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	client := api.NewClient(getSocketPath())
-	resp, err := client.Do(ctx, http.MethodPost, "/api/v1/targets/"+url.PathEscape(name)+"/connect", nil)
+func localController(ctx context.Context) (string, error) {
+	resp, err := api.NewClient(getSocketPath()).Do(ctx, http.MethodGet, "/api/v1/health", nil)
 	if err != nil {
-		fmt.Println("runq service not running — the socket forward will come up when it starts (`runq serve -d`).")
-		return
+		return "", err
 	}
 	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusOK:
-		fmt.Println("✓ socket forward starting (daemon notified — no restart needed)")
-	case http.StatusConflict, http.StatusNotImplemented, http.StatusNotFound:
-		// 409: lane missing. 501/404: older daemon build without the
-		// endpoint. Either way a restart is what actually helps.
-		fmt.Println("Next: restart the service (`runq serve restart`) to pick up this target and its socket forward.")
-	default:
-		var e struct {
-			Error string `json:"error"`
+	var body struct {
+		ControllerID string `json:"controller_id"`
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("health returned %d", resp.StatusCode)
+	}
+	if err = json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	if len(body.ControllerID) != 12 {
+		return "", fmt.Errorf("daemon has no controller identity; upgrade/restart required")
+	}
+	return body.ControllerID, nil
+}
+func notifyDaemonForward(ctx context.Context, name string) error {
+	resp, err := api.NewClient(getSocketPath()).Do(ctx, http.MethodPost, "/api/v1/targets/"+url.PathEscape(name)+"/connect", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("daemon returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return nil
+}
+func waitForwardReady(ctx context.Context, fsys *rfs.SSHFS, socket, controller, target string) error {
+	var last error
+	for {
+		attempt, cancel := context.WithTimeout(ctx, 5*time.Second)
+		transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return fsys.DialUnix(ctx, socket) }, DisableKeepAlives: true}
+		client := &http.Client{Transport: transport}
+		req, _ := http.NewRequestWithContext(attempt, http.MethodGet, "http://remote/api/v1/health", nil)
+		resp, err := client.Do(req)
+		if err == nil {
+			var body struct {
+				ControllerID string `json:"controller_id"`
+				Target       string `json:"forward_target"`
+				Version      string `json:"version"`
+			}
+			err = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body)
+			_ = resp.Body.Close()
+			if err == nil && resp.StatusCode == 200 && body.ControllerID == controller && body.Target == target && body.Version == version.Version {
+				cancel()
+				transport.CloseIdleConnections()
+				return nil
+			}
+			if err == nil {
+				err = fmt.Errorf("remote identity/version mismatch (expected controller %s target %s version %s)", controller, target, version.Version)
+			}
 		}
-		_ = json.NewDecoder(resp.Body).Decode(&e)
-		fmt.Printf("! daemon could not start the forward: %s\n", e.Error)
+		last = err
+		// Keep the supervisor's phase/error, not just a masked channel-open
+		// failure, so a readiness deadline points to the actual remedy.
+		if response, e := api.NewClient(getSocketPath()).Do(attempt, http.MethodGet, "/api/v1/health", nil); e == nil {
+			var body struct {
+				Forwards map[string]rfs.ForwardStatus `json:"forwards"`
+			}
+			_ = json.NewDecoder(io.LimitReader(response.Body, 65536)).Decode(&body)
+			_ = response.Body.Close()
+			if status, ok := body.Forwards[target]; ok && status.LastError != "" {
+				last = fmt.Errorf("%s: %s", status.State, status.LastError)
+			}
+		}
+		cancel()
+		transport.CloseIdleConnections()
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%w: last round trip: %v", ctx.Err(), last)
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
 }
-
-// setupRemoteCLI provisions the login node for remote CLI use: a matching
-// runq binary in ~/.runq/bin and an env file wiring PATH, the forwarded
-// socket, and the default target. The socket itself appears when the
-// daemon (re)starts and establishes the forward.
-func setupRemoteCLI(ctx context.Context, fsys *rfs.SSHFS, targetName string) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-
+func setupRemoteCLI(ctx context.Context, fsys *rfs.SSHFS, targetName, controller, binary string) (string, error) {
 	home, err := fsys.Home()
 	if err != nil {
-		fmt.Printf("! remote CLI setup skipped (cannot resolve remote home): %v\n", err)
-		return
+		return "", err
 	}
-	runqDir := home + "/.runq"
-	binPath := runqDir + "/bin/runq"
-	// 0700 on ~/.runq is the access boundary: the forwarded socket inside
-	// it controls this machine's daemon, and login nodes are multi-user.
-	if err := fsys.MkdirAll(runqDir+"/bin", 0o700); err != nil {
-		fmt.Printf("! remote CLI setup failed (mkdir): %v\n", err)
-		return
+	dir := path.Join(home, utils.RemoteSessionDir(controller, targetName))
+	socket := path.Join(home, utils.RemoteSocketPath(controller, targetName))
+	if len([]byte(socket)) > 103 {
+		return "", fmt.Errorf("remote socket path is too long (%d bytes; maximum 103)", len([]byte(socket)))
 	}
-
-	// Install the binary only when the remote one is missing or a
-	// different build. `runq version` prints exactly the version — that
-	// output is the contract this comparison rests on.
-	stdout, _, _, err := fsys.Exec(ctx, "sh", "-c",
-		fmt.Sprintf("%s version 2>/dev/null; true", utils.ShellQuote(binPath)))
-	remoteVersion := strings.TrimSpace(string(stdout))
-	switch {
-	case err == nil && remoteVersion != "" && remoteVersion == version.Version && remoteVersion != "dev":
-		fmt.Printf("✓ remote runq %s already installed\n", remoteVersion)
-	default:
-		if installRemoteBinary(ctx, fsys, binPath) {
-			fmt.Printf("✓ runq installed to %s\n", binPath)
+	binPath := path.Join(home, ".runq/bin/runq")
+	if err := fsys.MkdirAll(path.Dir(binPath), 0700); err != nil {
+		return "", err
+	}
+	if err := fsys.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	stdout, _, exit, err := fsys.Exec(ctx, utils.ShellQuote(binPath)+" version")
+	if binary != "" || err != nil || exit != 0 || strings.TrimSpace(string(stdout)) != version.Version || version.Version == "dev" {
+		if err := installRemoteBinary(ctx, fsys, binPath, binary); err != nil {
+			return "", err
 		}
 	}
-
-	// Env file: sourced from the user's shell rc. RUNQ_SOCKET points the
-	// remote CLI at the forwarded socket; RUNQ_TARGET scopes it to this
-	// target so path semantics line up (paths resolve on this very host).
-	env := fmt.Sprintf(`# Managed by 'runq connect' — add to your shell rc:
-#   echo 'source ~/.runq/env' >> ~/.bashrc
-export PATH="$HOME/.runq/bin:$PATH"
-export RUNQ_SOCKET="$HOME/.runq/runq.sock"
-export RUNQ_TARGET=%s
-`, utils.ShellQuote(targetName))
-	if err := fsys.WriteFile(runqDir+"/env", []byte(env), 0o644); err != nil {
-		fmt.Printf("! writing %s/env failed: %v\n", runqDir, err)
-		return
+	env := fmt.Sprintf("# Managed by runq connect; controller %s, target %s\nexport PATH=%s:\"$PATH\"\nexport RUNQ_SOCKET=%s\nexport RUNQ_TARGET=%s\n", controller, strings.ReplaceAll(targetName, "\n", " "), utils.ShellQuote(path.Dir(binPath)), utils.ShellQuote(socket), utils.ShellQuote(targetName))
+	if err := fsys.WriteFile(path.Join(dir, "env"), []byte(env), 0600); err != nil {
+		return "", err
 	}
-	fmt.Printf("✓ remote env written — on the cluster, run: echo 'source ~/.runq/env' >> ~/.bashrc\n")
+	fmt.Printf("✓ remote env: source %s\n", utils.ShellQuote(path.Join(dir, "env")))
+	return socket, nil
 }
-
-// installRemoteBinary uploads THIS executable when the remote platform
-// matches, atomically (tmp + rename — overwriting a running binary in
-// place would hit ETXTBSY). Cross-platform installs (mac workstation →
-// linux cluster) can't ship self; print instructions instead of guessing.
-func installRemoteBinary(ctx context.Context, fsys *rfs.SSHFS, binPath string) bool {
-	stdout, _, _, err := fsys.Exec(ctx, "uname", "-sm")
+func installRemoteBinary(ctx context.Context, fsys *rfs.SSHFS, binPath, binary string) error {
+	stdout, _, exit, err := fsys.Exec(ctx, "uname", "-sm")
 	if err != nil {
-		fmt.Printf("! remote platform probe failed: %v\n", err)
-		return false
+		return err
 	}
-	if !unameMatchesSelf(string(stdout)) {
-		fmt.Printf("! this machine is %s/%s but the remote is %q — install a matching runq build to %s manually (or via your lab's module system)\n",
-			runtime.GOOS, runtime.GOARCH, strings.TrimSpace(string(stdout)), binPath)
-		return false
+	if exit != 0 {
+		return fmt.Errorf("remote platform probe exited %d", exit)
 	}
-	self, err := os.Executable()
+	fields := strings.Fields(string(stdout))
+	if len(fields) != 2 {
+		return fmt.Errorf("unsupported platform %q", stdout)
+	}
+	goos := strings.ToLower(fields[0])
+	arch := strings.ToLower(fields[1])
+	switch arch {
+	case "x86_64":
+		arch = "amd64"
+	case "aarch64":
+		arch = "arm64"
+	}
+	var data []byte
+	if binary != "" {
+		data, err = os.ReadFile(binary)
+	} else if unameMatchesSelf(string(stdout)) {
+		var self string
+		self, err = os.Executable()
+		if err == nil {
+			data, err = os.ReadFile(self)
+		}
+	} else {
+		if version.Version == "dev" || strings.Contains(version.Version, "+") {
+			return fmt.Errorf("unpublished version %s: supply --remote-binary with a matching %s/%s build", version.Version, goos, arch)
+		}
+		asset := "runq-" + goos + "-" + arch
+		base := "https://github.com/gliese129/runq-lab/releases/download/" + url.PathEscape(version.Version) + "/"
+		var checksum []byte
+		data, err = downloadRelease(ctx, base+asset, 128<<20)
+		if err == nil {
+			checksum, err = downloadRelease(ctx, base+asset+".sha256", 4096)
+		}
+		if err == nil {
+			sum := sha256.Sum256(data)
+			parts := strings.Fields(string(checksum))
+			if len(parts) < 2 || parts[1] != asset || !strings.EqualFold(parts[0], hex.EncodeToString(sum[:])) {
+				err = fmt.Errorf("release checksum mismatch for %s", asset)
+			}
+		}
+	}
 	if err != nil {
-		fmt.Printf("! cannot locate the local runq binary: %v\n", err)
-		return false
+		return err
 	}
-	data, err := os.ReadFile(self)
+	if len(data) == 0 {
+		return fmt.Errorf("empty remote binary")
+	}
+	var nonce [8]byte
+	if _, err = rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	tmp := binPath + ".tmp-" + hex.EncodeToString(nonce[:])
+	fmt.Printf("Uploading matching remote CLI (%.1f MiB) ...\n", float64(len(data))/(1<<20))
+	if err := fsys.WriteFileContext(ctx, tmp, data, 0755); err != nil {
+		return fmt.Errorf("upload temporary executable: %w", err)
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = fsys.WithContext(cleanup).Remove(tmp)
+	}()
+	// Executing only the temporary file validates platform and exact version;
+	// the current executable stays intact on every failure.
+	out, se, exit, err := fsys.Exec(ctx, utils.ShellQuote(tmp)+" version")
 	if err != nil {
-		fmt.Printf("! reading local runq binary failed: %v\n", err)
-		return false
+		return fmt.Errorf("verify temporary executable: %w", err)
 	}
-	tmp := binPath + ".tmp"
-	if err := fsys.WriteFile(tmp, data, 0o755); err != nil {
-		fmt.Printf("! uploading runq failed: %v\n", err)
-		return false
+	if exit != 0 || strings.TrimSpace(string(out)) != version.Version {
+		return fmt.Errorf("remote binary must run on %s/%s and report %s (exit %d): %s", goos, arch, version.Version, exit, strings.TrimSpace(string(se)))
 	}
 	if err := fsys.Rename(tmp, binPath); err != nil {
-		fmt.Printf("! installing runq failed: %v\n", err)
-		return false
+		return fmt.Errorf("atomic remote install: %w", err)
 	}
-	return true
+	fmt.Printf("✓ remote runq %s installed\n", version.Version)
+	return nil
+}
+func downloadRelease(ctx context.Context, url string, limit int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("release download returned %d; supply --remote-binary for unpublished versions", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("release asset exceeds size limit")
+	}
+	return data, err
 }
 
 // unameMatchesSelf reports whether `uname -sm` output describes the same

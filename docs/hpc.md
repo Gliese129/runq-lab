@@ -22,8 +22,47 @@ runq connect tsubame
 - `target check` renders every template with sample values and validates
   placeholders and the id regex. It is free and local — run it after every
   template edit.
-- `connect` verifies the host key with you, installs the remote CLI, and
-  starts the socket forward. `runq target disconnect` undoes it.
+- `connect` verifies SSH, installs the matching remote CLI, and waits for a
+  health round trip through the remote socket. Success verifies the controller,
+  target, and version. A stopped daemon or failed install/forward returns nonzero.
+  `runq target disconnect` stops that target's forward.
+
+Start the local service with `runq serve -d` before connecting. Each controller
+and target gets its own private socket and env file under
+`~/.runq/f/<controller-id>/<target-hash>/`. Source the exact env path printed by
+`connect` in the shell that will operate that target. The CLI executable in
+`~/.runq/bin/runq` is shared; env files and sockets are isolated. Existing
+`~/.runq/env` shell entries must be replaced with the target-specific path.
+
+For a development version on a different platform, build and supply the
+matching remote executable explicitly:
+
+```bash
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+  -ldflags "-X github.com/gliese129/runq-lab/internal/version.Version=$VERSION" \
+  -o /tmp/runq-linux-amd64 ./cmd/runq
+runq connect tsubame --remote-binary /tmp/runq-linux-amd64 --timeout 2m
+```
+
+`VERSION` must match the local `runq version`. Published versions can download
+an official platform asset with its SHA-256 checksum. Installs use a unique
+remote temporary file, verify it runs and reports the correct version, then
+atomically rename it; failed installs preserve the previous executable.
+
+Connect, execution lanes, and forwards all use `ssh -G` to evaluate aliases,
+Include, Match, user, port, identity files, and IdentityAgent. ProxyJump,
+ProxyCommand, and HostKeyAlias are explicitly unsupported; configure a directly
+reachable endpoint or tunnel. The service retains its selected agent socket
+path and reconnects to the agent for authentication. After changing that path,
+restart the service; a successful SSH test in another shell does not update
+its environment. If OpenSSH hides a stale socket's errno as `open failed`,
+the ownership check uses a read-only `python3` Unix socket probe on the login
+node; it only permits cleanup after `ECONNREFUSED`.
+
+Background completion, metrics, heartbeat, and scheduler alignment continue
+while the lane owns unfinished tasks, independently of browser activity. An
+idle lane makes no automatic observation requests. Manual refreshes enter the
+same sensor loop and respect its scheduler query floor.
 
 Set project.target to the code source and default execution target.
 Submit uses `-t > job.target > project.target`. `runq target use` and `RUNQ_TARGET`

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -36,6 +38,7 @@ var ErrExecInterrupted = errors.New("remote command interrupted: outcome unknown
 // (Open, ExecStream) the bracket extends until the handle is closed.
 type SSHFS struct {
 	conn *sshConn
+	ctx  context.Context
 }
 
 // NewSSHFS creates an SSHFS. The connection is lazy — no dial happens here.
@@ -48,161 +51,152 @@ func (s *SSHFS) Close() error {
 	return s.conn.Close()
 }
 
-// ── Read ────────────────────────────────────────────────────────────────────
-
-// Stat returns file info via sftp.
-//
-// All read/write methods below use the named-error + endOpErr pattern: the
-// connection's proof-of-life clock only advances on outcomes that show the
-// transport worked (incl. remote not-exist/permission verdicts), so a dead
-// connection accumulates quiet time and gets probed/redialed by getConn.
-func (s *SSHFS) Stat(path string) (fi fs.FileInfo, err error) {
+// WithContext scopes file operations without changing the shared connection.
+func (s *SSHFS) WithContext(ctx context.Context) *SSHFS { return &SSHFS{conn: s.conn, ctx: ctx} }
+func (s *SSHFS) operationContext() (context.Context, context.CancelFunc) {
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(ctx, s.conn.timeout())
+}
+func sftpOp[T any](s *SSHFS, fn func(*sftp.Client) (T, error)) (T, error) {
+	ctx, cancel := s.operationContext()
+	defer cancel()
+	return sftpOpContext(s, ctx, fn)
+}
+func sftpOpContext[T any](s *SSHFS, ctx context.Context, fn func(*sftp.Client) (T, error)) (value T, err error) {
 	s.conn.beginOp()
 	defer func() { s.conn.endOpErr(err) }()
-	sc, err := s.conn.getSFTP()
+	client, sc, err := s.conn.getSFTPContext(ctx)
 	if err != nil {
-		return nil, err
+		return value, err
 	}
-	return sc.Stat(path)
+	value, err = sshCall(ctx, client, func() (T, error) { return fn(sc) })
+	if ctx.Err() != nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		s.conn.invalidate(client)
+	}
+	return value, err
+}
+func (s *SSHFS) Stat(path string) (fs.FileInfo, error) {
+	return sftpOp(s, func(sc *sftp.Client) (fs.FileInfo, error) { return sc.Stat(path) })
 }
 
-// Rename is the atomic-replace extension the tmp-then-rename writers rely
-// on. Plain SSH_FXP_RENAME REFUSES to overwrite an existing target on
-// openssh — so try posix-rename@openssh.com first (true atomic overwrite,
-// openssh always offers it); only if the server lacks the extension fall
-// back to delete-then-rename, which trades a tiny non-atomic window for
-// working at all.
-func (s *SSHFS) Rename(oldPath, newPath string) (err error) {
-	s.conn.beginOp()
-	defer func() { s.conn.endOpErr(err) }()
-	sc, err := s.conn.getSFTP()
-	if err != nil {
-		return err
-	}
-	if err := sc.PosixRename(oldPath, newPath); err == nil {
-		return nil
-	}
-	if err := sc.Rename(oldPath, newPath); err == nil {
-		return nil
-	}
-	_ = sc.Remove(newPath)
-	return sc.Rename(oldPath, newPath)
+// Only atomic replacement or a server's normal rename is permitted. A failed
+// replacement must never delete the existing executable/configuration.
+func (s *SSHFS) Rename(oldPath, newPath string) error {
+	_, err := sftpOp(s, func(sc *sftp.Client) (bool, error) {
+		if _, ok := sc.HasExtension("posix-rename@openssh.com"); ok {
+			return true, sc.PosixRename(oldPath, newPath)
+		}
+		return true, sc.Rename(oldPath, newPath)
+	})
+	return err
 }
-
-// Home returns the remote user's home directory (sftp Getwd — the
-// protocol's session start dir is the user home). Optional interface: the
-// fs browser uses it as the default start point.
-func (s *SSHFS) Home() (dir string, err error) {
-	s.conn.beginOp()
-	defer func() { s.conn.endOpErr(err) }()
-	sc, err := s.conn.getSFTP()
-	if err != nil {
-		return "", err
-	}
-	return sc.Getwd()
+func (s *SSHFS) Home() (string, error) {
+	return sftpOp(s, func(sc *sftp.Client) (string, error) { return sc.Getwd() })
 }
-
-// ReadFile reads a whole remote file via sftp.
-func (s *SSHFS) ReadFile(path string) (data []byte, err error) {
-	s.conn.beginOp()
-	defer func() { s.conn.endOpErr(err) }()
-	sc, err := s.conn.getSFTP()
-	if err != nil {
-		return nil, err
-	}
-	f, err := sc.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return io.ReadAll(f)
+func (s *SSHFS) ReadFile(path string) ([]byte, error) {
+	return sftpOp(s, func(sc *sftp.Client) ([]byte, error) {
+		f, err := sc.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		return io.ReadAll(f)
+	})
 }
-
-// Open returns a seekable remote file handle. The connection counts as busy
-// until the returned File is closed — long incremental reads are never cut
-// by the idle watcher.
 func (s *SSHFS) Open(path string) (File, error) {
 	s.conn.beginOp()
-	sc, err := s.conn.getSFTP()
+	ctx, cancel := s.operationContext()
+	defer cancel()
+	client, sc, err := s.conn.getSFTPContext(ctx)
 	if err != nil {
 		s.conn.endOpErr(err)
 		return nil, err
 	}
-	f, err := sc.Open(path)
+	f, err := sshCall(ctx, client, func() (*sftp.File, error) { return sc.Open(path) })
 	if err != nil {
+		if ctx.Err() != nil {
+			s.conn.invalidate(client)
+		}
 		s.conn.endOpErr(err)
 		return nil, err
 	}
-	return &sshFile{f: f, release: s.conn.endOp}, nil
+	return &sshFile{f: f, s: s, client: client, release: s.conn.endOp}, nil
+}
+func (s *SSHFS) ReadDir(path string) ([]fs.DirEntry, error) {
+	return sftpOp(s, func(sc *sftp.Client) ([]fs.DirEntry, error) {
+		fis, err := sc.ReadDir(path)
+		if err != nil {
+			return nil, err
+		}
+		entries := make([]fs.DirEntry, 0, len(fis))
+		for _, fi := range fis {
+			entries = append(entries, fs.FileInfoToDirEntry(fi))
+		}
+		return entries, nil
+	})
+}
+func (s *SSHFS) WriteFile(path string, data []byte, perm os.FileMode) error {
+	ctx, cancel := s.operationContext()
+	defer cancel()
+	return s.WriteFileContext(ctx, path, data, perm)
 }
 
-// ReadDir lists a remote directory via sftp.
-func (s *SSHFS) ReadDir(path string) (entries []fs.DirEntry, err error) {
-	s.conn.beginOp()
-	defer func() { s.conn.endOpErr(err) }()
-	sc, err := s.conn.getSFTP()
+// WriteFileContext uses an explicit transfer budget. Connection setup remains
+// independently bounded; a large binary is not limited by a small-file timeout.
+func (s *SSHFS) WriteFileContext(parent context.Context, path string, data []byte, perm os.FileMode) error {
+	ctx := parent
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.conn.timeout())
+		defer cancel()
+	}
+	_, err := sftpOpContext(s, ctx, func(sc *sftp.Client) (bool, error) {
+		f, err := sc.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+		if err != nil {
+			return false, err
+		}
+		if _, err = f.ReadFrom(bytes.NewReader(data)); err != nil {
+			_ = f.Close()
+			return false, err
+		}
+		if err = f.Close(); err != nil {
+			return false, err
+		}
+		return true, sc.Chmod(path, perm)
+	})
+	return err
+}
+func (s *SSHFS) MkdirAll(path string, perm os.FileMode) error {
+	_, err := sftpOp(s, func(sc *sftp.Client) (bool, error) {
+		if err := sc.MkdirAll(path); err != nil {
+			return false, err
+		}
+		return true, sc.Chmod(path, perm)
+	})
+	return err
+}
+func (s *SSHFS) Remove(path string) error {
+	_, err := sftpOp(s, func(sc *sftp.Client) (bool, error) { return true, sc.Remove(path) })
+	return err
+}
+
+// DialUnix opens a remote socket through SSH. Used to prove that a reverse
+// forward actually reaches the expected controller/target before connect succeeds.
+func (s *SSHFS) DialUnix(ctx context.Context, path string) (net.Conn, error) {
+	client, err := s.conn.getConnContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	fis, err := sc.ReadDir(path)
-	if err != nil {
-		return nil, err
+	setup, cancel := context.WithTimeout(ctx, s.conn.timeout())
+	defer cancel()
+	conn, err := sshCall(setup, client, func() (net.Conn, error) { return client.Dial("unix", path) })
+	if setup.Err() != nil {
+		s.conn.invalidate(client)
 	}
-	entries = make([]fs.DirEntry, 0, len(fis))
-	for _, fi := range fis {
-		entries = append(entries, fs.FileInfoToDirEntry(fi))
-	}
-	return entries, nil
-}
-
-// ── Write ───────────────────────────────────────────────────────────────────
-
-// WriteFile writes data to a remote file (create/truncate), then chmods it.
-// sftp has no atomic write; temp+rename is a future TODO.
-func (s *SSHFS) WriteFile(path string, data []byte, perm os.FileMode) (err error) {
-	s.conn.beginOp()
-	defer func() { s.conn.endOpErr(err) }()
-	sc, err := s.conn.getSFTP()
-	if err != nil {
-		return err
-	}
-	f, err := sc.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close() // don't leak the SFTP handle on a failed write
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	_ = sc.Chmod(path, perm)
-	return nil
-}
-
-// MkdirAll creates a remote directory tree.
-// sftp.MkdirAll ignores perm (uses remote umask). Chmod walk if needed later.
-func (s *SSHFS) MkdirAll(path string, perm os.FileMode) (err error) {
-	s.conn.beginOp()
-	defer func() { s.conn.endOpErr(err) }()
-	sc, err := s.conn.getSFTP()
-	if err != nil {
-		return err
-	}
-	return sc.MkdirAll(path)
-}
-
-// Remove is an optional FS extension used by project sync. It intentionally
-// removes one file at a time; project sync never gets a recursive delete.
-func (s *SSHFS) Remove(path string) (err error) {
-	s.conn.beginOp()
-	defer func() { s.conn.endOpErr(err) }()
-	sc, err := s.conn.getSFTP()
-	if err != nil {
-		return err
-	}
-	return sc.Remove(path)
+	return conn, err
 }
 
 // ── Command ─────────────────────────────────────────────────────────────────
@@ -210,13 +204,19 @@ func (s *SSHFS) Remove(path string) (err error) {
 // Exec runs a remote command via an SSH session and returns stdout, stderr,
 // and the exit code. A non-zero exit is NOT a Go error; transport failures
 // are. ctx cancellation closes the session (the remote command gets EOF/HUP).
-func (s *SSHFS) Exec(ctx context.Context, cmd string, args ...string) (stdout, stderr []byte, exitCode int, err error) {
+func (s *SSHFS) Exec(parent context.Context, cmd string, args ...string) (stdout, stderr []byte, exitCode int, err error) {
+	ctx := parent
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.conn.timeout())
+		defer cancel()
+	}
 	s.conn.beginOp()
 	// err carries transport failures only (non-zero exits return err == nil),
 	// which is exactly the classification endOpErr wants.
 	defer func() { s.conn.endOpErr(err) }()
 
-	sess, release, err := s.conn.newSession(ctx)
+	sess, client, release, err := s.conn.newSession(ctx)
 	if err != nil {
 		return nil, nil, -1, err
 	}
@@ -235,20 +235,21 @@ func (s *SSHFS) Exec(ctx context.Context, cmd string, args ...string) (stdout, s
 	go func() {
 		select {
 		case <-ctx.Done():
-			_ = sess.Close()
+			s.conn.invalidate(client)
 		case <-finished:
 		}
 	}()
 
-	// Start and Wait are split ON PURPOSE (RQ-74): a Start failure means the
-	// command never began on the remote side — a plain transport error, safe
-	// to retry. A Wait failure that is not an ExitError means the command DID
+	// Losing Start acknowledgement can also hide an accepted command. A Wait failure that is not an ExitError means the command DID
 	// start but its verdict was lost (connection dropped mid-flight, session
 	// closed by ctx): callers that submit work must NOT retry on that — the
 	// remote side effect may exist. ErrExecInterrupted marks this class.
-	if serr := sess.Start(buildCmdLine(cmd, args)); serr != nil {
+	setup, stop := context.WithTimeout(ctx, s.conn.timeout())
+	_, serr := sshCall(setup, client, func() (bool, error) { return true, sess.Start(buildCmdLine(cmd, args)) })
+	stop()
+	if serr != nil {
 		close(finished)
-		return sob.Bytes(), seb.Bytes(), -1, serr
+		return sob.Bytes(), seb.Bytes(), -1, fmt.Errorf("%w: start acknowledgement lost: %v", ErrExecInterrupted, serr)
 	}
 	waitErr := sess.Wait()
 	close(finished)
@@ -270,7 +271,7 @@ func (s *SSHFS) Exec(ctx context.Context, cmd string, args ...string) (stdout, s
 func (s *SSHFS) ExecStream(ctx context.Context, cmd string, args ...string) (io.ReadCloser, error) {
 	s.conn.beginOp()
 
-	sess, release, err := s.conn.newSession(ctx)
+	sess, client, release, err := s.conn.newSession(ctx)
 	if err != nil {
 		s.conn.endOpErr(err)
 		return nil, err
@@ -280,7 +281,10 @@ func (s *SSHFS) ExecStream(ctx context.Context, cmd string, args ...string) (io.
 	sess.Stdout = pw
 	sess.Stderr = pw
 
-	if err := sess.Start(buildCmdLine(cmd, args)); err != nil {
+	setup, stop := context.WithTimeout(ctx, s.conn.timeout())
+	_, startErr := sshCall(setup, client, func() (bool, error) { return true, sess.Start(buildCmdLine(cmd, args)) })
+	stop()
+	if err := startErr; err != nil {
 		pr.Close()
 		pw.Close()
 		sess.Close()
@@ -294,7 +298,7 @@ func (s *SSHFS) ExecStream(ctx context.Context, cmd string, args ...string) (io.
 	go func() {
 		select {
 		case <-ctx.Done():
-			_ = sess.Close()
+			s.conn.invalidate(client)
 		case <-finished:
 		}
 	}()
@@ -305,37 +309,37 @@ func (s *SSHFS) ExecStream(ctx context.Context, cmd string, args ...string) (io.
 		close(finished)
 		s.conn.endOp()
 	}()
-	return pr, nil
+	return &sshStream{ReadCloser: pr, closeSession: func() error {
+		closeCtx, cancel := context.WithTimeout(context.Background(), s.conn.timeout())
+		defer cancel()
+		_, err := sshCall(closeCtx, client, func() (bool, error) { return true, sess.Close() })
+		if closeCtx.Err() != nil {
+			s.conn.invalidate(client)
+		}
+		return err
+	}}, nil
 }
 
 // ── Transfer ────────────────────────────────────────────────────────────────
 
 // CopyToLocal downloads a remote file via sftp. The busy-marker covers the
 // whole transfer — large checkpoint downloads are never cut by idle teardown.
-func (s *SSHFS) CopyToLocal(remotePath, localPath string, opts ...CopyOption) (err error) {
-	s.conn.beginOp()
-	defer func() { s.conn.endOpErr(err) }()
-	_ = applyCopyOpts(opts) // for future
-	sc, err := s.conn.getSFTP()
-	if err != nil {
-		return err
-	}
-	srcF, err := sc.Open(remotePath)
-	if err != nil {
-		return err
-	}
-	defer srcF.Close()
-
-	dstF, err := os.Create(localPath)
-	if err != nil {
-		return err
-	}
-	defer dstF.Close()
-
-	if _, err := io.Copy(dstF, srcF); err != nil {
-		return err
-	}
-	return nil
+func (s *SSHFS) CopyToLocal(remotePath, localPath string, opts ...CopyOption) error {
+	_, err := sftpOp(s, func(sc *sftp.Client) (bool, error) {
+		src, err := sc.Open(remotePath)
+		if err != nil {
+			return false, err
+		}
+		defer src.Close()
+		dst, err := os.Create(localPath)
+		if err != nil {
+			return false, err
+		}
+		defer dst.Close()
+		_, err = io.Copy(dst, src)
+		return true, err
+	})
+	return err
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -369,21 +373,48 @@ func buildCmdLine(cmd string, args []string) string {
 // sshFile wraps *sftp.File to satisfy rfs.File. Closing it also releases the
 // connection's busy-marker taken at Open (idempotent).
 type sshFile struct {
-	f       *sftp.File
-	release func()
+	f        *sftp.File
+	s        *SSHFS
+	client   *ssh.Client
+	release  func()
+	once     sync.Once
+	closeErr error
 }
 
-func (sf *sshFile) Read(p []byte) (int, error)           { return sf.f.Read(p) }
-func (sf *sshFile) Seek(off int64, w int) (int64, error) { return sf.f.Seek(off, w) }
-func (sf *sshFile) Stat() (fs.FileInfo, error)           { return sf.f.Stat() }
-
-func (sf *sshFile) Close() error {
-	if sf.release != nil {
-		sf.release()
-		sf.release = nil
+func fileOp[T any](sf *sshFile, fn func() (T, error)) (T, error) {
+	ctx, cancel := sf.s.operationContext()
+	defer cancel()
+	v, err := sshCall(ctx, sf.client, fn)
+	if ctx.Err() != nil {
+		sf.s.conn.invalidate(sf.client)
 	}
-	return sf.f.Close()
+	return v, err
+}
+func (sf *sshFile) Read(p []byte) (int, error) {
+	return fileOp(sf, func() (int, error) { return sf.f.Read(p) })
+}
+func (sf *sshFile) Seek(off int64, w int) (int64, error) {
+	return fileOp(sf, func() (int64, error) { return sf.f.Seek(off, w) })
+}
+func (sf *sshFile) Stat() (fs.FileInfo, error) {
+	return fileOp(sf, func() (fs.FileInfo, error) { return sf.f.Stat() })
+}
+func (sf *sshFile) Close() error {
+	sf.once.Do(func() { _, sf.closeErr = fileOp(sf, func() (bool, error) { return true, sf.f.Close() }); sf.release() })
+	return sf.closeErr
 }
 
 // compile-time interface check
 var _ FS = (*SSHFS)(nil)
+
+type sshStream struct {
+	io.ReadCloser
+	closeSession func() error
+	once         sync.Once
+	err          error
+}
+
+func (s *sshStream) Close() error {
+	s.once.Do(func() { _ = s.ReadCloser.Close(); s.err = s.closeSession() })
+	return s.err
+}

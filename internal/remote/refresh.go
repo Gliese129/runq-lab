@@ -187,7 +187,7 @@ func (b *Backend) HeartbeatProbe(ctx context.Context, silenceAfter time.Duration
 			if p == "" {
 				continue
 			}
-			if fi, serr := b.FS.Stat(p); serr == nil && fi.ModTime().After(last) {
+			if fi, serr := rfs.WithContext(b.FS, ctx).Stat(p); serr == nil && fi.ModTime().After(last) {
 				last = fi.ModTime()
 			}
 		}
@@ -252,7 +252,7 @@ func (b *Backend) ingestLoadedAttempt(ctx context.Context, loaded store.TaskRow,
 			return err
 		}
 		_, ingestErr = ingest.ReapIncremental(ctx, b.Store, ingest.Target{
-			TaskID: loaded.ID, JobID: loaded.JobID, Dir: loaded.TaskDir, FS: b.FS,
+			TaskID: loaded.ID, JobID: loaded.JobID, Dir: loaded.TaskDir, FS: rfs.WithContext(b.FS, ctx),
 		}, final)
 		return nil
 	})
@@ -478,7 +478,7 @@ func (b *Backend) reconcileWith(ctx context.Context, jobID string, probe bool, p
 		if isTerminal(tk.Status) && (tk.StatusSource == SourceWrapper || tk.StatusSource == SourceRunq) {
 			continue
 		}
-		sf, statusErr := readStatusObserved(b.FS, tk.TaskDir)
+		sf, statusErr := readStatusObserved(rfs.WithContext(b.FS, ctx), tk.TaskDir)
 		if statusErr != nil {
 			observationErrs = append(observationErrs, fmt.Errorf("observe task %s: %w", tk.ID, statusErr))
 		}
@@ -598,7 +598,7 @@ func (b *Backend) reconcileWithBatch(ctx context.Context, jobID string, signals 
 		if hardFinal {
 			continue
 		}
-		sf, statusErr := readStatusObserved(b.FS, tk.TaskDir)
+		sf, statusErr := readStatusObserved(rfs.WithContext(b.FS, ctx), tk.TaskDir)
 		if statusErr != nil {
 			observationErrs = append(observationErrs, fmt.Errorf("observe task %s: %w", tk.ID, statusErr))
 		}

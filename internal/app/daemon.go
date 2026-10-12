@@ -27,9 +27,11 @@ import (
 // Daemon is the runq-lab client/dashboard process. Machine-local execution is
 // owned by the independently installed runqd service.
 type Daemon struct {
-	Store   *store.Store
-	Logger  *slog.Logger
-	PidFile *os.File
+	ControllerID string
+	forwardOpMu  sync.Mutex
+	Store        *store.Store
+	Logger       *slog.Logger
+	PidFile      *os.File
 
 	// Dashboard is the embedded HTTP dashboard. nil when dashboard.enabled
 	// is false in config. Serves the Vue frontend + dashboard API on TCP.
@@ -319,12 +321,14 @@ func (d *Daemon) StartRemoteForward(name string) error {
 // target, replacing any existing one. Shared by the reconciler (add/change
 // branches) and StartRemoteForward.
 func (d *Daemon) startForwardFor(tc config.TargetConfig) error {
+	d.forwardOpMu.Lock()
+	defer d.forwardOpMu.Unlock()
 	if d.shuttingDown.Load() {
 		return fmt.Errorf("daemon is shutting down")
 	}
 	// RemoteCLIHandler, not Handler: the runtime path must wear the same
 	// guard as the boot path — an unguarded forward is the RQ-45 escalation.
-	fwd, err := newRemoteCLIForward(tc, d.Dashboard.RemoteCLIHandler(tc.Name), d.Logger, d.contactRecorderFor(tc.Name))
+	fwd, err := newRemoteCLIForward(tc, d.Dashboard.RemoteCLIHandler(tc.Name), d.Logger, d.contactRecorderFor(tc.Name), d.ControllerID)
 	if err != nil {
 		return err
 	}
@@ -334,8 +338,16 @@ func (d *Daemon) startForwardFor(tc config.TargetConfig) error {
 		_ = fwd.Close()
 		return fmt.Errorf("daemon is shutting down")
 	}
-	if old, ok := d.forwards[tc.Name]; ok {
+	old := d.forwards[tc.Name]
+	d.fwdMu.Unlock()
+	if old != nil {
 		_ = old.Close()
+	}
+	d.fwdMu.Lock()
+	if d.shuttingDown.Load() {
+		d.fwdMu.Unlock()
+		_ = fwd.Close()
+		return fmt.Errorf("daemon is shutting down")
 	}
 	if d.forwards == nil {
 		d.forwards = map[string]*rfs.RemoteForward{}
@@ -372,11 +384,14 @@ func (d *Daemon) contactRecorderFor(name string) func() {
 // — the path behind POST /targets/{name}/disconnect. Idempotent: no
 // forward is a success, not an error.
 func (d *Daemon) StopRemoteForward(name string) error {
+	d.forwardOpMu.Lock()
+	defer d.forwardOpMu.Unlock()
 	d.fwdMu.Lock()
-	defer d.fwdMu.Unlock()
-	if fwd, ok := d.forwards[name]; ok {
+	fwd := d.forwards[name]
+	delete(d.forwards, name)
+	d.fwdMu.Unlock()
+	if fwd != nil {
 		_ = fwd.Close()
-		delete(d.forwards, name)
 		d.Logger.Info("remote CLI forward stopped", "target", name)
 	}
 	return nil

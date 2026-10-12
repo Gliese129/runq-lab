@@ -40,19 +40,6 @@ const (
 	markerScanInterval = 2 * time.Minute
 	probeAlignInterval = 15 * time.Minute
 
-	// hibernateAfter: with no user-driven interaction on this target for
-	// this long, the sensor drops to a skeleton cadence — qstat alignment
-	// stops ENTIRELY (a probe loop running all night is exactly what gets
-	// accounts flagged by cluster admins) and marker scans slow down but
-	// keep running (one readdir; it releases submission slots, so a big
-	// overnight sweep keeps flowing). Any user action wakes it instantly.
-	// Accepted cost: node-fail slot leaks wait until the user returns.
-	hibernateAfter = 30 * time.Minute
-
-	// hibernatedMarkerEvery: while hibernated, marker scan runs every Nth
-	// tick (N × markerScanInterval = 10min).
-	hibernatedMarkerEvery = 5
-
 	// metricsIngestInterval: background incremental metrics pass (spec
 	// §8.1.4) — long interval spreads the IO into a steady trickle; the
 	// (size,offset) mark makes each pass one stat per idle running task.
@@ -61,8 +48,7 @@ const (
 	// L4 freshness thresholds. Soft: a read older than this nudges the
 	// sensor for a background pass (SWR) — the read itself never waits.
 	// Hard: older than this (with tasks in flight) is reported stale=true.
-	// Hard sits above the hibernated marker cadence (5×2min) so normal
-	// hibernation never smears "stale" over healthy data.
+	// Failed observations preserve the last successful timestamp.
 	syncSoftTTL = 5 * time.Minute
 	syncHardTTL = 30 * time.Minute
 
@@ -133,23 +119,19 @@ type SSHBackend struct {
 	gpuCache   []GPUSlot
 	gpuCacheAt time.Time
 
-	// lastActivity is the unix time of the last user-driven interaction with
-	// this target (list/get/submit/kill/retry/refresh — dashboard polling
-	// counts: the user is watching). The sensor loop hibernates when it goes
-	// stale; see hibernateAfter.
-	lastActivity atomic.Int64
-
 	// ── L4 sync-cycle state (process-scoped; the DATA's freshness lives
 	// in the sync_state table) ──
 	//
-	// syncGen counts completed FULL passes (marker scan + forced probe).
-	// A ForceRefresh waiter records g0 at kick time and waits for
-	// gen > g0 — waiting for "any pass" would let a pass that STARTED
-	// before the kick satisfy the wait and hand back the old photo.
-	syncMu     sync.Mutex
-	syncGen    uint64
-	syncDone   chan struct{} // closed+replaced at each full-pass completion
-	lastForced time.Time     // min_interval throttle (memory: restart resets, fine)
+	// Issued/completed tickets fence a refresh against an older in-flight pass.
+	// A pass captures the issued ticket before starting its remote observations.
+
+	refreshJobs   map[string]bool
+	syncMu        sync.Mutex
+	syncGen       uint64
+	syncIssued    uint64
+	syncCompleted uint64
+	syncDone      chan struct{} // closed+replaced at each full-pass completion
+	lastForced    time.Time     // min_interval throttle (memory: restart resets, fine)
 
 	// nudgeCh wakes the sensor loop for one forced full pass. Capacity 1 +
 	// non-blocking send = concurrent nudges coalesce by construction.
@@ -166,16 +148,6 @@ type SSHBackend struct {
 // executing against this lane. The retirement sweep refuses to close while
 // true, even before the operation has published a non-terminal task row.
 func (b *SSHBackend) HasInFlightAdmissions() bool { return b.admissionsInFlight.Load() > 0 }
-
-// touchActivity records a user-driven interaction (wakes a hibernated sensor
-// on its next tick).
-func (b *SSHBackend) touchActivity() { b.lastActivity.Store(time.Now().Unix()) }
-
-// userActive reports whether the target saw user activity within
-// hibernateAfter.
-func (b *SSHBackend) userActive() bool {
-	return time.Since(time.Unix(b.lastActivity.Load(), 0)) <= hibernateAfter
-}
 
 // SSHBackendConfig bundles everything needed to build an SSHBackend.
 type SSHBackendConfig struct {
@@ -214,35 +186,11 @@ func NewSSHBackend(cfg SSHBackendConfig) (*SSHBackend, error) {
 		if t.SSH == nil {
 			return nil, fmt.Errorf("target %q: ssh section is required for scheduler targets", t.Name)
 		}
-		// Build SSH config from target. The host may be an ~/.ssh/config
-		// alias ("tsubame") — resolve it the way OpenSSH would; explicit
-		// target fields win over ssh_config values.
-		sshHost, sshPort, sshUser, sshKey := rfs.ResolveSSHConfigDefaults(
-			t.SSH.Host, t.SSH.Port, t.SSH.User, t.SSH.Key)
-		host := sshHost
-		if sshPort > 0 {
-			host = fmt.Sprintf("%s:%d", sshHost, sshPort)
-		}
-
-		auth, err := rfs.ResolveAuthMethods(sshKey)
+		sshCfg, err := rfs.ResolveTargetSSH(t.SSH.Host, t.SSH.Port, t.SSH.User, t.SSH.Key, t.SSH.ProxyJump)
 		if err != nil {
-			return nil, fmt.Errorf("target %q: ssh auth: %w", t.Name, err)
+			return nil, fmt.Errorf("target %q: %w", t.Name, err)
 		}
-
-		sshCfg := rfs.SSHConfig{
-			Host:        host,
-			User:        sshUser,
-			AuthMethods: auth,
-			// RQ-74: honor the user's own `StrictHostKeyChecking
-			// accept-new` for this alias — runq is never more ceremonious
-			// than their ssh. Mismatch still hard-fails.
-			HostKeyPolicy: rfs.ResolveHostKeyPolicy(t.SSH.Host),
-			// Idle disconnect: with the sensor loops running every ~2min
-			// while tasks are in flight, the connection stays warm during
-			// activity and closes ~10min after the queue drains — a normal
-			// SSH user's shape.
-			IdleTimeout: 10 * time.Minute,
-		}
+		sshCfg.IdleTimeout = 10 * time.Minute
 		sshFS := rfs.NewSSHFS(sshCfg)
 		laneFS = sshFS
 		transportCloser = sshFS
@@ -286,10 +234,7 @@ func NewSSHBackend(cfg SSHBackendConfig) (*SSHBackend, error) {
 	// One scope, every query surface (RQ-75): the remote backend's probe/
 	// marker/heartbeat/orphan reads filter by the same ownership predicate.
 	hpcBe.Scope = be.scope
-	// Boot counts as activity: after a daemon restart the sensor gets one
-	// active window to re-align restored in-flight state before it may
-	// hibernate (zero value would mean "hibernated since 1970").
-	be.touchActivity()
+
 	return be, nil
 }
 
@@ -494,7 +439,6 @@ func (b *SSHBackend) sensorLoop(ctx context.Context) {
 	defer ticker.Stop()
 	lastAlign := time.Now()  // warm start: no immediate qstat on daemon boot
 	lastIngest := time.Now() // metrics ingest rides the same loop, own cadence
-	tick := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -504,73 +448,70 @@ func (b *SSHBackend) sensorLoop(ctx context.Context) {
 			// with zero in-flight — the user asked, and a no-op pass is a
 			// cheap honest answer. Completes a sync generation so
 			// ForceRefresh waiters wake.
-			b.forcedSync(ctx)
+			pass, cancel := context.WithTimeout(ctx, 30*time.Second)
+			b.forcedSync(pass)
+			cancel()
 		case <-ticker.C:
-			tick++
-			if inflight, err := b.backend.HasInFlight(ctx); err != nil || !inflight {
-				continue
-			}
-			b.replayKillIntents(ctx)
-			active := b.userActive()
+			func() {
+				ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
 
-			// Marker scan: every tick while active, every Nth while
-			// hibernated — cheap enough to keep an overnight sweep moving.
-			if !active && tick%hibernatedMarkerEvery != 0 {
-				continue
-			}
-			if err := b.backend.ScanDoneMarkers(ctx); errors.Is(err, remote.ErrMarkerDetectionDisabled) {
-				// No marker source is configured. This is not an observation and
-				// must not overwrite scheduler-derived freshness every tick.
-			} else if err != nil {
-				b.logger.Warn("marker scan failed", "error", err)
-				b.recordTasksSync(err)
-			} else {
-				// A successful marker scan IS an observation of the remote
-				// world (the primary completion path) — it advances the
-				// photo's timestamp.
-				b.recordTasksSync(nil)
-			}
+				if inflight, err := b.backend.HasInFlight(ctx); err != nil || !inflight {
+					return
+				}
+				b.replayKillIntents(ctx)
 
-			// Metrics ingest (spec §8.1.4): long-interval background pass so
-			// running tasks' metrics land in SQLite as a steady trickle —
-			// reads are pure SQL, no cold-start parse spike. Runs while
-			// hibernated too (data collection needs no observer; each pass
-			// is a stat per running task + delta-only reads), at the
-			// hibernated marker cadence it already inherits from the gate
-			// above.
-			if time.Since(lastIngest) >= metricsIngestInterval {
-				lastIngest = time.Now()
-				b.ingestRunningMetrics(ctx)
+				if err := b.backend.ScanDoneMarkers(ctx); errors.Is(err, remote.ErrMarkerDetectionDisabled) {
+					// No marker source is configured. This is not an observation and
+					// must not overwrite scheduler-derived freshness every tick.
+				} else if err != nil {
+					b.logger.Warn("marker scan failed", "error", err)
+					b.recordTasksSync(err)
+				} else {
+					// A successful marker scan IS an observation of the remote
+					// world (the primary completion path) — it advances the
+					// photo's timestamp.
+					b.recordTasksSync(nil)
+				}
 
-				// Heartbeat (file-stream liveness) rides the same cadence:
-				// ≤3 stats per running task. Silence is only a SUSPICION —
-				// the escalation asks the scheduler, and the etiquette
-				// floor still applies even to suspicions.
-				if silent, herr := b.backend.HeartbeatProbe(ctx, taskSilenceAfter); herr == nil && len(silent) > 0 {
-					b.logger.Info("heartbeat: silent tasks, consulting scheduler", "tasks", silent)
-					if perr := b.backend.SchedulerProbe(ctx, schedProbeFloor); perr != nil {
-						b.logger.Warn("heartbeat escalation probe failed", "error", perr)
-						b.recordTasksSync(perr)
-					} else {
-						b.recordTasksSync(nil)
+				// Metrics ingest: long-interval background pass so
+				// running tasks' metrics land in SQLite as a steady trickle —
+				// Collection continues without a browser.
+
+				if time.Since(lastIngest) >= metricsIngestInterval {
+					lastIngest = time.Now()
+					b.ingestRunningMetrics(ctx)
+
+					// Heartbeat (file-stream liveness) rides the same cadence:
+					// ≤3 stats per running task. Silence is only a SUSPICION —
+					// the escalation asks the scheduler, and the etiquette
+					// floor still applies even to suspicions.
+					if silent, herr := b.backend.HeartbeatProbe(ctx, taskSilenceAfter); herr == nil && len(silent) > 0 {
+						b.logger.Info("heartbeat: silent tasks, consulting scheduler", "tasks", silent)
+						if perr := b.backend.SchedulerProbe(ctx, schedProbeFloor); perr != nil {
+							b.logger.Warn("heartbeat escalation probe failed", "error", perr)
+							b.recordTasksSync(perr)
+						} else {
+							b.recordTasksSync(nil)
+						}
 					}
 				}
-			}
 
-			// qstat alignment: user-present periods only.
-			if !active || time.Since(lastAlign) < probeAlignInterval {
-				continue
-			}
-			lastAlign = time.Now()
-			if err := b.backend.SchedulerProbe(ctx, DefaultReadTTL); err != nil {
-				b.logger.Warn("probe align failed", "error", err)
-				b.recordTasksSync(err)
-			} else {
-				b.recordTasksSync(nil)
-			}
-			if err := b.backend.DetectOrphans(ctx, false); err != nil {
-				b.logger.Warn("orphan detection failed", "error", err)
-			}
+				// Scheduler alignment returns whenever this lane owns unfinished work.
+				if time.Since(lastAlign) < probeAlignInterval {
+					return
+				}
+				lastAlign = time.Now()
+				if err := b.backend.SchedulerProbe(ctx, DefaultReadTTL); err != nil {
+					b.logger.Warn("probe align failed", "error", err)
+					b.recordTasksSync(err)
+				} else {
+					b.recordTasksSync(nil)
+				}
+				if err := b.backend.DetectOrphans(ctx, false); err != nil {
+					b.logger.Warn("orphan detection failed", "error", err)
+				}
+			}()
 		}
 	}
 }
@@ -622,7 +563,7 @@ func (b *SSHBackend) ingestRunningMetrics(ctx context.Context) {
 				return nil
 			}
 			_, err = ingest.ReapIncremental(ctx, b.store, ingest.Target{
-				TaskID: current.ID, JobID: current.JobID, Dir: current.TaskDir, FS: b.backend.FS,
+				TaskID: current.ID, JobID: current.JobID, Dir: current.TaskDir, FS: rfs.WithContext(b.backend.FS, ctx),
 			}, false)
 			return err
 		})
@@ -750,12 +691,20 @@ func (b *SSHBackend) Capabilities() Capabilities {
 // ── Reconcile ─────────────────────────────────────────────────────────────
 
 func (b *SSHBackend) RefreshJob(ctx context.Context, jobID string) error {
-	b.touchActivity()
-	// Local reconcile (status.json, markers) always runs; the scheduler
-	// probe respects the qstat etiquette floor — same split as forcedSync.
-	err := b.backend.EnsureFresh(ctx, jobID, schedProbeFloor)
-	b.recordTasksSync(err)
-	return err
+	b.syncMu.Lock()
+	if b.refreshJobs == nil {
+		b.refreshJobs = map[string]bool{}
+	}
+	b.refreshJobs[jobID] = true
+	b.syncMu.Unlock()
+	receipt, err := b.ForceRefresh(ctx)
+	if err != nil {
+		return err
+	}
+	if receipt != nil && !receipt.Refreshed {
+		return fmt.Errorf("refresh incomplete: %s", receipt.Reason)
+	}
+	return nil
 }
 
 // ReconcileAll runs a full reconcile pass over all active jobs. Called by
@@ -769,7 +718,6 @@ func (b *SSHBackend) ReconcileAll(ctx context.Context) error {
 // ── Job operations ────────────────────────────────────────────────────────
 
 func (b *SSHBackend) ListJobs(ctx context.Context, projectScope string) ([]JobSummary, error) {
-	b.touchActivity()
 	target := b.backend.Cfg.Name
 	jobs, err := b.store.ListJobsVisible(ctx, projectScope, target)
 	if err != nil {
@@ -823,7 +771,6 @@ func (b *SSHBackend) jobSettled(ctx context.Context, jobID string) bool {
 }
 
 func (b *SSHBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, error) {
-	b.touchActivity()
 	if !b.jobSettled(ctx, jobID) {
 		if err := b.backend.EnsureFresh(ctx, jobID, DefaultReadTTL); err != nil {
 			return nil, err
@@ -868,7 +815,6 @@ func (b *SSHBackend) CompareMetrics(ctx context.Context, jobID, key string, desc
 // MetricKeys is the discovery half of the metrics dual-mode (spec §5.4):
 // SELECT DISTINCT over ingested rows.
 func (b *SSHBackend) MetricKeys(ctx context.Context, jobID string) ([]string, error) {
-	b.touchActivity()
 	return b.store.MetricKeys(ctx, jobID)
 }
 
@@ -885,7 +831,6 @@ func (b *SSHBackend) GPUStatus(ctx context.Context) ([]GPUSlot, error) {
 	if tmpl == "" {
 		return []GPUSlot{}, nil
 	}
-	b.touchActivity()
 
 	b.gpuMu.Lock()
 	defer b.gpuMu.Unlock()
@@ -929,7 +874,6 @@ func (b *SSHBackend) loadOwnedTask(ctx context.Context, taskID, operation string
 }
 
 func (b *SSHBackend) GetTask(ctx context.Context, taskID string) (*TaskView, error) {
-	b.touchActivity()
 	task, err := b.store.GetTask(ctx, taskID)
 	if err != nil {
 		return nil, err
@@ -998,9 +942,10 @@ func (b *SSHBackend) tasksSyncResource() string {
 }
 
 // completeSyncCycle bumps the generation and wakes every waiter.
-func (b *SSHBackend) completeSyncCycle() {
+func (b *SSHBackend) completeSyncCycle(ticket uint64) {
 	b.syncMu.Lock()
 	b.syncGen++
+	b.syncCompleted = max(b.syncCompleted, ticket)
 	close(b.syncDone)
 	b.syncDone = make(chan struct{})
 	b.syncMu.Unlock()
@@ -1012,14 +957,25 @@ func (b *SSHBackend) completeSyncCycle() {
 // records the outcome, and completes a generation. Runs on the sensor
 // goroutine — serialized with regular ticks by construction.
 func (b *SSHBackend) forcedSync(ctx context.Context) {
+	b.syncMu.Lock()
+	ticket := b.syncIssued
+	jobs := b.refreshJobs
+	b.refreshJobs = nil
+	b.syncMu.Unlock()
+	var refreshErrs []error
+	for id := range jobs {
+		if err := b.backend.EnsureFresh(ctx, id, schedProbeFloor); err != nil {
+			refreshErrs = append(refreshErrs, err)
+		}
+	}
 	markerErr := b.backend.ScanDoneMarkers(ctx)
 	probeErr := b.backend.SchedulerProbe(ctx, schedProbeFloor)
 	err := markerErr
 	if markerErr == nil || errors.Is(markerErr, remote.ErrMarkerDetectionDisabled) {
 		err = probeErr
 	}
-	b.recordTasksSync(err)
-	b.completeSyncCycle()
+	b.recordTasksSync(errors.Join(append(refreshErrs, err)...))
+	b.completeSyncCycle(ticket)
 }
 
 // SyncInfo reports this lane's data freshness (envelope refreshed_at/stale)
@@ -1054,7 +1010,6 @@ func (b *SSHBackend) SyncInfo(ctx context.Context) (refreshedAt int64, stale boo
 // after the kick completes (generation fence), the min_interval floor
 // rejects it, or ctx times out. Every exit returns an honest receipt.
 func (b *SSHBackend) ForceRefresh(ctx context.Context) (*RefreshReceipt, error) {
-	b.touchActivity()
 
 	b.syncMu.Lock()
 	if since := time.Since(b.lastForced); since < refreshMinInterval {
@@ -1064,7 +1019,8 @@ func (b *SSHBackend) ForceRefresh(ctx context.Context) (*RefreshReceipt, error) 
 		return receipt, nil
 	}
 	b.lastForced = time.Now()
-	g0 := b.syncGen
+	b.syncIssued++
+	wanted := b.syncIssued
 	done := b.syncDone
 	b.syncMu.Unlock()
 
@@ -1080,7 +1036,7 @@ func (b *SSHBackend) ForceRefresh(ctx context.Context) (*RefreshReceipt, error) 
 		case <-done:
 		}
 		b.syncMu.Lock()
-		if b.syncGen > g0 {
+		if b.syncCompleted >= wanted {
 			b.syncMu.Unlock()
 			break
 		}
@@ -1108,7 +1064,6 @@ func (b *SSHBackend) currentReceipt(ctx context.Context, refreshed bool, reason 
 // ListTasks — the lane defaults the target scope to itself (its slice of
 // the shared store); an explicit opts.Target overrides.
 func (b *SSHBackend) ListTasks(ctx context.Context, opts TaskListOptions) ([]TaskView, int, error) {
-	b.touchActivity()
 	if opts.Target == "" {
 		opts.Target = b.targetName
 	}
@@ -1122,7 +1077,6 @@ func (b *SSHBackend) ListTasks(ctx context.Context, opts TaskListOptions) ([]Tas
 // and ingestion so it cannot observe a torn attempt boundary. afterTS > 0
 // is the dashboard's incremental pull cursor.
 func (b *SSHBackend) TaskMetrics(ctx context.Context, taskID string, afterTS int64) ([]MetricPoint, error) {
-	b.touchActivity()
 	var points []MetricPoint
 	err := b.store.WithTaskAttemptLock(taskID, func() error {
 		task, err := b.loadOwnedTask(ctx, taskID, "task metrics")
@@ -1142,7 +1096,6 @@ func (b *SSHBackend) TaskMetrics(ctx context.Context, taskID string, afterTS int
 // skips the builder, so every other state must use tail-window aggregation.
 // The fallback uses the SAME merge operator.
 func (b *SSHBackend) TaskMetricBuckets(ctx context.Context, taskID, key string, fromTS, toTS int64, maxBuckets int) ([]workspace.PyramidBucket, string, error) {
-	b.touchActivity()
 	var (
 		buckets []workspace.PyramidBucket
 		source  string
@@ -1188,7 +1141,6 @@ func (b *SSHBackend) reconcileTask(ctx context.Context, taskID string, fallback 
 }
 
 func (b *SSHBackend) KillTask(ctx context.Context, taskID string) error {
-	b.touchActivity()
 	task, err := b.store.GetTask(ctx, taskID)
 	if err != nil {
 		return err
@@ -1314,7 +1266,6 @@ func (b *SSHBackend) cancelRetryIntent(ctx context.Context, taskID string) (bool
 // Open(path, fs) → ReadLines(offset, maxLines)。单行长度与单页字节预算
 // 在 logfile 内 clamp（病态长行防御——review 重点）。
 func (b *SSHBackend) TaskLogRead(ctx context.Context, taskID string, offset int64, maxLines int) (*LogPage, error) {
-	b.touchActivity()
 	var page *LogPage
 	err := b.store.WithTaskAttemptLock(taskID, func() error {
 		task, err := b.loadOwnedTask(ctx, taskID, "task log read")
@@ -1339,7 +1290,6 @@ func (b *SSHBackend) TaskLogRead(ctx context.Context, taskID string, offset int6
 // TaskLogTail — 尾部视图（每次首屏的入口）：解析 + 委托 TailLines。
 // 返回页的 Offset 即向上翻页锚点。
 func (b *SSHBackend) TaskLogTail(ctx context.Context, taskID string, maxLines int) (*LogPage, error) {
-	b.touchActivity()
 	var page *LogPage
 	err := b.store.WithTaskAttemptLock(taskID, func() error {
 		task, err := b.loadOwnedTask(ctx, taskID, "task log tail")
@@ -1364,7 +1314,6 @@ func (b *SSHBackend) TaskLogTail(ctx context.Context, taskID string, maxLines in
 // TaskLogPage — dashboard log contract v2: byte-budget page (positional /
 // tail / rotation / optional line count) through the owning target's FS.
 func (b *SSHBackend) TaskLogPage(ctx context.Context, taskID string, req logfile.PageRequest) (*LogPage, error) {
-	b.touchActivity()
 	var page *LogPage
 	err := b.store.WithTaskAttemptLock(taskID, func() error {
 		task, err := b.loadOwnedTask(ctx, taskID, "task log page")
@@ -1410,7 +1359,6 @@ func (f *leasedLogFollower) Close() error {
 }
 
 func (b *SSHBackend) TaskLogFollow(ctx context.Context, taskID string, offset int64) (LogFollower, error) {
-	b.touchActivity()
 	release, err := b.acquireArtifactLease()
 	if err != nil {
 		return nil, err
@@ -1434,14 +1382,12 @@ func (b *SSHBackend) TaskLogFollow(ctx context.Context, taskID string, offset in
 // JobLogSearch greps the job's logs on the owning side (RQ-44): one
 // batched grep over FS.Exec — results travel, files don't.
 func (b *SSHBackend) JobLogSearch(ctx context.Context, jobID, query string) ([]LogMatch, error) {
-	b.touchActivity()
 	return jobLogSearchViaExec(ctx, b.store, b.backend.FS, jobID, query)
 }
 
 // JobActivity decimates activity.tsv on the owning side — same RQ-44
 // principle as JobLogSearch: results travel, files don't.
 func (b *SSHBackend) JobActivity(ctx context.Context, jobID string) (*JobActivity, error) {
-	b.touchActivity()
 	return jobActivityViaExec(ctx, b.store, b.backend.FS, jobID)
 }
 
@@ -1456,7 +1402,6 @@ func (b *SSHBackend) JobResults(ctx context.Context, jobID string) (*JobResults,
 }
 
 func (b *SSHBackend) RetryTask(ctx context.Context, taskID string) error {
-	b.touchActivity()
 	b.admissionsInFlight.Add(1)
 	defer b.admissionsInFlight.Add(-1)
 	if b.scope.IsRetiring() {
@@ -1537,7 +1482,6 @@ func (b *SSHBackend) RetryTask(ctx context.Context, taskID string) error {
 }
 
 func (b *SSHBackend) KillJob(ctx context.Context, jobID string) error {
-	b.touchActivity()
 	// Kill supersedes the pause overlay. Clear the dispatch gate immediately,
 	// then always recompute the durable job projection after this cancellation
 	// pass, including partial-error paths that retain kill intent for replay.
@@ -1629,7 +1573,6 @@ func (b *SSHBackend) KillJob(ctx context.Context, jobID string) error {
 // sbatch happens asynchronously per task in remote.Launcher, throttled by
 // max_inflight slots. The returned count is tasks ACCEPTED (queued).
 func (b *SSHBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts SubmitOptions) (string, int, error) {
-	b.touchActivity()
 	// Increment BEFORE the gate (round 8 #1): once past this line the
 	// sweep sees the submit and will not close the lane under it.
 	b.admissionsInFlight.Add(1)

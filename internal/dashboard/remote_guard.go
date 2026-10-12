@@ -46,6 +46,10 @@ type targetOwner interface {
 func (s *Server) RemoteCLIHandler(target string) http.Handler {
 	owner, _ := s.backend.(targetOwner)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/health" {
+			writeJSON(w, http.StatusOK, map[string]any{"controller_id": s.controllerID, "forward_target": target, "version": s.version})
+			return
+		}
 		if s.guardAllows(w, r, target, owner) {
 			s.Handler().ServeHTTP(w, r)
 		}

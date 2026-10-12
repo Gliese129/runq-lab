@@ -121,3 +121,22 @@ func TestHasInFlightIsGenerationScoped(t *testing.T) {
 		t.Fatalf("retiring lane HasInFlight = %v, %v; want true", got, err)
 	}
 }
+
+func TestTerminalExternalIDDoesNotKeepSensorAwake(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err = s.InsertJob(ctx, &store.JobRow{ID: "done", ProjectName: "project", ConfigJSON: "{}", Status: "success", Target: "lab", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.InsertTask(ctx, &store.TaskRow{ID: "done-1", JobID: "done", ProjectName: "project", Command: "true", ParamsJSON: "{}", Status: "success", ExternalID: "external-1", Target: "lab", EnqueuedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	b := &Backend{Cfg: &config.TargetConfig{Name: "lab"}, Store: s}
+	if active, err := b.HasInFlight(ctx); err != nil || active {
+		t.Fatalf("terminal external ID caused background polling: %v %v", active, err)
+	}
+}

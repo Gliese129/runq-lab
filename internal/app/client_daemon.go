@@ -42,6 +42,10 @@ func newClientDaemon(dataDir string, paths utils.DataDirPaths, logger *slog.Logg
 	if err != nil {
 		return nil, fmt.Errorf("load global config: %w", err)
 	}
+	controllerID, err := utils.ControllerID(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("controller identity: %w", err)
+	}
 	defaultTarget := storageCfg.ResolveDefaultTarget()
 
 	// Active and historical lanes share one constructor. Historical lanes are
@@ -96,6 +100,7 @@ func newClientDaemon(dataDir string, paths utils.DataDirPaths, logger *slog.Logg
 	}
 
 	d := &Daemon{
+		ControllerID:        controllerID,
 		Store:               st,
 		Logger:              logger,
 		lanes:               laneMap,
@@ -117,6 +122,7 @@ func newClientDaemon(dataDir string, paths utils.DataDirPaths, logger *slog.Logg
 	// (the CLI socket needs it); TCP listening is what dashboard.enabled
 	// gates.
 	d.Dashboard = dashboard.NewServer(multiBe, storageCfg)
+	d.Dashboard.SetControllerID(controllerID)
 	// access.log answers "which API surfaces are actually used, and how
 	// slow are they" (web vs CLI). Best-effort: a failure only loses the log.
 	if al, aerr := dashboard.OpenRotatingFile(filepath.Join(paths.LogDir, "access.log")); aerr != nil {
@@ -138,7 +144,7 @@ func newClientDaemon(dataDir string, paths utils.DataDirPaths, logger *slog.Logg
 		if !tc.RemoteCLI || tc.SSH == nil {
 			continue
 		}
-		fwd, ferr := newRemoteCLIForward(tc, d.Dashboard.RemoteCLIHandler(tc.Name), logger, d.contactRecorderFor(tc.Name))
+		fwd, ferr := newRemoteCLIForward(tc, d.Dashboard.RemoteCLIHandler(tc.Name), logger, d.contactRecorderFor(tc.Name), d.ControllerID)
 		if ferr != nil {
 			// Non-fatal by design: the lane itself still works; the user
 			// just doesn't get the remote CLI until the config is fixed.
@@ -182,27 +188,15 @@ func newClientDaemon(dataDir string, paths utils.DataDirPaths, logger *slog.Logg
 // auth resolution) but deliberately NOT the same connection: the forward is
 // a persistent service, exempt from the lane's idle-disconnect etiquette
 // (see rfs.RemoteForward).
-func newRemoteCLIForward(tc config.TargetConfig, handler http.Handler, logger *slog.Logger, onEstablished func()) (*rfs.RemoteForward, error) {
-	// Same alias resolution as the lane: `host:` may be an ~/.ssh/config
-	// alias; explicit target fields win over ssh_config values.
-	sshHost, sshPort, sshUser, sshKey := rfs.ResolveSSHConfigDefaults(
-		tc.SSH.Host, tc.SSH.Port, tc.SSH.User, tc.SSH.Key)
-	host := sshHost
-	if sshPort > 0 {
-		host = fmt.Sprintf("%s:%d", sshHost, sshPort)
-	}
-	auth, err := rfs.ResolveAuthMethods(sshKey)
+func newRemoteCLIForward(tc config.TargetConfig, handler http.Handler, logger *slog.Logger, onEstablished func(), controller string) (*rfs.RemoteForward, error) {
+	sshCfg, err := rfs.ResolveTargetSSH(tc.SSH.Host, tc.SSH.Port, tc.SSH.User, tc.SSH.Key, tc.SSH.ProxyJump)
 	if err != nil {
-		return nil, fmt.Errorf("ssh auth: %w", err)
+		return nil, err
 	}
 	return rfs.NewRemoteForward(rfs.RemoteForwardConfig{
-		SSH: rfs.SSHConfig{
-			Host:        host,
-			User:        sshUser,
-			AuthMethods: auth,
-			// RQ-74: same accept-new passthrough as the lane connection.
-			HostKeyPolicy: rfs.ResolveHostKeyPolicy(tc.SSH.Host),
-		},
+		SSH:        sshCfg,
+		SocketPath: utils.RemoteSocketPath(controller, tc.Name),
+		Owner:      controller + ":" + tc.Name,
 		Serve: func(ln net.Listener) error {
 			err := (&http.Server{Handler: handler}).Serve(ln)
 			if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {

@@ -87,3 +87,10 @@ func applyCopyOpts(opts []CopyOption) copyOpts {
 	}
 	return o
 }
+
+func WithContext(fsys FS, ctx context.Context) FS {
+	if sshfs, ok := fsys.(*SSHFS); ok {
+		return sshfs.WithContext(ctx)
+	}
+	return fsys
+}

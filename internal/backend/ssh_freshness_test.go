@@ -193,3 +193,40 @@ func TestSSHForcedSyncUsesSchedulerOutcomeWhenMarkersDisabled(t *testing.T) {
 		t.Fatalf("forced sync state = %+v, want scheduler-derived success", row)
 	}
 }
+
+// A pass already in progress cannot satisfy a refresh requested after it began.
+func TestRefreshWaitsForItsOwnIssuedCycle(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	b := newFreshnessSSHBackend(t, st, "true")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan *RefreshReceipt, 1)
+	go func() { receipt, _ := b.ForceRefresh(ctx); done <- receipt }()
+	select {
+	case <-b.nudgeCh:
+	case <-ctx.Done():
+		t.Fatal("refresh not issued")
+	}
+	b.syncMu.Lock()
+	ticket := b.syncIssued
+	b.syncMu.Unlock()
+	b.completeSyncCycle(ticket - 1)
+	select {
+	case <-done:
+		t.Fatal("old pass completed a newer request")
+	case <-time.After(20 * time.Millisecond):
+	}
+	b.completeSyncCycle(ticket)
+	select {
+	case receipt := <-done:
+		if receipt == nil || !receipt.Refreshed {
+			t.Fatalf("new pass failed: %+v", receipt)
+		}
+	case <-ctx.Done():
+		t.Fatal("new pass did not wake waiter")
+	}
+}

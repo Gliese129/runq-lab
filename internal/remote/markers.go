@@ -8,6 +8,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/gliese129/runq-lab/internal/rfs"
 	"github.com/gliese129/runq-lab/internal/store"
 	"github.com/gliese129/runq-lab/internal/utils"
 )
@@ -29,13 +30,11 @@ var ErrMarkerDetectionDisabled = errors.New("done marker detection is disabled")
 // task belongs to another target, are LEFT IN PLACE — another runq client
 // sharing this workspace may own them. We only ever delete what we settled.
 func (b *Backend) ScanDoneMarkers(ctx context.Context) error {
-	b.lifecycleMu.Lock()
-	defer b.lifecycleMu.Unlock()
 	dir := b.doneDir()
 	if dir == "" {
 		return ErrMarkerDetectionDisabled
 	}
-	entries, err := b.FS.ReadDir(dir)
+	entries, err := rfs.WithContext(b.FS, ctx).ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		b.recordContact(nil) // dir absent = successful contact, nothing finished yet
 		return nil
@@ -45,6 +44,9 @@ func (b *Backend) ScanDoneMarkers(ctx context.Context) error {
 		return fmt.Errorf("scan done markers: %w", err)
 	}
 
+	// ReadDir is observation only; a slow listing must not block launch/cancel.
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
 	var cleanup []string
 	jobs := make(map[string]struct{})
 	var firstErr error
@@ -81,7 +83,7 @@ func (b *Backend) ScanDoneMarkers(ctx context.Context) error {
 			continue // previous attempt's marker; Launch clears it
 		}
 
-		sf, statusErr := readStatusObserved(b.FS, tk.TaskDir)
+		sf, statusErr := readStatusObserved(rfs.WithContext(b.FS, ctx), tk.TaskDir)
 		if statusErr != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("read completion marker status for %s: %w", tk.ID, statusErr)
@@ -155,7 +157,7 @@ func (b *Backend) HasInFlight(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	for _, task := range tasks {
-		if task.ExternalID != "" || task.Status == "submitting" || task.Status == "running" || task.Status == "unknown" {
+		if !isTerminal(task.Status) {
 			return true, nil
 		}
 	}

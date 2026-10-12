@@ -3,9 +3,11 @@ package rfs
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -16,16 +18,34 @@ import (
 // daemon never reads key plaintext — then the configured key file. An
 // encrypted key file without an agent is a clear, actionable error, not
 // a parse failure.
-func ResolveAuthMethods(keyPath string) ([]ssh.AuthMethod, error) {
+func ResolveAuthMethods(keyPath string, agentSocket ...string) ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
 
-	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
-		if conn, err := net.Dial("unix", sock); err == nil {
-			// conn lives as long as the process; the agent client owns it.
-			methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
-		} else {
-			slog.Warn("ssh-agent unreachable, falling back to key file", "error", err)
-		}
+	sock := os.Getenv("SSH_AUTH_SOCK")
+	if len(agentSocket) > 0 {
+		sock = agentSocket[0]
+	}
+	if sock != "" {
+		methods = append(methods, ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
+			conn, err := dialAgent(sock)
+			if err != nil {
+				return nil, err
+			}
+			defer conn.Close()
+			keys, err := agent.NewClient(conn).List()
+			if err != nil {
+				return nil, err
+			}
+			var signers []ssh.Signer
+			for _, key := range keys {
+				pub, err := ssh.ParsePublicKey(key.Blob)
+				if err != nil {
+					return nil, err
+				}
+				signers = append(signers, &reconnectingAgentSigner{sock: sock, pub: pub})
+			}
+			return signers, nil
+		}))
 	}
 
 	if keyPath != "" {
@@ -56,4 +76,37 @@ func ResolveAuthMethods(keyPath string) ([]ssh.AuthMethod, error) {
 		return nil, fmt.Errorf("no usable ssh auth: SSH_AUTH_SOCK not set and no key file configured")
 	}
 	return methods, nil
+}
+
+func dialAgent(sock string) (net.Conn, error) {
+	conn, err := net.DialTimeout("unix", sock, 5*time.Second)
+	if err == nil {
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	}
+	return conn, err
+}
+
+type reconnectingAgentSigner struct {
+	sock string
+	pub  ssh.PublicKey
+}
+
+func (s *reconnectingAgentSigner) PublicKey() ssh.PublicKey { return s.pub }
+func (s *reconnectingAgentSigner) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
+	return s.SignWithAlgorithm(nil, data, "")
+}
+func (s *reconnectingAgentSigner) SignWithAlgorithm(_ io.Reader, data []byte, algorithm string) (*ssh.Signature, error) {
+	conn, err := dialAgent(s.sock)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	var flags agent.SignatureFlags
+	switch algorithm {
+	case ssh.KeyAlgoRSASHA256:
+		flags = agent.SignatureFlagRsaSha256
+	case ssh.KeyAlgoRSASHA512:
+		flags = agent.SignatureFlagRsaSha512
+	}
+	return agent.NewClient(conn).SignWithFlags(s.pub, data, flags)
 }

@@ -45,6 +45,9 @@ type SSHConfig struct {
 	// sftp runs on its own subsystem and does NOT consume a session slot.
 	// Default: 3.
 	MaxSessions int
+
+	// OperationTimeout bounds connection setup and each file operation.
+	OperationTimeout time.Duration
 }
 
 // addr returns Host with ":22" appended if no port is present.
@@ -62,8 +65,7 @@ const livenessCheckAfter = 30 * time.Second
 
 // livenessTimeout bounds the keepalive probe. A half-open TCP connection
 // (network partition) can block SendRequest for minutes; we declare the
-// connection dead after this and redial. The probe goroutine unblocks and
-// exits whenever the kernel finally gives up on the socket.
+// connection dead after this and close its transport before redialing.
 const livenessTimeout = 5 * time.Second
 
 // errClosed is returned for operations on a Close()d connection manager.
@@ -84,11 +86,13 @@ var errClosed = errors.New("ssh connection manager closed")
 //     (active == 0), the watcher closes the connection. In-flight streams
 //     (logs -f, large SFTP copies) hold active > 0 and are never cut.
 type sshConn struct {
-	mu       sync.Mutex
-	client   *ssh.Client
-	sftp     *sftp.Client
-	lastUsed time.Time
-	active   int // in-flight operations; idle teardown requires active == 0
+	mu         sync.Mutex
+	connecting chan struct{}
+	dialCancel context.CancelFunc
+	client     *ssh.Client
+	sftp       *sftp.Client
+	lastUsed   time.Time
+	active     int // in-flight operations; idle teardown requires active == 0
 
 	cfg        SSHConfig
 	sessionSem chan struct{} // cap = MaxSessions
@@ -153,124 +157,153 @@ func (c *sshConn) endOpErr(err error) {
 // Thread-safe. On reuse after a quiet period, the connection's liveness is
 // verified first — a dead connection is torn down and redialed instead of
 // poisoning every future call.
-func (c *sshConn) getConn() (*ssh.Client, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	select {
-	case <-c.done:
-		return nil, errClosed
-	default:
+func (c *sshConn) timeout() time.Duration {
+	if c.cfg.OperationTimeout > 0 {
+		return c.cfg.OperationTimeout
 	}
+	return 10 * time.Second
+}
 
-	// Reuse path: probe when the connection has been quiet.
-	if c.client != nil && time.Since(c.lastUsed) > livenessCheckAfter {
-		if !c.aliveLocked() {
-			c.teardownLocked()
+// Network I/O never holds mu. A cancelled setup closes the actual transport;
+// waiters can cancel independently without abandoning a handshake goroutine.
+func (c *sshConn) getConn() (*ssh.Client, error) { return c.getConnContext(context.Background()) }
+func (c *sshConn) getConnContext(parent context.Context) (*ssh.Client, error) {
+	ctx, cancel := context.WithTimeout(parent, c.timeout())
+	defer cancel()
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-	}
-
-	if c.client == nil {
-		hostKeys := c.cfg.HostKeyCallback
-		if hostKeys == nil {
-			var err error
-			if hostKeys, err = policyHostKeyCallback(c.cfg.HostKeyPolicy); err != nil {
-				return nil, err
+		c.mu.Lock()
+		select {
+		case <-c.done:
+			c.mu.Unlock()
+			return nil, errClosed
+		default:
+		}
+		if c.client != nil {
+			client, quiet := c.client, time.Since(c.lastUsed) > livenessCheckAfter
+			c.mu.Unlock()
+			if quiet {
+				probe, stop := context.WithTimeout(ctx, livenessTimeout)
+				_, err := sshCall(probe, client, func() (bool, error) { _, _, e := client.SendRequest("keepalive@runq", true, nil); return true, e })
+				stop()
+				if err != nil {
+					c.invalidate(client)
+					if ctx.Err() != nil {
+						return nil, ctx.Err()
+					}
+					continue
+				}
+				c.mu.Lock()
+				if c.client == client {
+					c.lastUsed = time.Now()
+				}
+				c.mu.Unlock()
+			}
+			return client, nil
+		}
+		if wait := c.connecting; wait != nil {
+			c.mu.Unlock()
+			select {
+			case <-wait:
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-c.done:
+				return nil, errClosed
 			}
 		}
-		client, err := ssh.Dial("tcp", c.cfg.addr(), &ssh.ClientConfig{
-			User:            c.cfg.User,
-			Auth:            c.cfg.AuthMethods,
-			HostKeyCallback: hostKeys,
-			Timeout:         10 * time.Second,
-		})
-		if err != nil {
-			return nil, err
+		wait := make(chan struct{})
+		c.connecting = wait
+		dialCtx, stop := context.WithCancel(ctx)
+		c.dialCancel = stop
+		c.mu.Unlock()
+		client, err := dialSSH(dialCtx, c.cfg)
+		var sc *sftp.Client
+		if err == nil {
+			sc, err = sshCall(dialCtx, client, func() (*sftp.Client, error) { return sftp.NewClient(client, sftp.UseConcurrentWrites(false)) })
 		}
-		sftpClient, err := sftp.NewClient(client)
-		if err != nil {
+		stop()
+		c.mu.Lock()
+		select {
+		case <-c.done:
+			if err == nil {
+				err = errClosed
+			}
+		default:
+		}
+		if err == nil {
+			c.client = client
+			c.sftp = sc
+			c.lastUsed = time.Now()
+			c.startIdleWatcher()
+		}
+		c.dialCancel = nil
+		c.connecting = nil
+		close(wait)
+		c.mu.Unlock()
+		if err != nil && client != nil {
 			_ = client.Close()
-			return nil, err
 		}
-		c.client = client
-		c.sftp = sftpClient
-		c.lastUsed = time.Now() // a successful dial IS proof of life
-		c.startIdleWatcher()
-	}
-	return c.client, nil
-}
-
-// aliveLocked probes the connection with a bounded keepalive round trip.
-// Must be called with mu held. A live server answers (even a "request type
-// unknown" reply proves the transport); a dead or half-open connection
-// errors or times out. The probe goroutine leaks only until the kernel
-// abandons the dead socket — bounded, and only at reconnect-worthy moments.
-func (c *sshConn) aliveLocked() bool {
-	ch := make(chan error, 1)
-	client := c.client
-	go func() {
-		_, _, err := client.SendRequest("keepalive@runq", true, nil)
-		ch <- err
-	}()
-	select {
-	case err := <-ch:
-		return err == nil
-	case <-time.After(livenessTimeout):
-		return false
+		return client, err
 	}
 }
 
-// getSFTP returns the *sftp.Client, (re)dialing via getConn as needed.
+func (c *sshConn) invalidate(client *ssh.Client) {
+	c.mu.Lock()
+	if c.client == client {
+		c.client = nil
+		c.sftp = nil
+	}
+	c.mu.Unlock()
+	_ = client.Close()
+}
 func (c *sshConn) getSFTP() (*sftp.Client, error) {
-	if _, err := c.getConn(); err != nil {
-		return nil, err
+	_, sc, err := c.getSFTPContext(context.Background())
+	return sc, err
+}
+func (c *sshConn) getSFTPContext(ctx context.Context) (*ssh.Client, *sftp.Client, error) {
+	client, err := c.getConnContext(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.sftp == nil {
-		return nil, errClosed
+	if c.client != client || c.sftp == nil {
+		return nil, nil, errClosed
 	}
-	return c.sftp, nil
+	return client, c.sftp, nil
 }
-
-// newSession opens an SSH session, blocking until a semaphore slot is free,
-// the ctx is cancelled, or the manager is closed. Hung remote commands can
-// exhaust the slots; ctx keeps callers (and shutdown) from hanging with them.
-//
-// Caller MUST: defer release(); defer sess.Close()
-func (c *sshConn) newSession(ctx context.Context) (sess *ssh.Session, release func(), err error) {
+func (c *sshConn) newSession(parent context.Context) (sess *ssh.Session, client *ssh.Client, release func(), err error) {
+	ctx, cancel := context.WithTimeout(parent, c.timeout())
+	defer cancel()
 	select {
 	case c.sessionSem <- struct{}{}:
 	case <-ctx.Done():
-		return nil, nil, ctx.Err()
+		return nil, nil, nil, ctx.Err()
 	case <-c.done:
-		return nil, nil, errClosed
-	}
-
-	client, err := c.getConn()
-	if err != nil {
-		<-c.sessionSem
-		return nil, nil, err
-	}
-	sess, err = client.NewSession()
-	if err != nil {
-		// NewSession can fail because the connection died (must redial) OR
-		// because the server hit its per-connection session limit (healthy —
-		// tearing down would cut every in-flight SFTP operation). Probe to
-		// tell them apart and only tear down a genuinely dead connection.
-		c.mu.Lock()
-		if c.client == client && !c.aliveLocked() {
-			c.teardownLocked()
-		}
-		c.mu.Unlock()
-		<-c.sessionSem
-		return nil, nil, err
+		return nil, nil, nil, errClosed
 	}
 	var once sync.Once
-	release = func() {
-		once.Do(func() { <-c.sessionSem })
+	release = func() { once.Do(func() { <-c.sessionSem }) }
+	client, err = c.getConnContext(ctx)
+	if err != nil {
+		release()
+		return nil, nil, nil, err
 	}
-	return sess, release, nil
+	setup, stop := context.WithTimeout(ctx, c.timeout())
+	defer stop()
+	sess, err = sshCall(setup, client, func() (*ssh.Session, error) { return client.NewSession() })
+	if err != nil {
+		var rejection *ssh.OpenChannelError
+		if setup.Err() != nil || !errors.As(err, &rejection) {
+			c.invalidate(client)
+		}
+		release()
+		return nil, nil, nil, err
+	}
+	return sess, client, release, nil
 }
 
 // ── Idle watcher ────────────────────────────────────────────────────────────
@@ -284,7 +317,7 @@ func (c *sshConn) startIdleWatcher() {
 		return
 	}
 	c.watchOnce.Do(func() {
-		ticker := time.NewTicker(c.cfg.IdleTimeout / 2)
+		ticker := time.NewTicker(max(c.cfg.IdleTimeout/2, time.Millisecond))
 		go func() {
 			defer ticker.Stop()
 			for {
@@ -306,14 +339,12 @@ func (c *sshConn) startIdleWatcher() {
 // teardownLocked closes sftp then client, nils both. Must be called with mu
 // held. Order matters: sftp rides on the ssh conn. Best-effort cleanup.
 func (c *sshConn) teardownLocked() {
-	if c.sftp != nil {
-		_ = c.sftp.Close()
-		c.sftp = nil
-	}
+	// Close SSH first: it releases outstanding SFTP requests, including Close.
 	if c.client != nil {
 		_ = c.client.Close()
-		c.client = nil
 	}
+	c.client = nil
+	c.sftp = nil
 }
 
 // ── Shutdown ────────────────────────────────────────────────────────────────
@@ -324,8 +355,21 @@ func (c *sshConn) Close() error {
 	c.closeOnce.Do(func() {
 		close(c.done)
 		c.mu.Lock()
+		if c.dialCancel != nil {
+			c.dialCancel()
+		}
 		c.teardownLocked()
 		c.mu.Unlock()
 	})
 	return nil
+}
+
+// CloseTransport cancels current I/O while allowing a later operation to reconnect.
+func (c *sshConn) CloseTransport() {
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	if client != nil {
+		c.invalidate(client)
+	}
 }
