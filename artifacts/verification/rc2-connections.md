@@ -24,7 +24,7 @@
 - 断线后的已接受 Exec 保留 outcome-unknown，不能作为自动重提条件。
 - SQLite 迁移脚本在独立临时数据库验证了执行记录保持不变。
 - 本机安装 `v0.6.0rc2-dev+connections`，Unix health 返回 200。实际集群 tsubame、tsubame-ar9055、tsubame-ar9094、tsubame-c0-evaluation 四个 target 的 connect 均退出 0，确认 controller/target/version；重复连接验证了 OpenSSH 隐藏 errno 的陈旧 socket 恢复。
-- 未进行真实笔记本睡眠/切换网络实验；该部分以故障注入覆盖，不能将其写成已完成的实机测试。
+- 实机休眠/唤醒已由用户操作并核验；网络切换仍未单独验证。
 
 ## 连接收尾验收（2026-10-12）
 
@@ -36,7 +36,9 @@
 
 收尾修正已原子安装到本机 CLI；当前服务保持原 PID 运行，无数据库迁移。实机验收基线保存于 `/Users/miaozean/Desktop/workspace/JobScheduler/.cache/verification/connection-real-baseline-20261012-171922.json`（169 个 task、controller、四个 forward）。
 
-实机休眠/网络切换仍待用户配合：先保存 task ID/external ID、controller/forward 状态和时间；进行一次短暂断网或休眠；恢复后核对四个 target 的 health/connect 身份、原任务归属和 external ID，以及日志中的检测/恢复时间。计算任务终态可以自然推进，但连接恢复不应产生额外 submit。验收时避免使用 --fresh；新提交只用于单独授权的实验。
+实机休眠/唤醒验证（2026-10-12，日本时间）：用户反馈恢复很快；日志在 20:27:08–09 仍记录 network is unreachable，四条 forward 于 20:27:22–23 建立，间隔约 14 秒。该间隔从最后一次不可达日志计算，未记录精确唤醒时刻。只读 health 返回 200，controller 为 79eabc06b6cb，四个 forward 均为 up。与 17:19 基线比较，169 个 task 无缺失，job_id/target/external_id/retry_count/target_generation 全部保持一致；两项 pending 现为 killed，一项仍为 running，未出现额外任务或身份重建。
+
+网络切换仍可单独验收：保存 task ID/external ID 和 forward 状态；切换网络后核对 health、身份及日志时间。计算任务终态可以自然推进，连接恢复不应产生额外 submit。
 
 ## 数据库迁移
 
