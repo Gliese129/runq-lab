@@ -1,20 +1,10 @@
 import { api } from './client'
-import type { MessageResponse, ProjectConfig, ProjectPayload, ProjectSummary } from '@/types/api'
+import type { MessageResponse, ProjectSummary } from '@/types/api'
 
 export const projectsApi = {
-  list: () => api.getList<ProjectSummary>('/projects'),
-
-  get: (name: string) =>
-    api.get<ProjectConfig>(`/projects/${encodeURIComponent(name)}`),
-
-  create: (payload: ProjectPayload) =>
-    api.post<MessageResponse>('/projects', payload),
-
-  update: (name: string, payload: ProjectPayload) =>
-    api.put<MessageResponse>(`/projects/${encodeURIComponent(name)}`, payload),
-
-  rename: (name: string, newName: string) =>
-    api.post<MessageResponse>(`/projects/${encodeURIComponent(name)}/rename`, { new_name: newName }),
+  list: () => api.getList<ProjectSummary>('/projects?archived=false'),
+  archived: (offset = 0) => api.getEnvelope<ProjectSummary>(`/projects?archived=true&limit=25&offset=${offset}`),
+  summary: (name: string) => api.getList<ProjectSummary>(`/projects?name=${encodeURIComponent(name)}`),
 
   archive: (name: string) =>
     api.post<MessageResponse>(`/projects/${encodeURIComponent(name)}/archive`, {}),

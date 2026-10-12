@@ -18,16 +18,16 @@ runq connect tsubame
 - `target add` writes a **preset** (slurm | pbs | sge | tsubame | abci)
   into `~/.runq/config.yaml`. Presets are starting points — edit the
   target's `submit_template`, `submit_id_regex`, and `kill_template` to
-  match your site (also editable in the dashboard Settings page, with
-  placeholder hints and a built-in checker).
+  match your site in config.yaml, then validate with `runq target check`.
 - `target check` renders every template with sample values and validates
   placeholders and the id regex. It is free and local — run it after every
   template edit.
 - `connect` verifies the host key with you, installs the remote CLI, and
   starts the socket forward. `runq target disconnect` undoes it.
 
-Select the target per command (`-t tsubame`), per session
-(`runq target use tsubame`), or persistently (`runq target use -p`).
+Set project.target to the code source and default execution target.
+Submit uses `-t > job.target > project.target`. `runq target use` and `RUNQ_TARGET`
+scope queries only; they do not override experiment submission.
 
 ## Submitting
 
@@ -47,15 +47,14 @@ in `submit_template` as `{{param.*}}`:
 ```yaml
 # project.yaml
 params:
-  - { name: h_rt, type: str, scope: scheduler, default: "4:00:00" }
-  - { name: node_kind, type: str, scope: scheduler, default: node_q,
-      choices: [node_q, node_h, node_f], strict: true }
+  - { name: h_rt, type: str, scope: scheduler }
+  - { name: node_kind, type: str, scope: scheduler,
+      choices: [node_q, node_h, node_f] }
 ```
 
 ```yaml
 # job.yaml — pair each benchmark with ITS walltime via zip. Every param a
-# template references needs a value here: a param's `default` only pre-fills
-# the dashboard form and is NOT injected at submit.
+# template references needs an explicit job value; defaults belong in code.
 sweep:
   - method: grid
     parameters: { model: [llama3-8b, qwen2-7b], node_kind: [node_q] }
@@ -67,7 +66,7 @@ sweep:
 
 `scope: scheduler` params are consumed by the submit command, never by
 your training command, and never injected into `{{args}}`. With
-`strict: true` a typo'd queue name fails at submit — not after four hours
+nonempty `choices`, a typo'd queue name fails at submit — not after four hours
 in queue. One job can carry per-benchmark time limits this way.
 
 `environment:` from project.yaml is injected into every task AND prefixed

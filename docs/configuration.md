@@ -1,15 +1,15 @@
 # Configuration reference — project.yaml & job.yaml
 
-Two files, one division of labour:
+One codebase has one project; each experiment has its own job file.
 
-- **project.yaml** is the parameter **catalog**: everything that *can*
-  vary, with types and defaults. The dashboard builds its submit form from
-  it; hand-edits are picked up automatically on next use (the DB copy is a
-  self-healing cache — CLI and GUI can never disagree).
-- **job.yaml** is one **selection** over that catalog: what varies *this*
-  submission, expressed compactly as grid / list blocks.
+- **project.yaml** holds the code directory, source/default target and stable execution defaults.
+- **job.yaml** holds the experiment's command, optional target/preflight overrides and parameters.
+- The dashboard reads locally recorded state and results, with stop, retry and archive operations.
+  Configure and submit with files and the CLI.
 
-Priority: CLI flag > job.yaml override > project.yaml default > built-in.
+Execution target: **explicit `-t` > job.target > project.target**.
+Session target, `RUNQ_TARGET` and global default_target only scope queries; they never choose a submission target.
+The source target remains project.target when execution is overridden.
 
 ## project.yaml
 
@@ -18,33 +18,21 @@ project_name: resnet50
 target: server-a                   # authoritative project filesystem
 targets: [server-a, server-b]      # allowed submit/sync destinations
 working_dir: /home/user/experiments/resnet50   # must exist at submit time
-command_template: python train.py {{args}}
+command: python train.py {{args}}
 
 environment:                    # injected into every task; in HPC mode also
   WANDB_PROJECT: resnet-exp     # prefixed onto the submit command, so
                                 # $VAR references in submit_template resolve
 
-params:                         # the catalog (all fields optional per param)
-  - name: lr
-    type: float                 # str | int | float | bool | file | folder
-    default: 0.001
-  - name: optimizer
-    type: str
-    default: adam
-    choices: [adam, sgd]        # suggestions by default...
-    strict: true                # ...a hard contract with strict: true —
-                                # out-of-list values fail at submit time
-  - name: h_rt                  # HPC-only knob (walltime):
-    type: str
-    scope: scheduler            # consumed by submit_template as {{param.h_rt}},
-    default: "4:00:00"          # exempt from command consumption, never in {{args}}
-  - name: debug_flag
-    type: bool
-    include: false              # hidden from the default GUI form
+params:                         # optional submission constraints
+  - {name: lr, type: float}
+  - {name: optimizer, type: str, choices: [adam, sgd]}
+  - {name: h_rt, type: str, scope: scheduler}
+  - {name: debug_flag, type: bool, style: flag}
 
 defaults:
   gpus_per_task: 1
-  max_retry: 3                  # 0 = unlimited
+  max_retry: 3                  # 0 = no retry; -1 = unlimited
 
 setup_command: hf download {{base_model}}   # optional; runs ONCE per submit,
                                 # before anything is persisted; may reference
@@ -99,10 +87,9 @@ selected by the whitelist are overwritten and stale selected files are
 deleted, while every other destination file is untouched. `.runq/` and `.git/`
 are never traversed. Symbolic links selected for sync are rejected explicitly.
 
-The dashboard can also perform a one-time forced fan-out from any target in the
-project's `targets` list. This does not change the configured source target.
+Use `runq project sync <name> --from <target>` for a one-time sync from another declared target. This does not change project.target.
 
-### command_template placeholders
+### command placeholders
 
 | Placeholder | Expands to |
 |---|---|
@@ -110,9 +97,16 @@ project's `targets` list. This does not change the configured source target.
 | `{{lr}}` (any param name) | that parameter's value, anywhere — even inside quoted strings |
 | `{{project}}`, `{{task_id}}` | identity of the current project / task |
 
-You can mix: `python train.py --lr {{lr}} {{args}}`. **Every sweep param
-must be consumed** by command_template or (via `{{param.*}}`) by the HPC
-submit_template — an unconsumed param is a submit-time error by design.
+You can mix: `python train.py --lr {{lr}} {{args}}`. Command placeholders are optional:
+parameters not referenced by the command remain in params.json for `ctx.params`.
+Dry-run lists them once as an informational hint. Missing explicit placeholders still fail.
+`{{param.*}}` belongs to scheduler templates, not the command renderer.
+
+`choices` is always a constraint when nonempty, including in legacy files with `strict: false`.
+Defaults belong in code (`ctx.params.get("lr", 1e-3)`); params.json contains only supplied values.
+Legacy parameter `default/min/max/include/glob/strict` fields are ignored and no longer written.
+Project command is optional if the job provides one. Legacy project `command_template` remains
+readable; specifying both names is an error, and serialization writes only `command`.
 Labels belong in the job `note`, not in params.
 
 ### Python environments
@@ -120,6 +114,27 @@ Labels belong in the job `note`, not in params.
 uv / venv / conda in the project directory are auto-detected during
 `runq init` and activated per task. Override in project.yaml if detection
 picks the wrong one.
+
+## Job command and preflight overrides
+
+```yaml
+project: resnet50
+command: python smoke.py
+# target: server-b             # omit for project default; -t wins
+preflight:
+  imports: false
+  hf: []                       # explicitly clear inherited repos
+  extra_run: ""                # explicitly clear inherited shell check
+fixed_params: {lr: 0.001, optimizer: adam}
+```
+
+Absent preflight fields inherit project values. Explicit false disables a check;
+`preflight: false` disables the entire preflight for this job.
+Resources and environment continue to use `overrides`.
+Preview, preflight and submission use the same effective configuration. Submitted jobs save
+command, execution target, its selection source and the merged project snapshot.
+Cross-target preview reports pending code sync; it checks destination files as they currently exist.
+`--project-file` upserts project configuration even with `--dry`; preview itself does not submit or sync.
 
 ## job.yaml
 
@@ -162,7 +177,7 @@ into one giant hand-written zip table — let the blocks express it.
 
 ## Secrets
 
-Never put tokens in `command_template` or `environment:`. Put them in
+Never put tokens in `command` or `environment:`. Put them in
 `working_dir/.env` — sourced at each task's start, never written to the
 DB, logs, or UIs.
 

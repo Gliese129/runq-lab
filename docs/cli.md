@@ -41,8 +41,14 @@ they state what's wrong and how to fix it, and exit non-zero.
 | `runq project add <name \| .>` | Register a project (reads ./project.yaml) |
 | `runq project ls / show / edit` | List, inspect, or open in `$EDITOR` |
 
-project.yaml is the source of truth: hand-edits are picked up on next use.
-There is no re-registration step.
+project.yaml is the source of truth: hand-edits are picked up on submission/preview.
+A new project must declare target; command may be supplied by each job.
+Use `--project-file project.yaml` to upsert an existing project instead of inventing another name.
+
+Submission uses **`-t > job.target > project.target`**, independently of session/environment/global target.
+`--dry` uses the service's common plan for local/runqd/HPC and lists parameters available through ctx.params.
+`--project-file` also updates registered configuration during dry-run.
+The dashboard supports observation, stop/retry and archive; editing and submission use files/CLI.
 
 ## Daemons
 
@@ -73,7 +79,7 @@ targets.
 | `runq target show / edit` | Inspect, or open config.yaml in `$EDITOR` + validate |
 | `runq connect <name>` | Verify SSH + host key, install remote CLI, start forward |
 | `runq target disconnect <name>` | Stop the forward, disable remote_cli |
-| `runq target use <name> [-p]` | Select the active target for this session (`-p` = persist) |
+| `runq target use <name> [-p]` | Scope queries to a target (`-p` = persist); does not override submission |
 
 ## Housekeeping
 

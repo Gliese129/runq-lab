@@ -5,7 +5,7 @@ import type { SearchMatch } from '@/types/api'
 import type { ProcessorToggles, PreDrainRule } from '@/utils/logProcessors'
 import { DEFAULT_PRE_DRAIN_RULES } from '@/utils/logProcessors'
 
-export const useLogViewerStore = defineStore('logViewer', () => {
+export const useLogSurfaceStore = defineStore('logSurface', () => {
   const currentOffset = ref(0)
   const totalBytes = ref(0)
   const lines = ref<string[]>([])

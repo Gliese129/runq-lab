@@ -21,15 +21,12 @@ runq target show [tsubame]       # current definition (alias: target ls)
   reports the lane missing, run `runq serve restart`.
 - `max_inflight` (per target) caps how many of its tasks are in flight; extra
   tasks wait in runq's queue, not the cluster's.
-- Choose the target per command with `-t <name>` (preferred for agents — it
-  is explicit), or `runq target use <name>` for the session.
+- Submit target is `-t > job.target > project.target`. Session target scopes queries only.
 
 ### SSH facts
 - Auth: ssh-agent first (`SSH_AUTH_SOCK`), then key files. A
   passphrase-protected key without an agent fails with a hint: `ssh-add <key>`.
-- runq does **not** read `Host` aliases, `HostName`, or `ProxyJump` from
-  `~/.ssh/config`. Put the real hostname in the target. It does honor
-  `StrictHostKeyChecking accept-new` for new host keys.
+- The lightweight SSH config reader resolves HostName/User/Port/IdentityFile and host-key policy. Include/Match and ProxyJump are not fully supported by the current connection layer. Authentication uses the service-starting shell's SSH_AUTH_SOCK; restart the service after changing agent environment.
 - Unknown host key → `runq target connect <name>` (asks to trust it).
 
 ## Templates
@@ -44,7 +41,7 @@ Per-task scheduler knobs are params with `scope: scheduler`, consumed only by
 # project.yaml
 params:
   - { name: h_rt, type: str, scope: scheduler }
-  - { name: node_kind, type: str, scope: scheduler, choices: [node_q, node_h, node_f], strict: true }
+  - { name: node_kind, type: str, scope: scheduler, choices: [node_q, node_h, node_f] }
 ```
 ```yaml
 # job.yaml — every referenced param needs a value here (defaults are not injected)

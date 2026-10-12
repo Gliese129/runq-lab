@@ -1,11 +1,5 @@
-// useProjectGroups (RQ2-4 ④) — Vue state + persistence for the sidebar
-// project groups. Same storage contract as the appearance levers and
-// param groups (RQ2-1 #12): ui.json is the roaming truth (opaque blob to
-// the backend, `projectGroups` key is ours), localStorage the offline
-// cache. Seeding stays in memory until the first user mutation — a
-// suggestion must never write itself.
+// Sidebar grouping is a local display preference; seeding stays in memory until edited.
 import { ref } from 'vue'
-import { uiApi } from '@/apis/ui'
 import {
   type ProjectGroupsState, emptyState, seedGroups, sanitizeGroups,
   assign as assignFn, renameGroup as renameFn, removeGroup as removeFn,
@@ -16,7 +10,6 @@ const STORAGE_KEY = 'runq-project-groups'
 
 const state = ref<ProjectGroupsState>(readLocal() ?? emptyState())
 const hasStored = ref(readLocal() !== null)
-let loaded = false
 
 function readLocal(): ProjectGroupsState | null {
   try {
@@ -26,35 +19,11 @@ function readLocal(): ProjectGroupsState | null {
   }
 }
 
-/** Load the roaming copy once per session; the local cache already applied. */
-async function load() {
-  if (loaded) return
-  loaded = true
-  try {
-    const doc = await uiApi.get()
-    const remote = sanitizeGroups((doc as Record<string, unknown> | null)?.projectGroups)
-    if (remote) {
-      state.value = remote
-      hasStored.value = true
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(remote))
-    }
-  } catch {
-    // Offline / daemon down: the local cache is the answer.
-  }
-}
-
+async function load() {}
 async function persist() {
   const { seeded: _drop, ...bare } = state.value
   localStorage.setItem(STORAGE_KEY, JSON.stringify(bare))
   hasStored.value = true
-  try {
-    // Whole-document replace with no CAS (RQ2-1 #12) — read-merge-write so
-    // the appearance levers and future keys survive.
-    const doc = (await uiApi.get()) ?? {}
-    await uiApi.put({ ...doc, projectGroups: bare })
-  } catch {
-    // Local copy stands; the next successful save pushes the merged state.
-  }
 }
 
 export function useProjectGroups() {

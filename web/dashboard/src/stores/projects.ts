@@ -7,6 +7,21 @@ import type { ProjectSummary } from '@/types/api'
 
 export const useProjectStore = defineStore('projects', () => {
   const list = ref<ProjectSummary[]>([])
+  const archived = ref<ProjectSummary[]>([])
+  const archivedTotal = ref(0)
+  const archivedPage = ref(1)
+  const archiveLoaded = ref(false)
+  const focused = ref<ProjectSummary | null>(null)
+  async function loadArchived(page = 1) {
+    const res = await projectsApi.archived((page - 1) * 25)
+    archived.value = res.items ?? []
+    archivedTotal.value = res.total ?? archived.value.length
+    archivedPage.value = page
+    archiveLoaded.value = true
+  }
+  async function ensure(name: string) {
+    focused.value = (await projectsApi.summary(name))[0] ?? null
+  }
   const loading = ref(false)
   const selected = ref<string | null>(null)
 
@@ -15,7 +30,7 @@ export const useProjectStore = defineStore('projects', () => {
     try {
       list.value = await projectsApi.list()
     } catch {
-      list.value = []
+      // Keep the last snapshot during a failed reload.
     } finally {
       loading.value = false
     }
@@ -32,7 +47,6 @@ export const useProjectStore = defineStore('projects', () => {
   // Default views hide archived projects (Overview's archived row is the
   // recovery entry); `list` keeps everything for callers that need it.
   const visible = computed(() => list.value.filter(p => !p.archived))
-  const archived = computed(() => list.value.filter(p => p.archived))
 
   // Mutations live HERE and own their refresh: every consumer reading the
   // computeds above stays consistent for free. Components must not call
@@ -53,9 +67,11 @@ export const useProjectStore = defineStore('projects', () => {
     // list AND invalidate every job-list query variant.
     await Promise.all([
       fetch(),
+      ...(archiveLoaded.value ? [loadArchived(archivedPage.value)] : []),
+      ...(focused.value ? [ensure(focused.value.name)] : []),
       queryClient.invalidateQueries({ queryKey: qk.jobs }),
     ])
   }
 
-  return { list, visible, archived, loading, selected, current, fetch, select, archive, unarchive }
+  return { list, visible, archived, archivedTotal, archivedPage, loadArchived, focused, ensure, loading, selected, current, fetch, select, archive, unarchive }
 })

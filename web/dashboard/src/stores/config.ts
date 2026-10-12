@@ -5,7 +5,6 @@ import type { Capabilities, TargetSummary } from '@/types/api'
 
 const NO_CAPS: Capabilities = {
   gpu_map: false,
-  pause_resume: false,
   live_log: false,
   retry: false,
   state_model: 'push',
@@ -52,6 +51,10 @@ export const useConfigStore = defineStore('config', () => {
   const isPoll = computed(() => caps.value.state_model === 'poll')
   const killAsync = computed(() => caps.value.kill_async)
 
+  function capabilitiesFor(target?: string): Capabilities {
+    return targets.value.find(t => t.name === target)?.capabilities ?? { ...NO_CAPS }
+  }
+
   async function fetchConfig() {
     const res = await configApi.get()
     dataPath.value = res.data_path
@@ -77,5 +80,6 @@ export const useConfigStore = defineStore('config', () => {
     isPoll,
     killAsync,
     fetchConfig,
+    capabilitiesFor,
   }
 })

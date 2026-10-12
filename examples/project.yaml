@@ -1,4 +1,4 @@
-# runq project configuration — the parameter CATALOG
+# runq project configuration — one codebase and stable execution defaults
 #
 # Register with:  runq project add .          (from this directory)
 #            or:  runq project add myname     (override name via CLI)
@@ -8,15 +8,15 @@
 # Config priority: CLI flag > job.yaml override > this file > built-in default.
 
 project_name: resnet50
+target: local
 working_dir: /home/user/projects/resnet50    # must exist at submit time
-command_template: python train.py {{args}}
-# command_template placeholders:
+command: python train.py {{args}}
+# command placeholders:
 #   {{args}}        → --key=value for every param not otherwise consumed
 #   {{lr}} etc.     → one param's value, anywhere (even inside quoted strings)
 #   {{project}} {{task_id}} → identity of the current project / task
 # You can mix: python train.py --lr {{lr}} {{args}}
-# Every sweep param must be consumed by this template (or, on HPC, by the
-# submit_template via {{param.*}}) — an unconsumed param fails at submit.
+# Parameters without command placeholders remain in params.json for ctx.params.
 
 # Environment variables injected into every task. In HPC mode they are ALSO
 # prefixed onto the submit command, so $MY_GROUP-style references in
@@ -26,26 +26,20 @@ command_template: python train.py {{args}}
 environment:
   WANDB_PROJECT: resnet-experiments
 
-# Parameter catalog. The dashboard builds its submit form from this; a
-# job.yaml is one selection over it.
-#   type:    str | int | float | bool | file | folder
-#   choices: suggestions — add `strict: true` to make them a hard contract
-#            (out-of-list values fail at submit time, CLI and GUI alike)
-#   include: false hides the param from the default GUI form
-#   scope: scheduler — consumed by the HPC submit_template ({{param.NAME}}),
-#          exempt from command_template and never injected into {{args}}
+# Optional submission constraints: nonempty choices are always enforced.
+# scope: scheduler excludes a param from {{args}}; defaults belong in code.
 params:
-  - { name: lr, type: float, default: 0.001 }
-  - { name: batch_size, type: int, default: 32 }
-  - { name: optimizer, type: str, default: adam, choices: [adam, sgd], strict: true }
-  - { name: h_rt, type: str, scope: scheduler, default: "4:00:00" }
+  - { name: lr, type: float}
+  - { name: batch_size, type: int}
+  - { name: optimizer, type: str, choices: [adam, sgd] }
+  - { name: h_rt, type: str, scope: scheduler }
 
 # Defaults (overridable per-job in job.yaml → overrides).
 # gpus_per_task is THE way to ask for GPUs — runq assigns the actual
 # devices via CUDA_VISIBLE_DEVICES; never hardcode GPU indices anywhere.
 defaults:
   gpus_per_task: 1
-  max_retry: 3       # 0 = unlimited retries
+  max_retry: 3       # 0 = no retry; -1 = unlimited retries
 
 # Optional: runs ONCE per submit, before anything is persisted (e.g. model
 # pre-download on an HPC login node). May reference FIXED params only;

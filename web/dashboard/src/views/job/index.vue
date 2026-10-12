@@ -4,19 +4,14 @@
       :detail="detail"
       :top-runs="topRuns"
       :metric-key="compareKey"
-      :can-pause="config.caps.pause_resume"
-      :is-poll="config.isPoll"
+      :is-poll="caps.state_model === 'poll'"
       :refreshing="refreshing"
-      :pausing="pausing"
       :killing="killing"
       :archiving="archiving"
-      @pause="togglePause"
-      @resume="togglePause"
       @kill="killJob"
       @refresh="onRefresh"
       @archive="archiveJob"
       @unarchive="unarchiveJob"
-      @rerun="router.push({ name: 'submit', query: { fromJob: props.jobId } })"
     />
 
     <!-- Tab strip (RQ2-4 ②, kit ScreensJob): tasks | results | data.
@@ -57,7 +52,7 @@
       :wandb="detail.wandb"
       :metric-keys="detail.metric_keys"
       :swept-params="sweptParams"
-      :can-retry="config.caps.retry"
+      :can-retry="caps.retry"
       @kill-task="onKillTask"
       @retry-task="onRetryTask"
       @click-task="onClickTask"
@@ -119,6 +114,7 @@ const props = defineProps<{ project: string; jobId: string }>()
 const router = useRouter()
 const route = useRoute()
 const config = useConfigStore()
+const caps = computed(() => detail.value?.capabilities ?? config.capabilitiesFor(detail.value?.job.target))
 const prefs = usePreferences()
 const snack = useSnackbar()
 const { t } = useI18n()
@@ -217,18 +213,10 @@ watch(statusFilter, (v) => { prefs.lastStatusFilter.value = v })
 
 // ── Actions: mutations own their invalidation; isPending drives the
 // button loading/double-click guards. ──
-const pausing = computed(() => jobActions.pause.isPending.value || jobActions.resume.isPending.value)
 const killing = computed(() => jobActions.kill.isPending.value)
 const archiving = computed(() => jobActions.archive.isPending.value || jobActions.unarchive.isPending.value)
 const refreshing = computed(() => jobActions.refresh.isPending.value)
 
-function togglePause() {
-  if (!detail.value || pausing.value) return
-  const m = detail.value.job.status === 'paused' ? jobActions.resume : jobActions.pause
-  m.mutateAsync(props.jobId)
-    .then(() => snack.success(t('common.done')))
-    .catch((e: any) => snack.error(e?.message || t('common.error')))
-}
 
 async function killJob() {
   if (!detail.value || killing.value) return

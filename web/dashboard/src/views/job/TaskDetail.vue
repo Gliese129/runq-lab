@@ -22,7 +22,7 @@
             <v-icon start size="14">mdi-stop</v-icon> {{ t('job.kill') }}
           </v-btn>
           <v-btn
-            v-if="config.caps.retry && (task.status === 'failed' || task.status === 'killed')"
+            v-if="taskCaps.retry && (task.status === 'failed' || task.status === 'killed')"
             size="x-small"
             variant="tonal"
             color="primary"
@@ -171,6 +171,8 @@
         </template>
 
         <div class="text-subtitle-2 mb-2">{{ t('task.execution') }}</div>
+        <div class="text-caption text-on-surface-variant">{{ t('job.data_as_of', { time: task.refreshed_at ? relativeTime(task.refreshed_at) : '—' }) }}</div>
+        <v-chip v-if="task.stale" size="x-small" color="warning">{{ t('job.snapshot_stale') }}</v-chip>
         <div class="kv-row"><span class="kv-key">{{ t('task.exec_job') }}</span><code>{{ props.jobId.slice(0, 10) }}</code></div>
         <div v-if="jobTarget" class="kv-row"><span class="kv-key">{{ t('task.exec_target') }}</span><code>{{ jobTarget }}</code></div>
         <div v-if="task.command" class="kv-row"><span class="kv-key">{{ t('task.exec_command') }}</span><code>{{ task.command }}</code></div>
@@ -316,6 +318,7 @@
 import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { relativeTime } from '@/utils/relativeTime'
 import { tasksApi, DEFAULT_LOG_MAX_BYTES } from '@/apis/tasks'
 import { jobsApi } from '@/apis/jobs'
 import { ApiError } from '@/apis/client'
@@ -327,7 +330,7 @@ import { useJobContextQuery } from '@/queries/useJobQueries'
 import { useGenerationRerun } from '@/composables/useGenerationRerun'
 import GenerationRerunDialog from '@/components/GenerationRerunDialog.vue'
 import { useConfigStore } from '@/stores/config'
-import { useLogViewerStore } from '@/stores/logViewer'
+import { useLogSurfaceStore } from '@/stores/logSurface'
 import MetricsChart from '@/components/MetricsChart.vue'
 import TaskActivityCurve from './TaskActivityCurve.vue'
 import type { ActivityCell } from './activityMath'
@@ -345,7 +348,7 @@ const route = useRoute()
 const router = useRouter()
 const snack = useSnackbar()
 const config = useConfigStore()
-const logStore = useLogViewerStore()
+const logStore = useLogSurfaceStore()
 const { t } = useI18n()
 const { confirm: confirmDialog } = useConfirm()
 
@@ -453,7 +456,8 @@ const logContainer = ref<HTMLElement>()
 // so arriving from the job page costs no request at all. ──
 const jobQuery = useJobContextQuery(() => props.jobId)
 const jobDetail = computed(() => jobQuery.data.value ?? null)
-const jobTarget = computed(() => jobDetail.value?.job.target ?? '')
+const jobTarget = computed(() => task.value?.target ?? jobDetail.value?.job.target ?? '')
+const taskCaps = computed(() => task.value?.capabilities ?? config.capabilitiesFor(jobTarget.value))
 
 // Swept vs fixed is a property of the JOB, not the task: a param is an
 // axis only if sibling tasks disagree about it.
@@ -939,7 +943,7 @@ async function killTask() {
   if (!ok) return
   try {
     await taskActions.kill.mutateAsync(props.taskId)
-    if (config.killAsync) snack.info(t('task.cancel_requested'))
+    if (taskCaps.value.kill_async) snack.info(t('task.cancel_requested'))
     else snack.success(t('task.killed_ok'))
   } catch (e: any) {
     snack.error(e?.message || t('common.error'))

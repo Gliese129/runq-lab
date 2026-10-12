@@ -1,5 +1,5 @@
 import { ref, computed, watch, nextTick, onScopeDispose, type Ref } from 'vue'
-import { useLogViewerStore } from '@/stores/logViewer'
+import { useLogSurfaceStore } from '@/stores/logSurface'
 import type { DisplayLine } from '@/utils/logProcessors'
 import {
   buildRenderItems,
@@ -37,7 +37,7 @@ export function useLogSurface(
   logLines: Ref<string[]>,
   logContainer: Ref<HTMLElement | undefined>,
 ) {
-  const logStore = useLogViewerStore()
+  const logStore = useLogSurfaceStore()
 
   // ── Fold / expand state ──
   const foldOverrides = ref(new Map<string, boolean>())

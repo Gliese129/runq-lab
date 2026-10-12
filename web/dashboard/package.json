@@ -9,7 +9,6 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
-    "test:submit": "node scripts/submit-corner-test.mjs",
     "test": "vitest run",
     "lint": "oxlint src",
     "format": "prettier --write src",

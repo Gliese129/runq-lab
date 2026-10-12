@@ -19,12 +19,9 @@ cluster's scheduler (SLURM, PBS, SGE) over SSH.
 
 ## Projects, jobs, and tasks
 
-A **project** is a training script plus its parameter catalog
-(`project.yaml`). It says what *can* vary: learning rate, batch size,
-optimizer — with types, defaults, and constraints.
+A **project** is one codebase with stable execution configuration (`project.yaml`). It holds the code source/default target and optional parameter constraints; parameter defaults belong in code.
 
-A **job** is one submission. It selects which parameters vary *this time*
-and how (`job.yaml`). One job produces many tasks.
+A **job** is one experiment (`job.yaml`): command/target/preflight overrides plus explicit parameters and sweep structure. Train, smoke and reservation changes reuse the same project.
 
 A **task** is one run with one set of parameters. Each task gets its own
 workspace, log, and parameter snapshot. Tasks are the atomic unit — they
@@ -57,9 +54,7 @@ A **target** is where tasks run. runq supports two kinds:
 - **local** — a `runqd` instance on a GPU machine (Unix socket).
 - **HPC** — a cluster login node (SSH + submit/status/kill templates).
 
-Targets are configured in `~/.runq/config.yaml`. You can switch between
-them per command (`-t name`), per session (`runq target use name`), or
-persistently.
+Targets are configured in `~/.runq/config.yaml`. Submission uses explicit `-t > job.target > project.target`. Session/global targets only scope queries.
 
 A project may declare one authoritative `target` and multiple allowed
 `targets`. A submit to a non-source target first mirrors the paths selected by
@@ -77,7 +72,7 @@ CLI flag  >  job.yaml override  >  project.yaml default  >  built-in
 
 `project.yaml` is always the source of truth for the catalog. The
 database is a self-healing cache — if you edit project.yaml by hand,
-the next command or dashboard load picks it up.
+the next submission/preview picks it up. Dashboard status reads the controller database snapshot.
 
 ## Workspace and storage
 
@@ -99,7 +94,7 @@ like an experiment log.
 
 Tokens and API keys go in `working_dir/.env`. This file is sourced at
 each task's start but **never stored** in the database, logs, or any UI.
-Do not put secrets in `command_template` or `environment:`.
+Do not put secrets in `command` or `environment:`.
 
 ## Dashboard
 
@@ -108,8 +103,9 @@ The embedded web dashboard (`runq-dashboard` build) provides:
 - Job and task tables with real-time status
 - Parameter sweep visualization
 - Metric charts and comparison
-- Project and target configuration
-- HPC template editing with placeholder hints
+- Stop, retry and archive/restore operations
+- On-demand paginated archived history
+- Local display preferences; configuration and submission use files/CLI
 
 It is optional — everything the dashboard does is also available through
 the CLI.

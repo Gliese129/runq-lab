@@ -10,15 +10,8 @@
 // theme colors (accent), and persists state. No component takes a lever
 // prop — the whole app reskins at once.
 //
-// Persistence (RQ2-1 alignment #12): ui.json is the roaming home — the
-// backend stores it as an opaque blob next to config.yaml, so preferences
-// follow the daemon across machines. localStorage is the offline
-// fallback/cache: applied instantly on boot, superseded when the server
-// copy arrives, still functional when the daemon is down.
-
 import { ref, watch } from 'vue'
 import vuetify from '@/plugins/vuetify'
-import { uiApi } from '@/apis/ui'
 
 export type Density = 'compact' | 'regular' | 'comfy'
 export type Surface = 'hairline' | 'elevated' | 'grid'
@@ -101,52 +94,13 @@ function apply() {
   dark.secondary = a.secondary
 }
 
-// ── Persistence: localStorage immediately, ui.json debounced ──
-
-let pushTimer: ReturnType<typeof setTimeout> | undefined
-let adoptingRemote = false
-
-async function pushRemote() {
-  try {
-    // PUT replaces the whole document — read-merge-write so grouping and
-    // future keys survive. No CAS by design (RQ2-1 #12): last write wins,
-    // a lost preference write costs nothing.
-    const doc = (await uiApi.get()) ?? {}
-    await uiApi.put({ ...doc, appearance: current() })
-  } catch {
-    // Offline / daemon down: localStorage already holds it; the next
-    // successful change pushes the merged state.
-  }
-}
-
+// Display preferences live in this browser.
 watch([density, surface, accent], () => {
   apply()
   localStorage.setItem(STORAGE_KEY, JSON.stringify(current()))
-  if (adoptingRemote) return // echoing the server's own copy back is noise
-  clearTimeout(pushTimer)
-  pushTimer = setTimeout(pushRemote, 800)
 })
 
-/** Boot: apply the local copy instantly, then adopt the roaming copy. */
-export async function initAppearance() {
-  apply()
-  try {
-    const doc = await uiApi.get()
-    const remote = sanitize((doc as Record<string, unknown> | null)?.appearance)
-    if (Object.keys(remote).length > 0) {
-      adoptingRemote = true
-      if (remote.density) density.value = remote.density
-      if (remote.surface) surface.value = remote.surface
-      if (remote.accent) accent.value = remote.accent
-      // The watcher runs post-flush; release the flag the same way.
-      setTimeout(() => {
-        adoptingRemote = false
-      })
-    }
-  } catch {
-    // Offline boot: the localStorage copy already applied.
-  }
-}
+export async function initAppearance() { apply() }
 
 export function useAppearance() {
   return { density, surface, accent }

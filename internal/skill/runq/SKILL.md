@@ -32,7 +32,7 @@ ls project.yaml job.yaml .rsync 2>/dev/null
 
 | Goal | Command |
 |---|---|
-| Preview a submit (free, no side effects) | `runq submit job.yaml --dry -t <target>` |
+| Preview a submit (no submission; project-file upserts) | `runq submit job.yaml --dry -t <target>` |
 | Submit | `runq submit job.yaml --json -t <target>` → `{job_id,total_tasks}` |
 | Jobs / one job's tasks | `runq ps --json` · `runq ps <job_id> --json` |
 | Force a fresh scheduler probe | add `--fresh` (rate-limited server-side) |
@@ -59,9 +59,9 @@ then `--project-file` / `runq target check <name>`; config changes hot-reload.
 ## 2. Mental model
 
 - **project** (`project.yaml`, registered with `runq project add`): the catalog
-  — `working_dir`, `command_template`, the params that *may* vary, defaults
+  — one codebase: `working_dir`, optional `command`, parameter constraints, defaults
   for gpus/retry/timeout, `target` (the machine that holds the project tree).
-- **job** (`job.yaml`): one selection — `note` + `sweep:` blocks. `grid`
+- **job** (`job.yaml`): one experiment — optional `command`, `target`, `preflight`, plus `fixed_params`, `note` and `sweep:` blocks. `grid`
   blocks multiply, `list` blocks zip row-by-row. One job → N tasks.
 - **task**: one command on one target; its workspace is
   `<working_dir>/.runq/<note>-<job_id>/<task_id>/` (log, params.json,
@@ -69,30 +69,38 @@ then `--project-file` / `runq target check <name>`; config changes hot-reload.
 - **target**: where tasks run, defined in `~/.runq/config.yaml` with
   `submit_template` / `status_template` / `kill_template` for HPC.
 
-### Parameters — the #1 source of failed submits
-1. Every swept param must be **consumed**: by `command_template`
-   (`{{lr}}` or `{{args}}`), or — for scheduler knobs declared
-   `scope: scheduler` — by the target's `submit_template` as `{{param.h_rt}}`.
-   An unconsumed param is a submit-time error by design.
-2. **A project param's `default` is NOT injected at submit.** It only pre-fills
-   the dashboard form. Every placeholder the templates reference must get a
-   value from the job — constants go in `fixed_params:` (every task), swept
-   values in `sweep:`. This is
-   what `template references unknown parameter(s): x` means. Do not "fix" it
-   with `--no-preflight` (that flag skips preflight checks, not rendering).
-3. A param may appear in only one sweep block (`duplicate parameter`); put
-   paired dimensions in one `list` block.
-4. Labels go in the job `note`, not in params.
+### Parameters and targets
+1. Parameters go to `ctx.params` by default; `{{x}}` / `{{args}}` are optional command mappings.
+   Dry-run lists command-unconsumed parameters once; they still enter params.json.
+   Give defaults in code: `ctx.params.get("lr", 1e-3)`. params.json records supplied values only.
+2. Every explicit placeholder still needs a job value: constants in `fixed_params`,
+   swept values in `sweep`. `{{param.*}}` is scheduler/preflight syntax, not command syntax.
+   Missing placeholders cannot be repaired with `--no-preflight`.
+3. Nonempty choices are mandatory constraints. Remove old suggestions you don't want enforced.
+   `strict`, parameter `default/min/max/include/glob` are ignored; there is no form preset store.
+4. Submit uses **explicit -t > job.target > project.target**. `RUNQ_TARGET`, active target and
+   global default_target do not affect submission. Register new projects with an explicit target.
+   Changing execution target does not change the code sync source.
+5. Reuse one project for train/smoke/resume/reservation jobs. To update an existing project,
+   use `--project-file` upsert; it also writes when used with `--dry`.
+6. Job preflight fields inherit when absent; false disables, `hf: []` and `extra_run: ""` clear.
+   Project command may be omitted when job.command is provided. Legacy project `command_template`
+   loads as an alias; writing both names fails. Saved jobs include their effective snapshot.
+7. A parameter can appear in only one sweep block. Labels belong in note.
 
 Always read the `--dry` output: it shows the expansion and the rendered command
 (HPC targets: the generated run.sh and the exact submit line). Report the arithmetic to the user before a large
 submit (`lr(3) × seed(2) = 6 tasks`).
 
+SSH authentication uses the service-starting shell's `SSH_AUTH_SOCK`.
+After changing agent environment, run `runq serve restart`; do not assume another shell updates it.
+The dashboard is for state/results/logs and stop/retry/archive. Archived history is loaded on demand.
+
 ## 3. Status: what runq knows vs. what is true
 
 - runq shows a **cached** snapshot refreshed by a background probe; `--fresh`
   forces one probe. `pending` means the cluster scheduler is queueing it.
-- ELAPSED counts from when the task's wrapper started on the node.
+- Legacy ELAPSED may include dispatch/queue time; use the recorded timestamps as evidence until the time-semantics update.
 - If runq and the scheduler disagree, or a probe fails, **say "unconfirmed"**
   and show both facts. Never present a cached value as live, and never blame
   the user's network or the cluster without evidence.

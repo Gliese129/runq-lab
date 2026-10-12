@@ -22,6 +22,8 @@ export interface TaskCountGroup {
 }
 
 export interface JobSummary {
+  stale?: boolean
+  target_source?: string
   archived: boolean
   id: string
   project: string
@@ -56,7 +58,12 @@ export interface JobOverrides {
  * NOTE: over JSON the backend only accepts `{values: [...]}` parameter
  * specs (no UnmarshalJSON for bare arrays — that's YAML-only sugar).
  */
-export interface JobConfigPayload {
+export interface RawJobConfig {
+  command?: string
+  target?: string
+  target_source?: string
+  preflight?: Record<string, unknown>
+  effective_config?: Record<string, unknown>
   project: string
   description?: string
   note?: string
@@ -68,9 +75,13 @@ export interface JobConfigPayload {
 }
 
 /** Read alias: raw config as submitted (note keeps its {{...}} form). */
-export type RawJobConfig = JobConfigPayload
 
 export interface TaskView {
+  target?: string
+  capabilities?: Capabilities
+  refreshed_at?: number
+  stale?: boolean
+
   id: string
   status: string
   params: Record<string, any>
@@ -151,6 +162,7 @@ export interface WandbInfo {
 }
 
 export interface JobDetail {
+  capabilities?: Capabilities
   job: JobSummary
   tasks: TaskView[]
   metric_keys: string[]
@@ -195,7 +207,6 @@ export interface GPUSlot {
  */
 export interface Capabilities {
   gpu_map: boolean
-  pause_resume: boolean
   live_log: boolean
   retry: boolean
   state_model: 'push' | 'poll'
@@ -277,33 +288,6 @@ export interface HealthResponse {
 }
 
 /** POST /jobs/plan — merged dry-run + resolve-note (single wizard call). */
-export interface JobPlanResponse {
-  tasks: Record<string, any>[]
-  note_resolved: string
-}
-
-/** One preflight check in the four-state grammar (passed/failed/warning/skipped). */
-export interface PreflightCheck {
-  name: string
-  status: 'passed' | 'failed' | 'warning' | 'skipped'
-  detail?: string
-  /** Ready-made remediation commands (e.g. `huggingface-cli download …`). */
-  commands?: string[]
-}
-
-/** Structured preflight report attached to POST /jobs/preview (RQ-76 ②). */
-export interface PreflightReport {
-  results?: PreflightCheck[]
-  home_dir?: string
-  python_prefix?: string
-}
-
-/** POST /jobs/preview — rendered dry-run text + structured preflight. */
-export interface JobPreviewResponse {
-  preview: string
-  preflight?: PreflightReport
-}
-
 export interface ActionResponse {
   ok: boolean
 }
@@ -324,110 +308,12 @@ export interface FSEntry {
   size: number
 }
 
-export interface ParseResult {
-  args: ScriptArg[]
-  detected_env?: string
-  suggested_command: string
-}
-
-/** Backend parse-script emits ONLY these fields — choices/min/max
- *  belong to project.ParamDef, not to script parsing. */
-export interface ScriptArg {
-  name: string
-  type: string
-  default?: string
-  /** "flag" = store_true switch (bare --name when true, omitted when false) */
-  style?: string
-}
-
 export interface ProjectSummary {
   archived?: boolean
   name: string
   work_dir?: string
   job_count: number
 }
-
-export interface ProjectConfig {
-  project_name: string
-  /** authoritative filesystem for the project tree */
-  target?: string
-  /** targets this project may sync and submit to; target is always a member */
-  targets?: string[]
-  working_dir: string
-  command_template: string
-  /** optional env file sourced before each task (backend: *string) */
-  env_file?: string
-  /** optional one-shot command before each submit (fixed params only) */
-  setup_command?: string
-  /** scheduler job name template ({{name}} in submit_template) */
-  job_name?: string
-  environment?: Record<string, string>
-  defaults?: {
-    gpus_per_task?: number
-    max_retry?: number
-    timeout?: string
-  }
-  resume?: {
-    enabled: boolean
-    extra_args?: string
-  }
-  python_env?: {
-    type?: string
-    path?: string
-    name?: string
-  }
-  wandb?: {
-    project: string
-    entity?: string
-    tags?: string[]
-    mode?: string
-  }
-  /** Submit-time checks (contract): declared entries are verified on every
-   *  submit; failures block before anything is queued. */
-  preflight?: {
-    enabled?: boolean
-    imports?: boolean
-    wandb?: boolean
-    /** HF repos to verify — "{{param.NAME}}" entries expand against the sweep */
-    hf?: string[]
-    extra_run?: string
-  }
-  params?: Array<{
-    name: string
-    type: string
-    default?: string
-    choices?: string[]
-    min?: number
-    max?: number
-    /** user curation: appears in submit param table. absent = never curated */
-    include?: boolean
-    /** choices become a contract: out-of-list values fail at submit */
-    strict?: boolean
-    /** "scheduler" = consumed by submit_template only (never by the command) */
-    scope?: string
-    /** "flag" = store_true switch: rendered as bare --name / omitted */
-    style?: string
-    /** path PATTERN whose matches are this param's candidate values
-     *  (file/folder params). Only the pattern is stored — which of today's
-     *  matches a submit uses is chosen in the UI, never persisted here. */
-    glob?: string
-  }>
-}
-
-/**
- * Write side uses the SAME shape as the read side (mirrors project.Config).
- * The old narrower ProjectPayload silently dropped every field the form
- * didn't edit (target / env_file / defaults.timeout / resume / wandb) on
- * save — writers must read-modify-write over the fetched ProjectConfig.
- */
-export type ProjectPayload = ProjectConfig
-
-export interface WebhookConfig {
-  url: string
-  events: string[]
-}
-
-// ── P6: Activity + Search ──
 
 export interface ActivityPoint {
   ts: number

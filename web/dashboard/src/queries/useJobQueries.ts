@@ -25,21 +25,22 @@ export function useJobsListQuery() {
   })
 }
 
-export function useArchivedJobsQuery() {
+export function useArchivedJobsQuery(project: MaybeRefOrGetter<string>, open: MaybeRefOrGetter<boolean>, page: MaybeRefOrGetter<number>) {
   return useQuery({
-    queryKey: qk.jobsArchived,
-    queryFn: () => jobsApi.listArchived(),
-    // archive state only changes through our own mutations — no polling
+    queryKey: computed(() => [...qk.jobsArchived, toValue(project), toValue(page)]),
+    queryFn: () => jobsApi.listArchived(toValue(project), toValue(page)),
+    enabled: computed(() => toValue(open)),
     staleTime: 60_000,
+    refetchInterval: false,
   })
 }
 
 /** Project-scoped list — skips the archived-project cascade (see jobsApi). */
-export function useProjectJobsQuery(project: MaybeRefOrGetter<string>) {
+export function useProjectJobsQuery(project: MaybeRefOrGetter<string>, live: MaybeRefOrGetter<boolean> = true) {
   return useQuery({
     queryKey: computed(() => qk.projectJobs(toValue(project))),
     queryFn: ({ signal }) => jobsApi.listByProject(toValue(project), { silent: true, signal }),
-    refetchInterval: LIST_POLL_MS,
+    refetchInterval: computed(() => toValue(live) ? LIST_POLL_MS : false),
   })
 }
 
@@ -51,7 +52,7 @@ export function useJobDetailQuery(jobId: MaybeRefOrGetter<string>) {
     // Live only while the job is: terminal jobs stop polling entirely.
     refetchInterval: (query) => {
       const s = query.state.data?.job.status
-      return s && ACTIVE_JOB.has(s) ? detailPollMs(config.isPoll) : false
+      return s && ACTIVE_JOB.has(s) ? detailPollMs((query.state.data?.capabilities ?? config.capabilitiesFor(query.state.data?.job.target)).state_model === 'poll') : false
     },
   })
 }
@@ -133,22 +134,13 @@ export function useJobActions() {
   const kill = useMutation({
     mutationFn: (id: string) => jobsApi.kill(id),
     onSuccess: (_data, id) => {
-      if (config.killAsync) {
+      const snapshot = qc.getQueryData<JobDetail>(qk.job(id))
+      if ((snapshot?.capabilities ?? config.capabilitiesFor(snapshot?.job.target)).kill_async) {
         const detail = qc.getQueryData<JobDetail>(qk.job(id))
         markTasks((detail?.tasks ?? []).filter(t => t.status === 'running').map(t => t.id))
       }
       invalidateJob(id)
     },
-  })
-
-  const pause = useMutation({
-    mutationFn: (id: string) => jobsApi.pause(id),
-    onSuccess: (_d, id) => invalidateJob(id),
-  })
-
-  const resume = useMutation({
-    mutationFn: (id: string) => jobsApi.resume(id),
-    onSuccess: (_d, id) => invalidateJob(id),
   })
 
   /** Manual reconcile (poll-model): backend re-reads external sources. */
@@ -167,5 +159,5 @@ export function useJobActions() {
     onSuccess: (_d, v) => invalidateArchive(v.project),
   })
 
-  return { kill, pause, resume, refresh, archive, unarchive, invalidateJob }
+  return { kill, refresh, archive, unarchive, invalidateJob }
 }

@@ -209,9 +209,7 @@
       <v-icon size="40" color="primary" class="mb-3" style="opacity: 0.4">mdi-rocket-launch-outline</v-icon>
       <div class="text-h6 mb-1">{{ t('overview.no_projects') }}</div>
       <div class="text-body-2 text-on-surface-variant mb-4">{{ t('overview.no_projects_hint') }}</div>
-      <v-btn color="primary" variant="tonal" :to="{ name: 'submit' }">
-        <v-icon start size="16">mdi-plus</v-icon> {{ t('nav.submit') }}
-      </v-btn>
+
       <div class="mt-4 text-caption text-on-surface-variant">
         {{ t('overview.hint_cli') }} <code>runq init train.py</code> → <code>runq submit .</code>
       </div>
@@ -220,7 +218,7 @@
     <!-- Archived projects: the recovery entry point — once a project is
          archived its jobs cascade-hide, so without this row it would have
          no discoverable way back. -->
-    <v-card v-if="archivedProjects.length > 0" class="mt-3">
+    <v-card class="mt-3">
       <div
         class="d-flex align-center ga-2 px-4 py-3 cursor-pointer text-on-surface-variant"
         role="button" tabindex="0" :aria-expanded="archivedOpen"
@@ -229,7 +227,7 @@
         @keydown.space.prevent="archivedOpen = !archivedOpen"
       >
         <v-icon size="16">mdi-archive-outline</v-icon>
-        <span class="text-subtitle-2">{{ t('archive.projects_section', { n: archivedProjects.length }) }}</span>
+        <span class="text-subtitle-2">{{ t('archive.projects_history') }}</span>
         <v-spacer />
         <v-icon size="16">{{ archivedOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
       </div>
@@ -252,12 +250,15 @@
           </v-btn>
         </div>
       </div>
+      <v-pagination v-if="archivedOpen && projectStore.archivedTotal > 25"
+        :model-value="projectStore.archivedPage" :length="Math.ceil(projectStore.archivedTotal / 25)"
+        @update:model-value="projectStore.loadArchived" density="compact" />
     </v-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useProjectStore } from '@/stores/projects'
@@ -294,6 +295,9 @@ onMounted(() => { projectStore.fetch() })
 // ── Archived projects (recovery entry) — derived from the store ──
 const archivedOpen = ref(false)
 const archivedProjects = computed(() => projectStore.archived)
+watch(archivedOpen, async (open) => {
+  if (open) { try { await projectStore.loadArchived() } catch (e: any) { snack.error(e?.message || t('common.error')) } }
+})
 
 async function unarchiveProject(name: string) {
   try {

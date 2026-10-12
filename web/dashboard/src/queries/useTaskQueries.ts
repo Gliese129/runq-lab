@@ -35,7 +35,7 @@ export function useTaskQuery(
     },
     refetchInterval: (query) => {
       const s = query.state.data?.status
-      return s && ACTIVE_TASK.has(s) ? (config.isPoll ? 30_000 : 3_000) : false
+      return s && ACTIVE_TASK.has(s) ? ((query.state.data?.capabilities ?? config.capabilitiesFor(query.state.data?.target)).state_model === 'poll' ? 30_000 : 3_000) : false
     },
   })
 }
@@ -71,7 +71,8 @@ export function useTaskActions(jobId?: MaybeRefOrGetter<string>) {
   const kill = useMutation({
     mutationFn: (taskId: string) => tasksApi.kill(taskId),
     onSuccess: (_d, taskId) => {
-      if (config.killAsync) markTask(taskId)
+      const snapshot = qc.getQueryData<TaskView>(qk.task(taskId))
+      if ((snapshot?.capabilities ?? config.capabilitiesFor(snapshot?.target)).kill_async) markTask(taskId)
       invalidateTask(taskId)
     },
   })

@@ -4,19 +4,12 @@
     <div class="d-flex align-center justify-space-between mb-4">
       <div class="text-h5 font-weight-bold">{{ project }}</div>
       <div class="d-flex ga-2">
-        <v-btn variant="text" size="small" :to="{ name: 'project-edit', params: { project } }">
-          <v-icon start size="16">mdi-pencil-outline</v-icon>
-          {{ t('projectEdit.edit_project') }}
-        </v-btn>
         <v-btn variant="text" size="small"
           :title="projectArchived ? undefined : t('archive.project_tooltip')"
           @click="toggleProjectArchive"
         >
           <v-icon start size="16">{{ projectArchived ? 'mdi-archive-arrow-up-outline' : 'mdi-archive-arrow-down-outline' }}</v-icon>
           {{ projectArchived ? t('archive.unarchive') : t('archive.archive') }}
-        </v-btn>
-        <v-btn variant="tonal" color="primary" size="small" :to="{ name: 'submit' }">
-          <v-icon start size="16">mdi-plus</v-icon> {{ t('submit.new_job') }}
         </v-btn>
       </div>
     </div>
@@ -117,11 +110,10 @@
       <v-icon size="36" color="primary" class="mb-3" style="opacity: 0.4">mdi-briefcase-outline</v-icon>
       <div class="text-h6 mb-1">{{ t('project.no_jobs') }}</div>
       <div class="text-body-2 text-on-surface-variant mb-4">{{ t('project.no_jobs_hint') }}</div>
-      <v-btn color="primary" variant="tonal" :to="{ name: 'submit' }">{{ t('nav.submit') }}</v-btn>
     </v-card>
 
     <!-- Archived jobs of this project (collapsed by default) -->
-    <v-card v-if="archivedJobs.length > 0" class="mt-3">
+    <v-card class="mt-3">
       <div
         class="d-flex align-center ga-2 px-4 py-3 cursor-pointer text-on-surface-variant"
         role="button" tabindex="0" :aria-expanded="archivedOpen"
@@ -130,7 +122,7 @@
         @keydown.space.prevent="archivedOpen = !archivedOpen"
       >
         <v-icon size="16">mdi-archive-outline</v-icon>
-        <span class="text-subtitle-2">{{ t('archive.section', { n: archivedJobs.length }) }}</span>
+        <span class="text-subtitle-2">{{ t('archive.jobs_history') }}</span>
         <v-spacer />
         <v-icon size="16">{{ archivedOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
       </div>
@@ -151,6 +143,8 @@
           </v-btn>
         </div>
       </div>
+      <v-pagination v-if="archivedOpen && (archivedQuery.data.value?.total ?? 0) > 25"
+        v-model="archivedPage" :length="Math.ceil((archivedQuery.data.value?.total ?? 0) / 25)" density="compact" />
     </v-card>
   </div>
 </template>
@@ -176,16 +170,17 @@ const snack = useSnackbar()
 // ── Server state: query cache is the single source. Keys derive from
 // props.project, so route-param switches re-point automatically — no
 // manual refetch choreography, nothing here to go stale.
+const projectArchived = computed(() =>
+  !!projectStore.focused?.archived)
 const listQuery = useJobsListQuery()
-const archivedQuery = useArchivedJobsQuery()
-const scopedQuery = useProjectJobsQuery(() => props.project)
+const archivedOpen = ref(false)
+const archivedPage = ref(1)
+const archivedQuery = useArchivedJobsQuery(() => props.project, archivedOpen, archivedPage)
+const scopedQuery = useProjectJobsQuery(() => props.project, () => !projectArchived.value)
 const jobActions = useJobActions()
 
-const archivedOpen = ref(false)
-const projectArchived = computed(() =>
-  !!projectStore.list.find(p => p.name === props.project)?.archived)
 const archivedJobs = computed(() =>
-  (archivedQuery.data.value ?? []).filter(j => j.project === props.project))
+  archivedQuery.data.value?.items ?? [])
 // Inside an archived project the global list is empty BY DESIGN (cascade);
 // the scoped query skips it.
 const scopedJobs = computed(() => scopedQuery.data.value ?? [])
@@ -193,7 +188,8 @@ const loading = computed(() => listQuery.isLoading.value)
 
 watch(() => props.project, () => {
   archivedOpen.value = false
-  projectStore.fetch() // project archive flags live in the pinia store
+  archivedPage.value = 1
+  projectStore.ensure(props.project)
 }, { immediate: true })
 
 async function toggleProjectArchive() {
@@ -205,7 +201,7 @@ async function toggleProjectArchive() {
       await projectStore.archive(props.project)
       snack.success(t('archive.project_done'))
     }
-    await Promise.all([archivedQuery.refetch(), scopedQuery.refetch(), listQuery.refetch()])
+    await Promise.all([...(archivedOpen.value ? [archivedQuery.refetch()] : []), scopedQuery.refetch(), listQuery.refetch()])
   } catch (e: any) { snack.error(e?.message || t('common.error')) }
 }
 

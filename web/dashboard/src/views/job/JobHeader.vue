@@ -6,34 +6,25 @@
     <div class="d-flex align-center justify-space-between mb-3 flex-wrap ga-2">
       <div class="d-flex align-center ga-2 flex-wrap">
         <JobStatusBadge :status="detail.job.status" />
+        <code v-if="detail.job.target" class="text-caption">{{ detail.job.target }}<span v-if="detail.job.target_source"> ({{ detail.job.target_source }})</span></code>
+        <v-chip v-if="detail.job.stale" size="x-small" color="warning">{{ t('job.snapshot_stale') }}</v-chip>
         <span v-if="detail.job.note" class="text-body-2 text-on-surface-variant">{{ detail.job.note }}</span>
         <span class="text-caption text-on-surface-variant">{{ relativeTime(detail.job.created_at) }}</span>
         <!-- Poll-model honesty: state is a snapshot, say when it was taken -->
-        <template v-if="isPoll">
+        <span class="d-inline-flex align-center ga-1">
           <v-chip size="x-small" variant="text" class="text-on-surface-variant">
             <v-icon start size="12">mdi-database-clock-outline</v-icon>
             {{ t('job.data_as_of', { time: detail.job.refreshed_at ? relativeTime(detail.job.refreshed_at) : '—' }) }}
           </v-chip>
           <v-btn
-            size="x-small" variant="text" icon
+            v-if="isPoll" size="x-small" variant="text" icon
             :loading="refreshing"
             :aria-label="t('job.refresh')" :title="t('job.refresh')"
             @click="$emit('refresh')"
           ><v-icon size="14">mdi-refresh</v-icon></v-btn>
-        </template>
+        </span>
       </div>
       <div class="d-flex ga-1 flex-wrap">
-        <v-btn size="x-small" variant="tonal" color="primary" @click="$emit('rerun')">
-          <v-icon start size="14">mdi-restart</v-icon> {{ t('job.rerun') }}
-        </v-btn>
-        <v-btn v-if="canPause && isActive" size="x-small" variant="tonal"
-          :color="detail.job.status === 'paused' ? 'success' : 'warning'"
-          :loading="pausing" :disabled="pausing"
-          @click="emitPauseResume"
-        >
-          <v-icon start size="14">{{ detail.job.status === 'paused' ? 'mdi-play' : 'mdi-pause' }}</v-icon>
-          {{ detail.job.status === 'paused' ? t('job.resume') : t('job.pause') }}
-        </v-btn>
         <v-btn v-if="isActive" size="x-small" variant="tonal" color="error"
           :loading="killing" :disabled="killing"
           @click="$emit('kill')"
@@ -100,22 +91,17 @@ const props = defineProps<{
   detail: JobDetail
   topRuns: CompareRow[]
   metricKey: string
-  canPause: boolean
   /** poll state model: render freshness + manual refresh */
   isPoll?: boolean
   refreshing?: boolean
   /** in-flight guards for async actions (loading + double-click protection) */
-  pausing?: boolean
   killing?: boolean
   archiving?: boolean
 }>()
 
 const emit = defineEmits<{
-  pause: []
-  resume: []
   kill: []
   refresh: []
-  rerun: []
   archive: []
   unarchive: []
 }>()
@@ -145,11 +131,4 @@ const stats = computed(() => [
   { label: t('status.task.pending'), value: counts.value.pending, css: statusStyle('task', 'pending').css },
 ])
 
-function emitPauseResume() {
-  if (props.detail.job.status === 'paused') {
-    emit('resume')
-  } else {
-    emit('pause')
-  }
-}
 </script>

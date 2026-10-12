@@ -632,5 +632,8 @@
   "overview.target_col": "Target",
   "overview.jobs_col": "Jobs",
   "overview.all_targets": "All targets",
-  "overview.gpu_chip_tip": "free / total GPUs on this daemon"
+  "overview.gpu_chip_tip": "free / total GPUs on this daemon",
+  "archive.projects_history": "Archived projects",
+  "archive.jobs_history": "Archived jobs",
+  "job.snapshot_stale": "Snapshot unconfirmed"
 }

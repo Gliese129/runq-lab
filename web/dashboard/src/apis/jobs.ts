@@ -1,20 +1,9 @@
 import { api, type RequestOptions } from './client'
 import type {
-  CompareRow, JobActivityResponse, JobConfigPayload, JobDetail, JobLogSearchResponse,
-  JobPlanResponse, JobPreviewResponse, JobResultsResponse, JobSubmitResponse, JobSummary,
+  CompareRow, JobActivityResponse, JobDetail, JobLogSearchResponse,
+   JobResultsResponse,  JobSummary,
   MessageResponse, RefreshReceipt,
 } from '@/types/api'
-
-export interface SubmitJobOptions extends RequestOptions {
-  preflightEnabled?: boolean
-  forceSkipPreflight?: unknown
-  target?: string
-}
-
-/** v1 submit-family body (spec §5.4, D12): options in the body, never in query. */
-function submitBody(cfg: JobConfigPayload, skipPreflight = false, target = '') {
-  return { config: cfg, target, skip_preflight: skipPreflight }
-}
 
 export const jobsApi = {
   list: (opts?: RequestOptions) => api.getList<JobSummary>('/jobs', opts),
@@ -24,7 +13,7 @@ export const jobsApi = {
   listByProject: (project: string, opts?: RequestOptions) =>
     api.getList<JobSummary>(`/jobs?project=${encodeURIComponent(project)}`, opts),
 
-  listArchived: () => api.getList<JobSummary>('/jobs?archived=true'),
+  listArchived: (project: string, page = 1) => api.getEnvelope<JobSummary>(`/jobs?archived=true&project=${encodeURIComponent(project)}&limit=25&offset=${(page - 1) * 25}`),
 
   get: (jobId: string, opts?: RequestOptions) =>
     api.get<JobDetail>(`/jobs/${encodeURIComponent(jobId)}`, opts),
@@ -43,23 +32,6 @@ export const jobsApi = {
     return res.keys ?? []
   },
 
-  /** POST /jobs/plan — merged dry-run + resolve-note, one wizard call. */
-  plan: (cfg: JobConfigPayload, target = '') =>
-    api.post<JobPlanResponse>('/jobs/plan', submitBody(cfg, false, target), { silent: true }),
-
-  /** GUI face of `--dry-run`: rendered run.sh + submit command, zero side effects. */
-  previewSubmit: (cfg: JobConfigPayload, skipPreflight: boolean, target = '') =>
-    api.post<JobPreviewResponse>('/jobs/preview', submitBody(cfg, skipPreflight, target), { silent: true }),
-
-  submit: (cfg: JobConfigPayload, opts: SubmitJobOptions = {}) => {
-    const skip = opts.forceSkipPreflight === true || opts.preflightEnabled === false
-    return api.post<JobSubmitResponse>(
-      '/jobs',
-      submitBody(cfg, skip, opts.target ?? ''),
-      { silent: opts.silent, timeoutMs: opts.timeoutMs },
-    )
-  },
-
   archive: (jobId: string) =>
     api.post<MessageResponse>(`/jobs/${encodeURIComponent(jobId)}/archive`, {}),
 
@@ -68,12 +40,6 @@ export const jobsApi = {
 
   kill: (jobId: string) =>
     api.post(`/jobs/${encodeURIComponent(jobId)}/kill`),
-
-  pause: (jobId: string) =>
-    api.post(`/jobs/${encodeURIComponent(jobId)}/pause`),
-
-  resume: (jobId: string) =>
-    api.post(`/jobs/${encodeURIComponent(jobId)}/resume`),
 
   /** Force a reconcile from external sources (poll-model backends only).
    *  D22: the receipt always says whether the refresh actually happened. */

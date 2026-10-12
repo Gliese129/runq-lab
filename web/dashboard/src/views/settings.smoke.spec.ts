@@ -11,7 +11,7 @@ import en from '@/i18n/en.json'
 // Mount smoke guard: "the page is blank" is the worst failure mode.
 // The api client is mocked at module level (axios never runs).
 vi.mock('@/apis/client', () => {
-  const CAPS = { gpu_map: false, pause_resume: false, live_log: true, retry: true, state_model: 'poll', kill_async: true, submit_preview: true, activity_heatmap: false, log_search: false }
+  const CAPS = { gpu_map: false, live_log: true, retry: true, state_model: 'poll', kill_async: true, submit_preview: true, activity_heatmap: false, log_search: false }
   const respond = (path: string) => {
     // v1 contract (spec-first): targets replace /hpc-config*
     if (path.includes('/targets/presets')) return { names: ['slurm'], presets: { slurm: { name: 'slurm', submit_template: 's {{run_sh}}', submit_id_regex: 'j ([0-9]+)', kill_template: 'k {{ext_id}}' } } }

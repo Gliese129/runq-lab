@@ -59,13 +59,12 @@ runq init train.py
 `init` scans `train.py`'s argparse arguments and generates two files:
 
 - **project.yaml** — the parameter *catalog*: every argument it found, with
-  types and defaults, plus `command_template`, `working_dir`, and GPU
-  defaults. This describes what *can* vary.
+  optional parameter constraints, plus `command`, `target`, `working_dir` and resource defaults. One codebase keeps one project; experiment differences belong in jobs.
 - **job.yaml** — one *selection* over that catalog: which values to sweep
   *this time*.
 
 Open project.yaml and sanity-check three things: `working_dir` (must
-exist), `command_template` (how your script is invoked; `{{args}}` expands
+exist), `command` (how your script is invoked; `{{args}}` expands
 to `--key=value` for every parameter), and `defaults.gpus_per_task`.
 
 Your script doesn't use argparse? Copy the annotated examples in

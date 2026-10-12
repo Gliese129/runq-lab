@@ -185,20 +185,20 @@ Complete reference: [docs/cli.md](./docs/cli.md)
 
 Two files, one rule:
 
-- **project.yaml** — the parameter *catalog*: everything that can vary,
-  with types and defaults.
+- **project.yaml** — one codebase, its source/default target and stable execution configuration.
 - **job.yaml** — one *selection*: what varies this time.
 
 ```yaml
 # project.yaml
 project_name: resnet50
+target: local
 working_dir: /home/user/experiments/resnet50
-command_template: python train.py {{args}}
+command: python train.py {{args}}
 environment:
   WANDB_PROJECT: resnet-experiments
 params:
-  - { name: lr, type: float, default: 0.001 }
-  - { name: optimizer, type: str, default: adam, choices: [adam, sgd], strict: true }
+  - { name: lr, type: float }
+  - { name: optimizer, type: str, choices: [adam, sgd] }
 defaults:
   gpus_per_task: 1
   max_retry: 3
@@ -214,6 +214,13 @@ sweep:
     parameters: { batch_size: [32, 64], num_workers: [4, 8] }
 # grid(3×2) × list(2) = 12 tasks
 ```
+
+Keep train, smoke and reservation-specific runs as jobs under the same project.
+Jobs may override `command`, `target` and `preflight`; resources use `overrides`.
+Submit selects `-t > job.target > project.target`. Parameters may go directly to
+`ctx.params`; defaults live in research code. Nonempty `choices` always constrain values.
+The dashboard observes local task snapshots and supports stop, retry and archive.
+Archived history is hidden by default and loaded in pages when opened.
 
 `project.yaml` is the source of truth — hand-edits are picked up on the
 next use; CLI and dashboard can never disagree. Secrets go in

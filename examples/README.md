@@ -8,7 +8,7 @@ reading them IS the schema reference (also see
 |---|---|
 | Submit your first sweep with minimum ceremony | [`job_simple.yaml`](./job_simple.yaml) |
 | See every job.yaml feature: grid × zip blocks, note, overrides | [`job.yaml`](./job.yaml) |
-| See every project.yaml feature: catalog, strict choices, env, resume | [`project.yaml`](./project.yaml) |
+| See every project.yaml feature: constraints, mandatory choices, env, resume | [`project.yaml`](./project.yaml) |
 | Run model × benchmark evals on an HPC cluster, each benchmark with its own walltime | [`hpc/`](./hpc/) |
 | A training script that runq init can scan and whose metrics feed the dashboard charts | [`test_train.py`](./test_train.py) |
 

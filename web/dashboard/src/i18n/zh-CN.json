@@ -632,5 +632,8 @@
   "overview.target_col": "目标",
   "overview.jobs_col": "作业",
   "overview.all_targets": "全部目标",
-  "overview.gpu_chip_tip": "该 daemon 的空闲 / 总 GPU 数"
+  "overview.gpu_chip_tip": "该 daemon 的空闲 / 总 GPU 数",
+  "archive.projects_history": "归档项目",
+  "archive.jobs_history": "归档实验",
+  "job.snapshot_stale": "状态待确认"
 }

@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.6.0rc2 — 2026-10-12
+
+### Breaking
+
+- Submit target precedence is explicit `-t` > job.target > project.target.
+  Session target, RUNQ_TARGET and global default_target only scope queries.
+  New project registration requires target; job command may replace an omitted project command.
+- Project `command_template` is a read alias for `command`; both together are rejected.
+- Nonempty parameter choices are always enforced, even with legacy strict:false.
+  Parameter default/min/max/include/glob/strict are ignored and no longer written.
+  Defaults belong in code; unreferenced parameters remain available via ctx.params.
+- Removed dashboard submission/project/target/global-config editors, webhook form,
+  arbitrary log upload viewer and web pause/resume. Historical paused jobs stay paused.
+- Removed dedicated HTTP config writes, target presets/check/edit, filesystem read/glob/
+  parse-script, python-env discovery, /ui, /log-sessions, /jobs/plan and job pause/resume.
+  CLI registration/configuration, shared SSH/runtime, cancellation/recovery and artifact reads remain.
+
+### Changes
+
+- Job command/target/preflight overrides; absent values inherit, false and explicit empty
+  lists/strings override. Preflight, preview and submission share a common plan and snapshot.
+- `--dry` always uses server preview across local/runqd/HPC. It reports target/source,
+  command-unconsumed params and pending cross-target sync. `--project-file` still upserts.
+- State pages use controller database snapshots, including remote tasks, with observation
+  times and unconfirmed status. Archived project/job history loads on demand in pages of 25.
+- Display preferences and project grouping use browser localStorage. Existing ui.json is untouched.
+- Python SDK version is 0.6.0rc2; built-in skill and configuration/CLI/HPC docs updated.
+
+Connection reliability, observer ownership consolidation, precise execution times and
+W&B directory conventions follow in separate changes before v0.6.0.
+
 ## v0.6.0rc1 — 2026-10-11
 
 Pre-release. Slims the CLI and SDK to what the last month of real use
