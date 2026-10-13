@@ -83,19 +83,21 @@
              drag a project onto a group header to assign it. Collapsed
              rail keeps the flat list (groups need labels to mean much). -->
         <template v-if="!collapsed">
-          <template v-for="g in groupedProjects.groups" :key="g.name">
+          <template v-for="g in groupedProjects.groups" :key="g.key">
             <div
               class="group-head d-flex align-center ga-1 px-2 rounded"
-              :class="{ 'group-head--over': dragOverGroup === g.name }"
+              :class="{ 'group-head--over': !g.auto && dragOverGroup === g.name }"
               role="button" tabindex="0"
               :aria-expanded="!g.collapsed"
-              @click="groupsCtl.toggleCollapsed(g.name)"
-              @keydown.enter="groupsCtl.toggleCollapsed(g.name)"
-              @dragover.prevent="dragOverGroup = g.name"
+              :title="g.auto ? t('groups.auto_hint', { dir: g.workDir }) : undefined"
+              @click="groupsCtl.toggleCollapsed(g.key)"
+              @keydown.enter="groupsCtl.toggleCollapsed(g.key)"
+              @dragover.prevent="dragOverGroup = g.auto ? '' : g.name"
               @dragleave="dragOverGroup = dragOverGroup === g.name ? '' : dragOverGroup"
-              @drop.prevent="onDropOnGroup(g.name)"
+              @drop.prevent="!g.auto && onDropOnGroup(g.name)"
             >
               <v-icon size="13">{{ g.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}</v-icon>
+              <v-icon v-if="g.auto" size="12" class="text-on-surface-variant">mdi-source-repository</v-icon>
               <template v-if="renamingGroup === g.name">
                 <input
                   ref="renameInput"
@@ -120,7 +122,12 @@
                     <v-icon size="12">mdi-dots-horizontal</v-icon>
                   </v-btn>
                 </template>
-                <v-list density="compact">
+                <v-list v-if="g.auto" density="compact">
+                  <v-list-item @click="keepAutoGroup(g)">
+                    <v-list-item-title class="text-body-2">{{ t('groups.keep_auto') }}</v-list-item-title>
+                  </v-list-item>
+                </v-list>
+                <v-list v-else density="compact">
                   <v-list-item @click="startRename(g.name)">
                     <v-list-item-title class="text-body-2">{{ t('submit.rename') }}</v-list-item-title>
                   </v-list-item>
@@ -397,6 +404,15 @@ watch(() => projects.visible, (list) => {
 
 const groupedProjects = computed(() => groupProjects(projects.visible, groupsCtl.state.value))
 
+// Turn an automatic code-base group into a manual one the user can rename
+// and reorder; its members move with it.
+async function keepAutoGroup(g: { name: string; members: { name: string }[] }) {
+  const name = await groupsCtl.create()
+  await groupsCtl.rename(name, g.name)
+  const finalName = groupsCtl.state.value.order.includes(g.name) ? g.name : name
+  for (const m of g.members) await groupsCtl.assign(m.name, finalName)
+}
+
 // dataTransfer.getData is unreadable during dragover on some engines —
 // track the dragged project ourselves; drop reads this, not the transfer.
 const lastDragged = ref('')
@@ -450,6 +466,12 @@ const navItems = computed(() => [
     label: t('nav.overview'),
     icon: 'mdi-view-dashboard-outline',
     to: { name: 'overview' },
+  },
+  {
+    name: 'targets',
+    label: t('nav.targets'),
+    icon: 'mdi-server-network',
+    to: { name: 'targets' },
   },
 ])
 

@@ -8,8 +8,10 @@ export const qk = {
   job: (id: string) => ['job', id] as const,
   compare: (id: string, key: string, desc: boolean) => ['job', id, 'compare', key, desc] as const,
   results: (id: string) => ['job', id, 'results'] as const,
+  activity: (id: string) => ['job', id, 'activity'] as const,
   task: (id: string) => ['task', id] as const,
   taskMetrics: (id: string) => ['task', id, 'metrics'] as const,
   gpu: ['gpu'] as const,
+  targets: ['targets'] as const,
   health: ['health'] as const,
 }

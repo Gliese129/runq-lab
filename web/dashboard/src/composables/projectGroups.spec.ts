@@ -105,3 +105,39 @@ describe('groupProjects', () => {
     expect(ungrouped).toHaveLength(4)
   })
 })
+
+describe('groupProjects — automatic code-base groups', () => {
+  const p = (name: string, work_dir: string, job_count = 1) => ({ name, work_dir, job_count })
+
+  it('groups ungrouped projects that share a working_dir; singles stay ungrouped', () => {
+    const projects = [
+      p('rl-train', '/gs/fs/me/Think-in-Japanese-RL'),
+      p('rl-smoke', '/gs/fs/me/Think-in-Japanese-RL/', 2),
+      p('cot', '/home/me/Multilingual-Long-CoT/scripts'),
+    ]
+    const { groups, ungrouped } = groupProjects(projects, emptyState())
+    expect(groups).toHaveLength(1)
+    expect(groups[0]).toMatchObject({
+      key: 'auto:/gs/fs/me/Think-in-Japanese-RL', auto: true, name: 'Think-in-Japanese-RL', jobCount: 3,
+    })
+    expect(groups[0].members.map(m => m.name)).toEqual(['rl-train', 'rl-smoke'])
+    expect(ungrouped.map(m => m.name)).toEqual(['cot'])
+  })
+
+  it('manual assignment wins over the automatic group', () => {
+    const projects = [p('a', '/x/repo'), p('b', '/x/repo'), p('c', '/x/repo')]
+    const s = { order: ['mine'], map: { a: 'mine' }, collapsed: [] }
+    const { groups } = groupProjects(projects, s)
+    expect(groups.map(g => g.name)).toEqual(['mine', 'repo'])
+    expect(groups[1].members.map(m => m.name)).toEqual(['b', 'c'])
+  })
+
+  it('disambiguates same-named directories and keeps their collapse state', () => {
+    const projects = [p('a', '/gs/fs/repo'), p('b', '/gs/fs/repo'), p('c', '/home/x/repo'), p('d', '/home/x/repo')]
+    const s = { ...emptyState(), collapsed: ['auto:/home/x/repo'] }
+    const { groups } = groupProjects(projects, s)
+    expect(groups.map(g => g.name)).toEqual(['fs/repo', 'x/repo'])
+    expect(groups[1].collapsed).toBe(true)
+    expect(sanitizeGroups({ order: [], map: {}, collapsed: ['auto:/home/x/repo', 'gone'] })?.collapsed).toEqual(['auto:/home/x/repo'])
+  })
+})

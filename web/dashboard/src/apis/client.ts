@@ -67,7 +67,11 @@ async function request<T>(method: string, path: string, body?: unknown, opts?: R
       const msg = e.response?.data?.error || e.message || 'Network error'
       const code = e.response?.data?.code
       const currentGen = e.response?.data?.current_generation
-      onApiError(msg)
+      // Any HTTP response proves the service is reachable — a 404 for a
+      // mistyped id is not a lost connection. Only transport failures
+      // (no response at all) count toward the reconnect banner.
+      if (status > 0) onApiSuccess()
+      else onApiError(msg)
       // Daemon-down has its own persistent banner + sidebar state; a raw
       // socket snackbar on top of that just makes the three surfaces fight.
       // generation_conflict / generation_changed get dedicated dialogs —

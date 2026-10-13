@@ -53,6 +53,7 @@
       :metric-keys="detail.metric_keys"
       :swept-params="sweptParams"
       :can-retry="caps.retry"
+      :last-output="lastOutput"
       @kill-task="onKillTask"
       @retry-task="onRetryTask"
       @click-task="onClickTask"
@@ -83,6 +84,27 @@
     />
   </div>
 
+  <!-- 404: a mistyped or cleaned id — show it instead of spinning -->
+  <v-card v-else-if="notFound" class="pa-8 text-center">
+    <v-icon size="40" color="on-surface-variant" class="mb-3" style="opacity: 0.5"
+      >mdi-file-question-outline</v-icon
+    >
+    <div class="text-h6 mb-1">{{ t('job.not_found', { id: props.jobId }) }}</div>
+    <div v-if="prefixCandidates.length" class="mt-3">
+      <div class="text-body-2 text-on-surface-variant mb-2">{{ t('common.did_you_mean') }}</div>
+      <v-chip
+        v-for="id in prefixCandidates"
+        :key="id"
+        class="ma-1 data-mono"
+        size="small"
+        :to="{ name: 'job-detail', params: { project: props.project, jobId: id } }"
+      >{{ id }}</v-chip>
+    </div>
+    <v-btn class="mt-4" variant="tonal" color="primary" :to="{ name: 'project', params: { project: props.project } }">
+      {{ t('common.back') }}
+    </v-btn>
+  </v-card>
+
   <div v-else class="d-flex justify-center pa-12">
     <v-progress-circular indeterminate color="primary" />
   </div>
@@ -100,7 +122,8 @@ import { usePreferences } from '@/composables/usePreferences'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { useConfirm } from '@/composables/useConfirm'
 import { useCancelling } from '@/composables/useCancelling'
-import { useJobDetailQuery, useCompareQuery, useJobResultsQuery, useJobActions } from '@/queries/useJobQueries'
+import { useJobDetailQuery, useCompareQuery, useJobResultsQuery, useJobActions, useJobActivityQuery } from '@/queries/useJobQueries'
+import { lastOutputTs } from '@/utils/lastOutput'
 import { useTaskActions } from '@/queries/useTaskQueries'
 import { useGenerationRerun } from '@/composables/useGenerationRerun'
 import GenerationRerunDialog from '@/components/GenerationRerunDialog.vue'
@@ -109,6 +132,9 @@ import TaskTable from './TaskTable.vue'
 import JobResultsCard from './JobResultsCard.vue'
 import JobDataCard from './JobDataCard.vue'
 import StatusDot from '@/components/StatusDot.vue'
+import { ApiError } from '@/apis/client'
+import { jobsApi } from '@/apis/jobs'
+import { resolveIdPrefix } from '@/utils/idPrefix'
 
 const props = defineProps<{ project: string; jobId: string }>()
 const router = useRouter()
@@ -125,6 +151,38 @@ const { confirm: confirmDialog } = useConfirm()
 // never overwrite job B, and navigation cancels in-flight fetches.
 const detailQuery = useJobDetailQuery(() => props.jobId)
 const detail = computed(() => detailQuery.data.value ?? null)
+
+// Tables show 8-char ids; a pasted short id 404s. Resolve it against the
+// job list (one request, only on 404): a unique match replaces the URL,
+// several are offered as "did you mean".
+const notFound = computed(
+  () => detailQuery.error.value instanceof ApiError && detailQuery.error.value.status === 404,
+)
+const prefixCandidates = ref<string[]>([])
+watch(notFound, async (nf) => {
+  prefixCandidates.value = []
+  if (!nf) return
+  const jobs = await jobsApi.list({ silent: true }).catch(() => [])
+  const { match, candidates } = resolveIdPrefix(props.jobId, jobs.map((j) => j.id))
+  if (match) {
+    router.replace({ name: 'job-detail', params: { project: props.project, jobId: match }, query: route.query })
+  } else {
+    prefixCandidates.value = candidates
+  }
+}, { immediate: true })
+
+// "Last output" per task: the cheapest signal that a long run is still
+// making progress when the code reports no metrics.
+const jobLive = computed(() => ['running', 'pending'].includes(detail.value?.job.status ?? ''))
+const activityQuery = useJobActivityQuery(() => props.jobId, jobLive, () => !!detail.value)
+const lastOutput = computed<Record<string, number>>(() => {
+  const out: Record<string, number> = {}
+  for (const t of activityQuery.data.value?.tasks ?? []) {
+    const ts = lastOutputTs(t.points)
+    if (ts) out[t.task_id] = ts
+  }
+  return out
+})
 
 const jobActions = useJobActions()
 const taskActions = useTaskActions(() => props.jobId)

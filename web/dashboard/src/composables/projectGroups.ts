@@ -49,7 +49,7 @@ export function sanitizeGroups(raw: unknown): ProjectGroupsState | null {
     if (typeof v === 'string') map[k] = order.includes(v) ? v : UNGROUPED
   }
   const collapsed = Array.isArray(r.collapsed)
-    ? r.collapsed.filter((g): g is string => typeof g === 'string' && order.includes(g))
+    ? r.collapsed.filter((g): g is string => typeof g === 'string' && (order.includes(g) || g.startsWith(AUTO_PREFIX)))
     : []
   return { order, map, collapsed }
 }
@@ -98,7 +98,16 @@ export function toggleCollapsed(s: ProjectGroupsState, group: string): ProjectGr
   return { ...s, collapsed }
 }
 
+/** Collapse-state key prefix for automatic code-base groups. */
+export const AUTO_PREFIX = 'auto:'
+
 export interface GroupedProjects<P> {
+  /** Stable key for collapse state / v-for: the group name, or AUTO_PREFIX + work_dir. */
+  key: string
+  /** True for groups formed automatically from a shared working_dir. */
+  auto?: boolean
+  /** The full working_dir an automatic group stands for (tooltip). */
+  workDir?: string
   name: string
   collapsed: boolean
   members: P[]
@@ -106,32 +115,44 @@ export interface GroupedProjects<P> {
   jobCount: number
 }
 
-/** Pivot the flat project list through the state: ordered groups with
- *  members, then the ungrouped tail. Unknown projects land ungrouped. */
-export function groupProjects<P extends { name: string; job_count: number }>(
+/** Pivot the flat project list through the state: manual groups first,
+ *  then automatic code-base groups (ungrouped projects that share a
+ *  working_dir — one code base usually ends up registered as several
+ *  projects), then the ungrouped tail. Manual assignment always wins. */
+export function groupProjects<P extends { name: string; job_count: number; work_dir?: string }>(
   projects: P[],
   s: ProjectGroupsState,
 ): { groups: GroupedProjects<P>[]; ungrouped: P[] } {
   const byGroup = new Map<string, P[]>()
-  const ungrouped: P[] = []
+  const loose: P[] = []
   for (const p of projects) {
     const g = s.map[p.name] ?? UNGROUPED
     if (g === UNGROUPED || !s.order.includes(g)) {
-      ungrouped.push(p)
+      loose.push(p)
     } else {
       byGroup.set(g, [...(byGroup.get(g) ?? []), p])
     }
   }
-  return {
-    groups: s.order.map(name => {
-      const members = byGroup.get(name) ?? []
-      return {
-        name,
-        collapsed: s.collapsed.includes(name),
-        members,
-        jobCount: members.reduce((a, p) => a + p.job_count, 0),
-      }
-    }),
-    ungrouped,
+  const total = (members: P[]) => members.reduce((a, p) => a + p.job_count, 0)
+  const groups: GroupedProjects<P>[] = s.order.map(name => {
+    const members = byGroup.get(name) ?? []
+    return { key: name, name, collapsed: s.collapsed.includes(name), members, jobCount: total(members) }
+  })
+
+  const byDir = new Map<string, P[]>()
+  for (const p of loose) {
+    const dir = (p.work_dir || '').replace(/\/+$/, '')
+    if (dir) byDir.set(dir, [...(byDir.get(dir) ?? []), p])
   }
+  const shared = [...byDir.entries()].filter(([, members]) => members.length > 1)
+  const tail = (dir: string, n: number) => dir.split('/').filter(Boolean).slice(-n).join('/')
+  const labels = shared.map(([dir]) => tail(dir, 1))
+  const ungrouped = loose.filter(p => !shared.some(([, members]) => members.includes(p)))
+  shared.forEach(([dir, members], i) => {
+    // Disambiguate same-named directories on different filesystems.
+    const name = labels.filter(l => l === labels[i]).length > 1 ? tail(dir, 2) : labels[i]
+    const key = AUTO_PREFIX + dir
+    groups.push({ key, auto: true, workDir: dir, name, collapsed: s.collapsed.includes(key), members, jobCount: total(members) })
+  })
+  return { groups, ungrouped }
 }

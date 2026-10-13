@@ -1,0 +1,138 @@
+<template>
+  <div>
+    <div class="d-flex align-baseline ga-2 mb-3">
+      <span class="text-h6">{{ t('targets.title') }}</span>
+      <span class="text-caption text-on-surface-variant">{{ t('targets.edit_hint') }}</span>
+    </div>
+
+    <div v-if="targetsQuery.isLoading.value" class="d-flex justify-center pa-12">
+      <v-progress-circular indeterminate color="primary" />
+    </div>
+
+    <v-card v-else-if="rows.length === 0" class="pa-8 text-center">
+      <div class="text-body-1 mb-2">{{ t('targets.none') }}</div>
+      <code class="data-mono">runq target add &lt;name&gt; --template=&lt;preset&gt; --host=… --user=…</code>
+    </v-card>
+
+    <v-card v-for="r in rows" v-else :key="r.name" class="mb-3 pa-0">
+      <div class="d-flex align-center flex-wrap ga-3 px-4 py-3">
+        <StatusDot :status="dotStatus(r)" :size="8" />
+        <span class="text-subtitle-1 font-weight-medium">{{ r.name }}</span>
+        <v-chip v-if="r.isDefault" size="x-small" variant="tonal" color="primary" label>{{ t('targets.default') }}</v-chip>
+        <span class="text-caption text-on-surface-variant">{{ r.kind }}</span>
+        <code v-if="r.endpoint" class="data-mono text-caption">{{ r.endpoint }}</code>
+        <v-spacer />
+        <v-btn size="small" variant="text" :loading="busy === `refresh:${r.name}`" @click="refresh(r.name)">
+          <v-icon start size="16">mdi-refresh</v-icon>{{ t('targets.refresh') }}
+        </v-btn>
+        <v-btn
+          v-if="r.config.remote_cli || r.endpoint"
+          size="small" variant="tonal"
+          :loading="busy === `connect:${r.name}`"
+          @click="connect(r.name)"
+        >
+          <v-icon start size="16">mdi-lan-connect</v-icon>{{ t('targets.connect') }}
+        </v-btn>
+      </div>
+
+      <v-row dense class="px-4 pb-3">
+        <v-col cols="6" sm="3">
+          <div class="text-caption text-on-surface-variant">{{ t('targets.connection') }}</div>
+          <span :class="connectionClass(r.connection)">{{ t('targets.conn.' + r.connection) }}</span>
+          <span v-if="r.since" class="text-caption text-on-surface-variant"> · {{ relativeTime(r.since) }}</span>
+        </v-col>
+        <v-col cols="6" sm="3">
+          <div class="text-caption text-on-surface-variant">{{ t('targets.jobs') }}</div>
+          {{ t('targets.jobs_counts', { running: r.running, pending: r.pending, total: r.jobs }) }}
+        </v-col>
+        <v-col cols="6" sm="3">
+          <div class="text-caption text-on-surface-variant">max_inflight</div>
+          {{ r.maxInflight ?? '—' }}
+        </v-col>
+        <v-col v-if="r.config.gpus?.length" cols="6" sm="3">
+          <div class="text-caption text-on-surface-variant">GPUs</div>
+          {{ r.config.gpus.join(', ') }}
+        </v-col>
+      </v-row>
+
+      <div v-if="r.lastError && r.connection !== 'up' && r.connection !== 'reachable'" class="px-4 pb-3">
+        <code class="data-mono text-caption text-error last-error">{{ r.lastError }}</code>
+      </div>
+
+      <details v-if="r.templates.length" class="px-4 pb-3 text-caption">
+        <summary class="text-on-surface-variant">{{ t('targets.templates') }}</summary>
+        <div v-for="tpl in r.templates" :key="tpl.label" class="mt-2">
+          <div class="text-on-surface-variant">{{ tpl.label }}</div>
+          <code class="data-mono template">{{ tpl.value }}</code>
+        </div>
+      </details>
+    </v-card>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useQuery, useQueryClient } from '@tanstack/vue-query'
+import { targetsApi } from '@/apis/targets'
+import { qk } from '@/queries/keys'
+import { useHealthQuery } from '@/queries/useHealthQuery'
+import { useJobsListQuery } from '@/queries/useJobQueries'
+import { useConfigStore } from '@/stores/config'
+import { useSnackbar } from '@/composables/useSnackbar'
+import StatusDot from '@/components/StatusDot.vue'
+import { relativeTime } from '@/utils/relativeTime'
+import { targetRows, type Connection, type TargetRow } from './targetsView'
+
+const { t } = useI18n()
+const snack = useSnackbar()
+const qc = useQueryClient()
+const config = useConfigStore()
+
+const targetsQuery = useQuery({ queryKey: qk.targets, queryFn: () => targetsApi.list({ silent: true }) })
+const health = useHealthQuery()
+const jobsQuery = useJobsListQuery()
+
+const rows = computed(() =>
+  targetRows(targetsQuery.data.value ?? [], health.data.value, jobsQuery.data.value ?? [], config.defaultTarget),
+)
+
+function dotStatus(r: TargetRow): string {
+  if (r.connection === 'up' || r.connection === 'reachable') return r.running ? 'running' : 'success'
+  if (r.connection === 'unknown') return 'pending'
+  return 'failed'
+}
+function connectionClass(c: Connection): string {
+  if (c === 'up' || c === 'reachable') return 'text-success'
+  if (c === 'reconnecting') return 'text-warning'
+  if (c === 'unknown') return 'text-on-surface-variant'
+  return 'text-error'
+}
+
+const busy = ref('')
+async function refresh(name: string) {
+  busy.value = `refresh:${name}`
+  try {
+    const r = await targetsApi.refresh(name)
+    if (!r.refreshed && r.reason) snack.info(t('targets.refresh_skipped', { reason: r.reason }))
+    await Promise.all([qc.invalidateQueries({ queryKey: qk.health }), qc.invalidateQueries({ queryKey: qk.jobs })])
+  } catch { /* client.ts already reported it */ } finally { busy.value = '' }
+}
+async function connect(name: string) {
+  busy.value = `connect:${name}`
+  try {
+    await targetsApi.connect(name)
+    snack.success(t('targets.connected', { name }))
+    await qc.invalidateQueries({ queryKey: qk.health })
+  } catch { /* client.ts already reported it */ } finally { busy.value = '' }
+}
+</script>
+
+<style scoped>
+.template,
+.last-error {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+</style>

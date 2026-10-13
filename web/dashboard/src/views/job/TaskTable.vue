@@ -58,6 +58,7 @@
                 {{ t('job.elapsed') }} {{ sortIndicator('elapsed') }}
               </button>
             </th>
+            <th>{{ t('task.last_output') }}</th>
             <th v-if="hasHPC" :aria-sort="ariaSort('native_state')">
               <button type="button" class="th-sort-btn" @click="setSort('native_state')">
                 SCHED_STATE {{ sortIndicator('native_state') }}
@@ -95,6 +96,9 @@
             <td class="text-on-surface-variant">{{ formatTaskDuration(task.queue_seconds, task.queue_estimated) }}</td>
             <td class="text-on-surface-variant">{{ formatTaskDuration(task.scheduler_seconds) }}</td>
             <td class="text-on-surface-variant">{{ formatTaskDuration(task.elapsed_seconds, task.time_estimated) }}</td>
+            <td :class="isQuiet(task) ? 'text-warning' : 'text-on-surface-variant'" :title="isQuiet(task) ? t('task.quiet_hint') : ''">
+              {{ lastOutputOf(task) ? relativeTime(lastOutputOf(task)!) : '—' }}
+            </td>
             <td v-if="hasHPC" class="text-on-surface-variant">{{ task.native_state || '—' }}</td>
             <td v-if="hasHPC" class="text-on-surface-variant">{{ task.queue || '—' }}</td>
             <td v-if="hasWandb">
@@ -133,7 +137,8 @@ import { useI18n } from 'vue-i18n'
 import type { TaskView, WandbInfo } from '@/types/api'
 import { usePreferences } from '@/composables/usePreferences'
 import StatusDot from '@/components/StatusDot.vue'
-import { formatTaskDuration } from '@/utils/relativeTime'
+import { formatTaskDuration, relativeTime } from '@/utils/relativeTime'
+import { QUIET_AFTER_SECONDS } from '@/utils/lastOutput'
 
 const { t } = useI18n()
 const prefs = usePreferences()
@@ -145,7 +150,18 @@ const props = withDefaults(defineProps<{
   metricKeys?: string[]
   sweptParams?: string[]  // params that vary across tasks
   canRetry?: boolean
-}>(), { canRetry: true })
+  /** task id → unix seconds the log last grew */
+  lastOutput?: Record<string, number>
+}>(), { canRetry: true, lastOutput: () => ({}) })
+
+// Prefer the backend's field; fall back to the job activity samples.
+function lastOutputOf(task: TaskView): number | undefined {
+  return task.last_output_at ?? props.lastOutput[task.id]
+}
+function isQuiet(task: TaskView): boolean {
+  const ts = lastOutputOf(task)
+  return task.status === 'running' && !!ts && Date.now() / 1000 - ts > QUIET_AFTER_SECONDS
+}
 
 defineEmits<{ 'kill-task': [id: string]; 'retry-task': [id: string]; 'click-task': [id: string] }>()
 

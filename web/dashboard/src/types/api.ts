@@ -112,6 +112,8 @@ export interface TaskView {
   wandb_run_id?: string
   /** Links the task reported via SDK runq.link(name, url); "wandb" → its run page. */
   links?: Record<string, string>
+  /** Unix seconds the task log last grew (backend may supply; else derived from activity). */
+  last_output_at?: number
   /** HPC-specific; empty in daemon mode. Check caps.state_model == 'poll'. */
   external_id?: string
   status_source?: string
@@ -271,6 +273,23 @@ export interface RefreshReceipt {
   /** min_interval | timeout | <sync error> */
   reason?: string
   retry_after_seconds?: number
+}
+
+/** One element of GET /targets — the target as configured in config.yaml. */
+export interface TargetConfig {
+  name: string
+  /** preset/scheduler family: tsubame | sge | slurm | pbs | abci | runq | "" */
+  scheduler?: string
+  ssh?: { host?: string; user?: string; port?: number; key?: string }
+  gpus?: number[]
+  max_inflight?: number
+  remote_cli?: boolean
+  env_setup?: string
+  submit_template?: string
+  submit_id_regex?: string
+  status_template?: string
+  status_list_template?: string
+  kill_template?: string
 }
 
 /** One row of GET /health targets[] — passive reachability. */

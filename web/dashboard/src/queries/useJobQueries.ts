@@ -57,6 +57,25 @@ export function useJobDetailQuery(jobId: MaybeRefOrGetter<string>) {
   })
 }
 
+/** Per-task log activity (cumulative bytes per minute) — the source of
+ *  "last output N ago". Polled at the sampling interval while the job is
+ *  live; fetched once for settled jobs. */
+const ACTIVITY_POLL_MS = 60_000
+
+export function useJobActivityQuery(
+  jobId: MaybeRefOrGetter<string>,
+  live: MaybeRefOrGetter<boolean>,
+  enabled: MaybeRefOrGetter<boolean> = true,
+) {
+  return useQuery({
+    enabled: computed(() => toValue(enabled)),
+    queryKey: computed(() => qk.activity(toValue(jobId))),
+    queryFn: () => jobsApi.activity(toValue(jobId)),
+    refetchInterval: computed(() => (toValue(live) ? ACTIVITY_POLL_MS : false)),
+    staleTime: ACTIVITY_POLL_MS,
+  })
+}
+
 /** Read-only view of the SAME cache entry as useJobDetailQuery, for pages
  *  that need job CONTEXT rather than live job state — the task page's W&B
  *  base_url, target name, and sibling params (swept-vs-fixed). Those are

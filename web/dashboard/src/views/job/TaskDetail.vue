@@ -64,6 +64,15 @@
         <v-col cols="6" sm="4"><div class="text-caption text-on-surface-variant">{{ t('job.scheduler_seconds') }}</div>{{ formatTaskDuration(task.scheduler_seconds) }}</v-col>
         <v-col cols="6" sm="4"><div class="text-caption text-on-surface-variant">{{ t('job.total_seconds') }}</div>{{ formatTaskDuration(task.total_seconds) }}</v-col>
       </v-row>
+      <!-- What it is doing right now: the latest log line and when it was
+           written. Works without any SDK metrics. -->
+      <div v-if="lastLine || lastOutputAt" class="last-output mt-3" :class="{ 'is-quiet': quiet }">
+        <div class="text-caption text-on-surface-variant">
+          {{ t('task.last_output') }}<template v-if="lastOutputAt"> · {{ relativeTime(lastOutputAt) }}</template>
+          <span v-if="quiet" class="text-warning"> · {{ t('task.quiet_hint') }}</span>
+        </div>
+        <code v-if="lastLine" class="data-mono last-output-line">{{ lastLine }}</code>
+      </div>
       <details v-if="task.time_history && Object.keys(task.time_history).length" class="mt-3 text-caption">
         <summary>{{ t('task.time_evidence') }}</summary>
         <div v-for="(events, attempt) in task.time_history" :key="attempt" class="mt-2">
@@ -343,6 +352,10 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useCancelling } from '@/composables/useCancelling'
 import { useTaskQuery, useTaskMetricsQuery, useTaskActions } from '@/queries/useTaskQueries'
 import { useJobContextQuery } from '@/queries/useJobQueries'
+import { resolveIdPrefix } from '@/utils/idPrefix'
+import { useJobActivityQuery } from '@/queries/useJobQueries'
+import { lastLogLine, lastOutputTs, QUIET_AFTER_SECONDS } from '@/utils/lastOutput'
+import { useQuery } from '@tanstack/vue-query'
 import { useGenerationRerun } from '@/composables/useGenerationRerun'
 import GenerationRerunDialog from '@/components/GenerationRerunDialog.vue'
 import { useConfigStore } from '@/stores/config'
@@ -472,6 +485,13 @@ const logContainer = ref<HTMLElement>()
 // so arriving from the job page costs no request at all. ──
 const jobQuery = useJobContextQuery(() => props.jobId)
 const jobDetail = computed(() => jobQuery.data.value ?? null)
+
+// A pasted short task id 404s; resolve it against this job's tasks.
+watch([notFound, () => jobDetail.value?.tasks], ([nf, tasks]) => {
+  if (!nf || !tasks) return
+  const { match } = resolveIdPrefix(props.taskId, tasks.map((t) => t.id))
+  if (match) router.replace({ name: 'task-detail', params: { project: props.project, jobId: props.jobId, taskId: match } })
+}, { immediate: true })
 const jobTarget = computed(() => task.value?.target ?? jobDetail.value?.job.target ?? '')
 const taskCaps = computed(() => task.value?.capabilities ?? config.capabilitiesFor(jobTarget.value))
 
@@ -498,6 +518,26 @@ const taskLinks = computed(() => {
     .sort(([a], [b]) => (a === 'wandb' ? -1 : b === 'wandb' ? 1 : a.localeCompare(b)))
     .map(([name, url]) => ({ name, url, label: name === 'wandb' ? 'W&B' : name }))
 })
+
+// ── Last output: latest log line + when the log last grew. Shares the
+// job's activity cache with the job page; the tail is one small read,
+// re-polled at the activity sampling interval while the task is live. ──
+const jobActivity = useJobActivityQuery(() => props.jobId, isActive)
+const lastOutputAt = computed(() =>
+  task.value?.last_output_at
+    ?? lastOutputTs(jobActivity.data.value?.tasks.find((a) => a.task_id === props.taskId)?.points),
+)
+const tailQuery = useQuery({
+  queryKey: computed(() => ['task', props.taskId, 'tail'] as const),
+  queryFn: () => tasksApi.log(props.taskId, { tail: true, maxBytes: 8192 }),
+  enabled: computed(() => !!task.value),
+  refetchInterval: computed(() => (isActive.value ? 60_000 : false)),
+  staleTime: 60_000,
+})
+const lastLine = computed(() => lastLogLine(tailQuery.data.value?.lines))
+const quiet = computed(() =>
+  task.value?.status === 'running' && !!lastOutputAt.value && Date.now() / 1000 - lastOutputAt.value > QUIET_AFTER_SECONDS,
+)
 
 // ── Log activity (activity.tsv, cumulative columns): fetched when the
 // Log tab first shows; while the task is live it re-fetches at the
@@ -1077,6 +1117,14 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.last-output-line {
+  display: block;
+  margin-top: 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.last-output.is-quiet .last-output-line { opacity: 0.7; }
 .font-mono { font-family: var(--font-mono); }
 .border-b { border-bottom: 0.5px solid rgb(var(--v-theme-outline-variant)); }
 .cursor-pointer { cursor: pointer; }
