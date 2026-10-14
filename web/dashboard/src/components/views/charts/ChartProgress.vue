@@ -17,7 +17,7 @@ import type { ChartSpec, ViewResult } from '@/types/views'
 import { FONT, INK, MUTED, WIDTHS, type WidthPreset } from './chartGeom'
 import { cellNumber, formatKey } from '../viewFormat'
 
-const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset }>()
+const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; domain?: ViewResult }>()
 const svg = ref<SVGSVGElement | null>(null)
 defineExpose({ svg })
 
@@ -35,8 +35,13 @@ const bars = computed(() => {
   let y = facet ? GROUP_GAP : 6
   let last: unknown = Symbol('none')
   // Group by the facet first (stable within a group), so each heading appears once.
-  const order = facet ? [...new Set(props.result.rows.map((r) => r.key[facet]))] : [undefined]
-  const rows = facet ? order.flatMap((fv) => props.result.rows.filter((r) => r.key[facet] === fv)) : props.result.rows
+  // Rows and their order from the full data, values from the frame: an
+  // animation keeps every bar in place while it fills.
+  const src = (props.domain ?? props.result).rows
+  const same = (a: Record<string, unknown>, b: Record<string, unknown>) => Object.keys(a).every((k) => a[k] === b[k])
+  const valueRow = (r: (typeof src)[number]) => (props.domain ? props.result.rows.find((x) => same(x.key, r.key)) ?? { ...r, empty: true } : r)
+  const order = facet ? [...new Set(src.map((r) => r.key[facet]))] : [undefined]
+  const rows = (facet ? order.flatMap((fv) => src.filter((r) => r.key[facet] === fv)) : src).map(valueRow)
   for (const r of rows) {
     const f = facet ? r.key[facet] : undefined
     const heading = facet && f !== last ? formatKey(f) : ''

@@ -43,7 +43,7 @@ import { FONT, GRID, INK, PALETTE, WIDTHS, linear, niceTicks, tickLabel, type Wi
 import { column, distinct, isPct, points, type Point } from './chartData'
 import { formatKey, keyLabel } from '../viewFormat'
 
-const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset }>()
+const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; domain?: ViewResult }>()
 const svg = ref<SVGSVGElement | null>(null)
 defineExpose({ svg })
 
@@ -54,9 +54,12 @@ const M = computed(() => ({ l: 40, r: 6, t: facets.value.length > 1 ? 38 : 26, b
 
 const slots = computed(() => ({ x: String(props.spec.x), y: String(props.spec.y), color: props.spec.color ? String(props.spec.color) : undefined, facet: props.spec.facet ? String(props.spec.facet) : undefined }))
 const pts = computed(() => points(props.result, slots.value))
-const xs = computed(() => distinct(pts.value.map((p) => p.x)))
-const colors = computed(() => distinct(pts.value.map((p) => p.color)))
-const facets = computed(() => distinct(pts.value.map((p) => p.facet)))
+// Categories and the y range come from the full data, so animation
+// frames keep the same layout and only the values move.
+const full = computed(() => (props.domain ? points(props.domain, slots.value) : pts.value))
+const xs = computed(() => distinct(full.value.map((p) => p.x)))
+const colors = computed(() => distinct(full.value.map((p) => p.color)))
+const facets = computed(() => distinct(full.value.map((p) => p.facet)))
 const pct = computed(() => isPct(column(props.result, slots.value.y)))
 
 const plotH = computed(() => H.value - M.value.t - M.value.b)
@@ -69,15 +72,15 @@ const barX = (xi: number, ci: number) => groupX(xi) + (groupW.value - barW.value
 // Bars for rates start near the data, not at 0, when all values are far from 0 —
 // with the axis line marking where the bars start (no false zero).
 const yLo = computed(() => {
-  const v = pts.value.flatMap((p) => (p.y === null ? [] : [p.y - (p.err ?? 0)]))
-  const lo = Math.min(...v), hi = Math.max(...pts.value.map((p) => (p.y ?? -Infinity) + (p.err ?? 0)))
+  const v = full.value.flatMap((p) => (p.y === null ? [] : [p.y - (p.err ?? 0)]))
+  const lo = Math.min(...v), hi = Math.max(...full.value.map((p) => (p.y ?? -Infinity) + (p.err ?? 0)))
   if (!(lo > 0 && lo > (hi - lo) * 1.5)) return Math.min(0, lo)
   const t = niceTicks(lo, hi)
   const step = t.length > 1 ? t[1] - t[0] : 1
   return Math.floor(lo / step) * step
 })
 const y = computed(() => {
-  const hi = Math.max(...pts.value.map((p) => (p.y ?? -Infinity) + (p.err ?? 0)))
+  const hi = Math.max(...full.value.map((p) => (p.y ?? -Infinity) + (p.err ?? 0)))
   return linear([yLo.value, hi * 1.04], [plotH.value, 0])
 })
 const base = (_p: Point) => yLo.value

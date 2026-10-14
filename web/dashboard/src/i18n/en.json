@@ -677,5 +677,11 @@
   "views.export": "Export",
   "views.unknown_template": "Unknown chart template {name}",
   "views.no_curve_data": "No metric points for this curve yet.",
-  "views.steps_differ": "steps differ between tasks — each task shown as logged, no band"
+  "views.steps_differ": "steps differ between tasks — each task shown as logged, no band",
+  "views.anim_gif": "Animation (GIF)",
+  "views.anim_webm": "Animation (WebM)",
+  "views.anim_loading": "Loading history…",
+  "views.anim_rendering": "Rendering frame {i}/{n}…",
+  "views.anim_encoding": "Encoding…",
+  "views.anim_none": "No history to animate yet."
 }

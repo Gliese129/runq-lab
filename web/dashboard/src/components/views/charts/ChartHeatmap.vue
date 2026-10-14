@@ -32,7 +32,7 @@ import { FONT, INK, MUTED, WIDTHS, sequential, tickLabel, type WidthPreset } fro
 import { column, distinct, isPct } from './chartData'
 import { cellNumber, formatKey, keyLabel } from '../viewFormat'
 
-const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset }>()
+const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; domain?: ViewResult }>()
 const svg = ref<SVGSVGElement | null>(null)
 defineExpose({ svg })
 
@@ -44,8 +44,10 @@ const pct = computed(() => isPct(column(props.result, vName.value)))
 const rows = computed(() => props.result.rows.filter((r) => !r.empty))
 
 const sortVals = (vs: unknown[]) => (vs.every((v) => typeof v === 'number') ? [...vs].sort((a, b) => (a as number) - (b as number)) : vs)
-const xs = computed(() => sortVals(distinct(rows.value.map((r) => r.key[xKey.value]))))
-const ys = computed(() => sortVals(distinct(rows.value.map((r) => r.key[yKey.value]))))
+// Grid and colour range from the full data, so animation frames do not shift.
+const fullRows = computed(() => (props.domain ?? props.result).rows.filter((r) => !r.empty))
+const xs = computed(() => sortVals(distinct(fullRows.value.map((r) => r.key[xKey.value]))))
+const ys = computed(() => sortVals(distinct(fullRows.value.map((r) => r.key[yKey.value]))))
 
 const W = computed(() => WIDTHS[props.width])
 const M = { l: 48, r: 44, t: 8, b: 30 }
@@ -54,7 +56,7 @@ const ch = computed(() => Math.min(34, cw.value * 0.7))
 const plotH = computed(() => ys.value.length * ch.value)
 const H = computed(() => M.t + plotH.value + M.b)
 
-const values = computed(() => rows.value.map((r) => cellNumber(r.cells[vi.value])).filter((v): v is number => v !== null))
+const values = computed(() => fullRows.value.map((r) => cellNumber(r.cells[vi.value])).filter((v): v is number => v !== null))
 const lo = computed(() => Math.min(...values.value))
 const hi = computed(() => Math.max(...values.value))
 /** Darker = better: invert the ramp when lower is better. */

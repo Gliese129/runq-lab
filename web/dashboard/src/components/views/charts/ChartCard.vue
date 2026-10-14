@@ -15,24 +15,31 @@
           <v-list-item @click="exportSvg"><v-list-item-title class="text-body-2">SVG</v-list-item-title></v-list-item>
           <v-list-item @click="exportPng"><v-list-item-title class="text-body-2">PNG (300 dpi)</v-list-item-title></v-list-item>
           <v-list-item @click="exportPdf"><v-list-item-title class="text-body-2">PDF</v-list-item-title></v-list-item>
-          <slot name="export-items" />
+          <template v-if="spec.template !== 'curves'">
+            <v-divider class="my-1" />
+            <v-list-item @click="animate('gif')"><v-list-item-title class="text-body-2">{{ t('views.anim_gif') }}</v-list-item-title></v-list-item>
+            <v-list-item @click="animate('webm')"><v-list-item-title class="text-body-2">{{ t('views.anim_webm') }}</v-list-item-title></v-list-item>
+          </template>
         </v-list>
       </v-menu>
     </div>
+    <div v-if="animating" class="chart-anim">{{ animating }}</div>
     <div class="chart-paper" :class="{ wide: width === 'double' }">
-      <component :is="comp" v-if="comp" ref="chart" :result="result" :spec="spec" :width="width" :project="project" :view="view" :index="index" />
+      <component :is="comp" v-if="comp" ref="chart" :result="shown" :domain="frameResult ? result : undefined" :spec="spec" :width="width" :project="project" :view="view" :index="index" />
       <div v-else class="text-caption pa-4">{{ t('views.unknown_template', { name: spec.template }) }}</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, type Component } from 'vue'
+import { computed, nextTick, ref, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ChartSpec, ViewResult } from '@/types/views'
 import { useSnackbar } from '@/composables/useSnackbar'
 import type { WidthPreset } from './chartGeom'
-import { downloadBlob, svgToPdf, svgToPng, svgString } from './chartExport'
+import { downloadBlob, svgToCanvas, svgToPdf, svgToPng, svgString } from './chartExport'
+import { encodeGif, encodeWebm, stamp } from './chartAnimate'
+import { viewsApi } from '@/apis/views'
 import ChartCompare from './ChartCompare.vue'
 import ChartSweep from './ChartSweep.vue'
 import ChartHeatmap from './ChartHeatmap.vue'
@@ -65,6 +72,41 @@ async function exportPng() {
   if (!s) return
   try { downloadBlob(await svgToPng(s, 300), `${fileBase.value}.png`) } catch (e: any) { snack.error(e?.message || t('common.error')) }
 }
+// ── Animation: play history frames through the same chart, capture each ──
+const frameResult = ref<ViewResult | null>(null)
+const shown = computed(() => frameResult.value ?? props.result)
+const animating = ref('')
+const FRAMES = 40
+
+async function animate(kind: 'gif' | 'webm') {
+  try {
+    animating.value = t('views.anim_loading')
+    const { frames, by } = await viewsApi.frames(props.project, props.view, props.index, FRAMES, 'time')
+    if (!frames.length) { snack.info(t('views.anim_none')); return }
+    const canvases: HTMLCanvasElement[] = []
+    for (const [i, f] of frames.entries()) {
+      animating.value = t('views.anim_rendering', { i: i + 1, n: frames.length })
+      frameResult.value = { ...props.result, rows: f.rows }
+      // Rasterizing reads the serialized SVG DOM, so the patched DOM is
+      // enough — no paint needed (paints are throttled in background tabs).
+      await nextTick()
+      const s = el()
+      if (!s) continue
+      const c = await svgToCanvas(s, 150)
+      stamp(c, by === 'step' ? `step ${Math.round(f.at)}` : new Date(f.at * 1000).toLocaleString())
+      canvases.push(c)
+    }
+    animating.value = t('views.anim_encoding')
+    const blob = kind === 'gif' ? await encodeGif(canvases, 120) : await encodeWebm(canvases, 8)
+    downloadBlob(blob, `${fileBase.value}.${kind}`)
+  } catch (e: any) {
+    snack.error(e?.message || t('common.error'))
+  } finally {
+    frameResult.value = null
+    animating.value = ''
+  }
+}
+
 async function exportPdf() {
   const s = el()
   if (!s) return
@@ -76,6 +118,7 @@ async function exportPdf() {
 .chart-card { border: 0.5px solid rgb(var(--v-theme-outline-variant)); border-radius: 12px; padding: 8px 10px 12px; background: rgb(var(--v-theme-surface)); }
 .chart-bar { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
 .chart-name { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
+.chart-anim { font-size: 12px; color: rgb(var(--v-theme-primary)); margin-bottom: 4px; }
 /* A white "paper" in both themes: what you see is what gets exported. */
 .chart-paper { background: #fff; border-radius: 6px; overflow-x: auto; }
 .chart-paper :deep(svg) { display: block; max-width: 100%; height: auto; }

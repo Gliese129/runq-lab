@@ -18,7 +18,7 @@ import { column, distinct, isPct, points } from './chartData'
 import { frameGeom } from './frame'
 import { formatKey, keyLabel } from '../viewFormat'
 
-const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset }>()
+const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; domain?: ViewResult }>()
 const frame = ref<{ svg: SVGSVGElement | null } | null>(null)
 defineExpose({ get svg() { return frame.value?.svg ?? null } })
 
@@ -26,14 +26,15 @@ const xKey = computed(() => String(props.spec.x))
 const yName = computed(() => String(props.spec.y))
 const colorKey = computed(() => (props.spec.color ? String(props.spec.color) : undefined))
 const pts = computed(() => points(props.result, { x: xKey.value, y: yName.value, color: colorKey.value }).filter((p) => typeof p.x === 'number' && p.y !== null))
-const colors = computed(() => distinct(pts.value.map((p) => p.color)))
+const fullPts = computed(() => (props.domain ? points(props.domain, { x: xKey.value, y: yName.value, color: colorKey.value }).filter((p) => typeof p.x === 'number' && p.y !== null) : pts.value))
+const colors = computed(() => distinct(fullPts.value.map((p) => p.color)))
 const g = computed(() => frameGeom(props.width, { legend: colors.value.length > 1 }))
 const pct = computed(() => isPct(column(props.result, yName.value)))
 const logX = computed(() => props.spec.log_x === true && pts.value.every((p) => (p.x as number) > 0))
 
 /** Swept values are the informative ticks; with few of them the axis is
  *  pinned to the data range and labelled exactly at each value. */
-const sweptXs = computed(() => distinct(pts.value.map((p) => p.x as number)).sort((a, b) => a - b))
+const sweptXs = computed(() => distinct(fullPts.value.map((p) => p.x as number)).sort((a, b) => a - b))
 const x = computed(() => {
   const xs = sweptXs.value
   const lo = xs[0], hi = xs[xs.length - 1]
@@ -50,8 +51,8 @@ const x = computed(() => {
   return s
 })
 const y = computed(() => {
-  const lo = Math.min(...pts.value.map((p) => p.y! - (p.err ?? 0)))
-  const hi = Math.max(...pts.value.map((p) => p.y! + (p.err ?? 0)))
+  const lo = Math.min(...fullPts.value.map((p) => p.y! - (p.err ?? 0)))
+  const hi = Math.max(...fullPts.value.map((p) => p.y! + (p.err ?? 0)))
   const pad = (hi - lo) * 0.08 || 0.01
   return linear([lo - pad, hi + pad], [g.value.plotH, 0])
 })

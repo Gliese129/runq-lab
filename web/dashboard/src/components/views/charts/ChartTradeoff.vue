@@ -18,7 +18,7 @@ import { column, distinct, isPct } from './chartData'
 import { frameGeom } from './frame'
 import { cellNumber, formatKey, keyLabel } from '../viewFormat'
 
-const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset }>()
+const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; domain?: ViewResult }>()
 const frame = ref<{ svg: SVGSVGElement | null } | null>(null)
 defineExpose({ get svg() { return frame.value?.svg ?? null } })
 
@@ -28,16 +28,19 @@ const colorKey = computed(() => (props.spec.color ? String(props.spec.color) : u
 const labels = computed(() => props.spec.label !== false)
 
 /** One point per row: x and y are both columns. */
-const pts = computed(() => {
-  const xi = props.result.columns.findIndex((c) => c.name === xName.value)
-  const yi = props.result.columns.findIndex((c) => c.name === yName.value)
-  return props.result.rows.filter((r) => !r.empty).map((r) => ({
+function rowPoints(res: ViewResult) {
+  const xi = res.columns.findIndex((c) => c.name === xName.value)
+  const yi = res.columns.findIndex((c) => c.name === yName.value)
+  return res.rows.filter((r) => !r.empty).map((r) => ({
     x: cellNumber(r.cells[xi]), y: cellNumber(r.cells[yi]),
     color: colorKey.value ? r.key[colorKey.value] : undefined,
-    label: props.result.row_keys.filter((k) => k !== colorKey.value).map((k) => formatKey(r.key[k])).join(' · '),
+    label: res.row_keys.filter((k) => k !== colorKey.value).map((k) => formatKey(r.key[k])).join(' · '),
   })).filter((p) => p.x !== null && p.y !== null) as { x: number; y: number; color: unknown; label: string }[]
-})
-const colors = computed(() => distinct(pts.value.map((p) => p.color)))
+}
+const pts = computed(() => rowPoints(props.result))
+// Axes and series from the full data, so animation frames do not rescale.
+const fullPts = computed(() => (props.domain ? rowPoints(props.domain) : pts.value))
+const colors = computed(() => distinct(fullPts.value.map((p) => p.color)))
 const legend = computed(() => (colorKey.value ? colors.value.map((c) => `${keyLabel(colorKey.value!)} = ${formatKey(c)}`) : []))
 const g = computed(() => frameGeom(props.width, { legend: legend.value.length > 1 }))
 const xPct = computed(() => isPct(column(props.result, xName.value)))
@@ -47,8 +50,8 @@ function padded(vs: number[]): [number, number] {
   const lo = Math.min(...vs), hi = Math.max(...vs), pad = (hi - lo) * 0.1 || Math.abs(hi) * 0.05 || 1
   return [lo - pad, hi + pad]
 }
-const x = computed(() => linear(padded(pts.value.map((p) => p.x)), [0, g.value.plotW]))
-const y = computed(() => linear(padded(pts.value.map((p) => p.y)), [g.value.plotH, 0]))
+const x = computed(() => linear(padded(fullPts.value.map((p) => p.x)), [0, g.value.plotW]))
+const y = computed(() => linear(padded(fullPts.value.map((p) => p.y)), [g.value.plotH, 0]))
 const placed = computed(() => pts.value.map((p) => ({ ...p, px: x.value(p.x), py: y.value(p.y), ci: Math.max(0, colors.value.indexOf(p.color)) })))
 
 /** Pareto frontier by each column's `better` (default: higher y, lower x). */
