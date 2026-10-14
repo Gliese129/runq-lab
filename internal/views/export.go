@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"text/tabwriter"
+	"time"
 )
 
 func latexEscape(s string) string {
@@ -177,30 +178,35 @@ func Export(r *Result, format string, wide, color bool) (string, error) {
 	if format != "" && format != "text" {
 		return "", fmt.Errorf("unknown format %q", format)
 	}
-	fmt.Fprintf(&b, "%s · %d\n", r.Title, r.GeneratedAt)
+	fmt.Fprintf(&b, "%s · %s\n", r.Title, time.Unix(r.GeneratedAt, 0).Format("2006-01-02 15:04:05"))
 	for _, s := range r.Sources {
 		data := "no data yet"
 		if s.LastDataAt != nil {
 			data, _ = Format(float64(*s.LastDataAt), "ago", r.GeneratedAt)
 		}
-		observed := "never"
+		observed := s.ObservationState
 		if s.ObservedAt != nil {
-			observed, _ = Format(float64(*s.ObservedAt), "ago", r.GeneratedAt)
+			ago, _ := Format(float64(*s.ObservedAt), "ago", r.GeneratedAt)
+			observed += " (" + ago + ")"
 		}
 		heartbeat := "--"
 		if s.LastHeartbeatAt != nil {
 			heartbeat, _ = Format(float64(*s.LastHeartbeatAt), "ago", r.GeneratedAt)
 		}
-		fmt.Fprintf(&b, "%s %s [%s] data: %s · observation: %s (%s) · heartbeat: %s\n", s.JobID, s.Note, s.Status, data, s.ObservationState, observed, heartbeat)
+		fmt.Fprintf(&b, "%s %s [%s] data: %s · observation: %s · heartbeat: %s\n", s.JobID, s.Note, s.Status, data, observed, heartbeat)
 		for _, a := range s.Attention {
-			fmt.Fprintf(&b, "  ! %s\n", canonical(a))
+			fmt.Fprintf(&b, "  ! %s\n", attentionLine(a))
 		}
 		for _, w := range s.Warnings {
 			fmt.Fprintf(&b, "  ! %s\n", w)
 		}
 	}
 	for _, e := range r.Extra {
-		fmt.Fprintf(&b, "%s: %s ", e.Name, e.Text)
+		name := e.Name
+		if e.Agg != "" {
+			name += "[" + e.Agg + "]"
+		}
+		fmt.Fprintf(&b, "%s = %s  ", name, e.Text)
 	}
 	if len(r.Extra) > 0 {
 		b.WriteString("\n")
@@ -250,6 +256,29 @@ func Export(r *Result, format string, wide, color bool) (string, error) {
 	}
 	return b.String(), nil
 }
+
+// attentionLine renders one attention entry as "<id> <status>: <reason>" —
+// the id first, so the next command (logs, show) is a copy away.
+func attentionLine(a map[string]any) string {
+	var id string
+	for _, k := range []string{"task_id", "consumer_id", "job_id"} {
+		if v, ok := a[k].(string); ok && v != "" {
+			id = v
+			break
+		}
+	}
+	status, _ := a["status"].(string)
+	reason, _ := a["reason"].(string)
+	line := strings.TrimSpace(id + " " + status)
+	if reason != "" {
+		line += ": " + reason
+	}
+	if host, _ := a["host"].(string); host != "" {
+		line += fmt.Sprintf(" (host %s, pid %v)", host, a["pid"])
+	}
+	return line
+}
+
 func plain(v any) string {
 	if v == nil {
 		return ""

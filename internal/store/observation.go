@@ -41,10 +41,18 @@ func (s *Store) JobObservation(ctx context.Context, tasks []TaskRow) (*int64, st
 			if err != nil {
 				return nil, "", err
 			}
-			if mark.Final && o.ObservedAt != nil {
+			// A settled task whose final ingest ran needs no further
+			// observation. Tasks settled before the observation ledger
+			// existed have no receipt; their finish time is the last fact.
+			observed := o.ObservedAt
+			if observed == nil && t.FinishedAt != nil {
+				v := t.FinishedAt.Unix()
+				observed = &v
+			}
+			if mark.Final && observed != nil {
 				okCount++
-				if at == nil || *o.ObservedAt < *at {
-					at = o.ObservedAt
+				if at == nil || *observed < *at {
+					at = observed
 				}
 				continue
 			}
