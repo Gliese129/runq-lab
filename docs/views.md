@@ -120,6 +120,16 @@ per-task recorded points with `aligned: false`, without interpolation. Bounded
 series and animation frames use a target-side prefix/tail pyramid of exact record
 positions; averages are never substituted for progress snapshots.
 
+### In the dashboard
+
+Each view has a page (project page → Views, or the job page's Views tab):
+the table in booktabs style with Copy LaTeX / Copy Markdown / CSV, and every
+chart on a white "paper" at single- or double-column width (3.3in / 6.9in).
+Charts export as SVG, 300 dpi PNG or vector PDF, and — except `curves` — as a
+GIF or WebM of the view's history. Colours are Okabe–Ito with markers and dash
+patterns, so figures survive grayscale printing; chart titles are left to the
+paper's caption.
+
 ## Custom sources and templates
 
 ```yaml

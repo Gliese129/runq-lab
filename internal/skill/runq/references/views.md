@@ -96,8 +96,10 @@ charts:
 
 Curves group only identical full step sequences; otherwise return separate actual
 points, no interpolation. Other templates: sweep (x/y), heatmap (x/y/value),
-tradeoff (x/y/color), progress (done/total). Frontend owns image/video export;
-`runq view paper --open` opens its dashboard page.
+tradeoff (x/y/color), progress (done/total). The dashboard page of a view
+exports each chart as SVG / 300 dpi PNG / vector PDF and history as GIF/WebM —
+point the researcher there (`runq view paper --open`) instead of writing a
+plotting script; the table's Copy LaTeX matches `--format latex`.
 
 ## Custom presentation
 
