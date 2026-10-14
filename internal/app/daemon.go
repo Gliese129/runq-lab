@@ -225,7 +225,13 @@ func (d *Daemon) Run() error {
 		d.Shutdown(context.Background())
 	}()
 
-	return d.serveClientSocket()
+	err = d.serveClientSocket()
+	// Shutdown closes the client socket first, which returns us here while
+	// it is still draining lanes and closing the store. Joining it (sync.Once
+	// blocks until the running call finishes) keeps the process alive until
+	// that cleanup is done; on a socket error it performs the cleanup.
+	d.Shutdown(context.Background())
+	return err
 }
 
 // serveClientSocket serves the dashboard mux on the client's unix socket —
@@ -404,6 +410,18 @@ func (d *Daemon) Shutdown(_ context.Context) {
 		// after the barrier instead of touching a closed store.
 		d.shuttingDown.Store(true)
 		d.Logger.Info("shutdown signal received")
+		// Each step is timed: a slow stop is otherwise invisible in the log
+		// (nothing is written between the signal and the process exit).
+		began := time.Now()
+		last := began
+		step := func(name string) {
+			now := time.Now()
+			if took := now.Sub(last); took > time.Second {
+				d.Logger.Warn("shutdown step slow", "step", name, "took", took.Round(time.Millisecond))
+			}
+			last = now
+		}
+		defer func() { d.Logger.Info("shutdown complete", "took", time.Since(began).Round(time.Millisecond)) }()
 		if d.PidFile != nil {
 			if err := d.PidFile.Close(); err != nil {
 				d.Logger.Warn("failed to close pid file", "error", err)
@@ -422,6 +440,7 @@ func (d *Daemon) Shutdown(_ context.Context) {
 		if d.cfgWatchCancel != nil {
 			d.cfgWatchCancel()
 		}
+		step("close listeners")
 
 		// ReconcileConfig and SweepRetiringLanes both hold reconcileMu for the
 		// complete lane transition. Waiting here joins an already-running
@@ -429,13 +448,15 @@ func (d *Daemon) Shutdown(_ context.Context) {
 		// makes it safe to release after the store has closed.
 		d.reconcileMu.Lock()
 		defer d.reconcileMu.Unlock()
+		step("wait for config reconcile")
 
 		// A reconcile pass may create/replace a forward. Drain it first, then
 		// close the final map under fwdMu; startForwardFor checks shuttingDown
 		// while holding the same mutex, so no late forward can appear.
 		d.fwdMu.Lock()
-		for _, fwd := range d.forwards {
+		for target, fwd := range d.forwards {
 			_ = fwd.Close()
+			step("close forward " + target)
 		}
 		d.fwdMu.Unlock()
 
@@ -447,6 +468,7 @@ func (d *Daemon) Shutdown(_ context.Context) {
 				if err := c.Close(); err != nil {
 					d.Logger.Warn("lane close failed", "target", name, "error", err)
 				}
+				step("close lane " + name)
 			}
 		}
 		for key, be := range d.retiringLanes {
@@ -464,6 +486,7 @@ func (d *Daemon) Shutdown(_ context.Context) {
 			}
 		}
 		d.laneMu.Unlock()
+		step("close retiring and historical lanes")
 		if err := d.Store.Close(); err != nil {
 			d.Logger.Error("db close failed", "error", err)
 		}

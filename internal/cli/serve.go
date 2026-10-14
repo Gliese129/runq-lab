@@ -2,11 +2,14 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -51,8 +54,34 @@ machines; runq serve only routes to it (or to HPC schedulers).`,
 			if err := subp.Start(); err != nil {
 				return err
 			}
-			fmt.Printf("runq service started in background (pid %d)\n", subp.Process.Pid)
-			return nil
+			// Report "started" only once the child owns the PID file and
+			// accepts on the socket: a stop/status/restart issued right after
+			// would otherwise read the previous process's PID.
+			exited := make(chan error, 1)
+			go func() { exited <- subp.Wait() }()
+			paths := utils.PathsFromDataDir(dataDir)
+			ready := time.After(20 * time.Second)
+			tick := time.NewTicker(200 * time.Millisecond)
+			defer tick.Stop()
+			for {
+				select {
+				case err := <-exited:
+					return fmt.Errorf("runq service exited during startup (%v); last log lines:\n%s", err, logTail(filepath.Join(dataDir, "daemon.log"), 10))
+				case <-ready:
+					fmt.Printf("runq service started in background (pid %d), still initializing — check `runq serve status`\n", subp.Process.Pid)
+					return nil
+				case <-tick.C:
+					pid, _, _ := api.ReadPID(paths.PIDPath)
+					if pid != subp.Process.Pid {
+						continue
+					}
+					if c, err := net.DialTimeout("unix", paths.SocketPath, time.Second); err == nil {
+						_ = c.Close()
+						fmt.Printf("runq service started in background (pid %d)\n", subp.Process.Pid)
+						return nil
+					}
+				}
+			}
 		}
 
 		d, err := app.NewDaemon()
@@ -63,6 +92,8 @@ machines; runq serve only routes to it (or to HPC schedulers).`,
 	},
 }
 
+var errServiceNotRunning = errors.New("runq service is not running")
+
 var serveStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the runq service",
@@ -71,27 +102,48 @@ var serveStopCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if pid == 0 {
-			return fmt.Errorf("runq service is not running")
+		if pid == 0 || !utils.IsProcessAlive(pid, startTime) {
+			return errServiceNotRunning
 		}
 		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+			if errors.Is(err, syscall.ESRCH) {
+				return errServiceNotRunning
+			}
 			return err
 		}
 
-		ctx, cancel := signal.NotifyContext(context.Background())
+		// Shutdown drains each lane's in-flight SSH pass, which is bounded
+		// at 30s; wait that long before giving up, and say so while waiting.
+		const stopWait = 30 * time.Second
+		// Only Ctrl-C / SIGTERM interrupt the wait. NotifyContext with no
+		// signal list fires on ANY signal — SIGCHLD, or the SIGURG the Go
+		// runtime uses for preemption — which ended this wait at once and
+		// reported a timeout that never happened.
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		deadline, stop := context.WithTimeout(ctx, 10*time.Second)
+		deadline, stop := context.WithTimeout(ctx, stopWait)
 		defer stop()
 
-		ticker := time.NewTicker(time.Second)
+		began := time.Now()
+		noted := false
+		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-deadline.Done():
-				return fmt.Errorf("process no response in 10s")
+				if ctx.Err() != nil {
+					return fmt.Errorf("interrupted; runq service (pid %d) was asked to stop and may still be shutting down", pid)
+				}
+				return fmt.Errorf("runq service (pid %d) did not exit within %s; "+
+					"`shutdown step slow` lines in %s name the step it is waiting on; "+
+					"`kill %d` stops it now", pid, stopWait, daemonLogPath(), pid)
 			case <-ticker.C:
 				if !utils.IsProcessAlive(pid, startTime) {
 					return nil
+				}
+				if !noted && time.Since(began) > 5*time.Second {
+					fmt.Fprintln(cmd.ErrOrStderr(), "waiting for in-flight SSH work to finish…")
+					noted = true
 				}
 			}
 		}
@@ -103,7 +155,7 @@ var serveRestartCmd = &cobra.Command{
 	Short: "Restart the runq service (always starts in background)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("Stopping runq service...")
-		if err := serveStopCmd.RunE(cmd, args); err != nil {
+		if err := serveStopCmd.RunE(cmd, args); err != nil && !errors.Is(err, errServiceNotRunning) {
 			return err
 		}
 		// Force detach mode — restart should never block the terminal.
@@ -147,4 +199,23 @@ func init() {
 	serveCmd.AddCommand(serveStatusCmd)
 	serveCmd.GroupID = groupManagement
 	rootCmd.AddCommand(serveCmd)
+}
+
+// daemonLogPath is where `runq serve -d` writes its log (see serve status).
+func daemonLogPath() string {
+	_, dataDir := utils.ResolveDataDir()
+	return filepath.Join(dataDir, "daemon.log")
+}
+
+// logTail returns the last n lines of a log file (empty when unreadable).
+func logTail(path string, n int) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
