@@ -7,6 +7,7 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: '', name: 'overview', component: () => import('../views/Overview.vue') },
       { path: 'projects/:project', name: 'project', component: () => import('../views/ProjectJobs.vue'), props: true },
+      { path: 'projects/:project/views/:name', name: 'view', component: () => import('../views/ViewPage.vue'), props: true },
       { path: 'projects/:project/:jobId', name: 'job-detail', component: () => import('../views/job/index.vue'), props: true },
       { path: 'projects/:project/:jobId/:taskId', name: 'task-detail', component: () => import('../views/job/TaskDetail.vue'), props: true },
       { path: 'targets', name: 'targets', component: () => import('../views/Targets.vue') },

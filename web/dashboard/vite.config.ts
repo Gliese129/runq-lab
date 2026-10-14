@@ -14,10 +14,12 @@ export default defineConfig({
     },
   },
   server: {
+    // RUNQ_API points the dev server at another runq service (e.g. a
+    // seeded dev instance); default is the local service.
     proxy: {
-      "/api": "http://localhost:8077",
+      "/api": process.env.RUNQ_API ?? "http://localhost:8077",
       "/ws": {
-        target: "ws://localhost:8077",
+        target: (process.env.RUNQ_API ?? "http://localhost:8077").replace(/^http/, "ws"),
         ws: true,
       },
     },

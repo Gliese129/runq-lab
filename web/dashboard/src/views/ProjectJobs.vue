@@ -13,6 +13,16 @@
       </v-btn>
     </div>
 
+    <div v-if="projectViews.length" class="d-flex flex-wrap align-center ga-2 mb-4">
+      <span class="text-caption text-on-surface-variant mr-1">{{ t('views.title') }}</span>
+      <router-link
+        v-for="v in projectViews" :key="v.name" class="view-link"
+        :to="{ name: 'view', params: { project, name: v.name } }"
+      >
+        <v-icon size="14" class="mr-1">mdi-table-eye</v-icon>{{ v.title || v.name }}
+      </router-link>
+    </div>
+
     <v-text-field
       v-model="searchQuery"
       :placeholder="t('project.search_note')"
@@ -77,6 +87,7 @@ import JobNote from '@/components/JobNote.vue'
 import ProjectDot from '@/components/ProjectDot.vue'
 import type { JobSummary } from '@/types/api'
 import { commonWordsByProject, filterJobs, groupJobs } from './jobListView'
+import { useViewsQuery } from '@/queries/useViewQueries'
 
 const props = defineProps<{ project: string }>()
 const { t } = useI18n()
@@ -130,6 +141,8 @@ async function unarchiveJob(id: string) {
 }
 
 const searchQuery = ref('')
+const viewsQuery = useViewsQuery(() => props.project)
+const projectViews = computed(() => viewsQuery.data.value ?? [])
 
 const projectJobs = computed(() =>
   projectArchived.value
@@ -153,5 +166,10 @@ function openJob(j: JobSummary) {
   color: rgb(var(--v-theme-on-surface-variant)); background: none; border: none; cursor: pointer; padding: 4px 14px;
 }
 .archived-row:hover { background: rgb(var(--v-theme-on-surface), 0.04); }
+.view-link {
+  display: inline-flex; align-items: center; font-size: 13px; padding: 3px 10px; border-radius: 999px;
+  text-decoration: none; color: rgb(var(--v-theme-on-surface)); border: 0.5px solid rgb(var(--v-theme-outline-variant));
+}
+.view-link:hover { background: rgb(var(--v-theme-on-surface), 0.05); }
 .archived-id { font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); background: none; }
 </style>

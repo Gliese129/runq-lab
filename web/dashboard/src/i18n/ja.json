@@ -660,5 +660,22 @@
   "overview.no_match": "一致する job はありません。",
   "job.copy_id": "job id をコピー",
   "job.n_tasks": "{n} task",
-  "job.n_params_vary": "{n} 個のパラメータが変化"
+  "job.n_params_vary": "{n} 個のパラメータが変化",
+  "views.title": "ビュー",
+  "views.no_data": "データなし",
+  "views.invalid": "このビューは表示できません",
+  "views.data_ago": "データ {ago}",
+  "views.obs_unconfirmed": "未確認",
+  "views.obs_never": "未観測",
+  "views.unconfirmed_hint": "この job の最新の観測が失敗したか古いため、値がクラスタより遅れている可能性があります。",
+  "views.copy_latex": "LaTeX をコピー",
+  "views.copy_markdown": "Markdown をコピー",
+  "views.copied_latex": "LaTeX をコピーしました",
+  "views.copied_markdown": "Markdown をコピーしました",
+  "views.single_col": "1段",
+  "views.double_col": "2段",
+  "views.export": "書き出し",
+  "views.unknown_template": "不明なチャートテンプレート {name}",
+  "views.no_curve_data": "この曲線の指標データはまだありません。",
+  "views.steps_differ": "task 間で step が異なるため、記録どおり個別に表示（帯なし）"
 }

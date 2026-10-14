@@ -660,5 +660,22 @@
   "overview.no_match": "没有匹配的 job。",
   "job.copy_id": "复制 job id",
   "job.n_tasks": "{n} 个 task",
-  "job.n_params_vary": "{n} 个参数变化"
+  "job.n_params_vary": "{n} 个参数变化",
+  "views.title": "视图",
+  "views.no_data": "暂无数据",
+  "views.invalid": "这个视图无法渲染",
+  "views.data_ago": "数据 {ago}",
+  "views.obs_unconfirmed": "未确认",
+  "views.obs_never": "尚未观测",
+  "views.unconfirmed_hint": "这个 job 最近一次观测失败或已过期，数字可能落后于集群。",
+  "views.copy_latex": "复制 LaTeX",
+  "views.copy_markdown": "复制 Markdown",
+  "views.copied_latex": "已复制 LaTeX",
+  "views.copied_markdown": "已复制 Markdown",
+  "views.single_col": "单栏",
+  "views.double_col": "双栏",
+  "views.export": "导出",
+  "views.unknown_template": "未知图表模板 {name}",
+  "views.no_curve_data": "这条曲线还没有指标数据。",
+  "views.steps_differ": "各 task 的 step 不一致：按实际记录分别画出，不画误差带"
 }

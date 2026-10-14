@@ -660,5 +660,22 @@
   "overview.no_match": "No job matches.",
   "job.copy_id": "Copy job id",
   "job.n_tasks": "{n} task | {n} tasks",
-  "job.n_params_vary": "{n} params vary"
+  "job.n_params_vary": "{n} params vary",
+  "views.title": "Views",
+  "views.no_data": "no data yet",
+  "views.invalid": "This view cannot be rendered",
+  "views.data_ago": "data {ago}",
+  "views.obs_unconfirmed": "unconfirmed",
+  "views.obs_never": "not observed yet",
+  "views.unconfirmed_hint": "The last observation of this job failed or is old; numbers may lag behind the cluster.",
+  "views.copy_latex": "Copy LaTeX",
+  "views.copy_markdown": "Copy Markdown",
+  "views.copied_latex": "LaTeX copied",
+  "views.copied_markdown": "Markdown copied",
+  "views.single_col": "1 col",
+  "views.double_col": "2 col",
+  "views.export": "Export",
+  "views.unknown_template": "Unknown chart template {name}",
+  "views.no_curve_data": "No metric points for this curve yet.",
+  "views.steps_differ": "steps differ between tasks — each task shown as logged, no band"
 }

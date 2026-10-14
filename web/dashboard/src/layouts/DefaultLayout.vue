@@ -288,7 +288,7 @@
 
     <v-app-bar
       elevation="0"
-      color="transparent"
+      color="background"
       density="compact"
       style="border-bottom: 0.5px solid rgb(var(--v-theme-outline-variant))"
     >

@@ -14,4 +14,8 @@ export const qk = {
   gpu: ['gpu'] as const,
   targets: ['targets'] as const,
   health: ['health'] as const,
+  views: (project: string) => ['views', project] as const,
+  view: (project: string, name: string) => ['views', project, name] as const,
+  viewRender: (project: string, name: string, jobs: readonly string[]) => ['views', project, name, 'render', ...jobs] as const,
+  viewSeries: (project: string, name: string, chart: number, jobs: readonly string[]) => ['views', project, name, 'series', chart, ...jobs] as const,
 }
