@@ -21,7 +21,6 @@ import (
 // statusFile is the shape run.sh writes to <task_dir>/status.json.
 type statusFile struct {
 	TimeVersion         int    `json:"time_version"`
-	Attempt             *int   `json:"attempt"`
 	WrapperStartedAt    int64  `json:"wrapper_started_at"`
 	ExecutionStartedAt  int64  `json:"execution_started_at"`
 	ExecutionFinishedAt int64  `json:"execution_finished_at"`
@@ -211,51 +210,33 @@ func (b *Backend) HeartbeatProbe(ctx context.Context, silenceAfter time.Duration
 	return silent, nil
 }
 
-// awaitingRelaunch reports whether a task has no durable external handoff yet
-// and its wrapper files are therefore not admissible evidence. During retry
-// they belong to the previous attempt; during first submission they are not
-// known to belong to a started attempt at all. Launcher resets wrapper state
-// before invoking the external submit command and publishes the external ID
-// only after a confirmed handoff.
-func awaitingRelaunch(tk store.TaskRow) bool {
-	// Both manual retry reset intent and scheduler dispatch are pre-effect
-	// submitting phases. No observation may settle them before the launcher
-	// has either published an external ID or returned a classified failure.
-	if tk.Status == "submitting" && tk.ExternalID == "" {
-		return true
-	}
-	// Only PENDING rows can be "requeued but not relaunched". An `unknown`
-	// task (RQ-74) also has no external id and may have retry_count > 0, but
-	// it is exactly the task reconcile must look at — its on-disk wrapper
-	// state is the evidence that settles it.
-	return tk.Status == "pending" && tk.ExternalID == "" && tk.RetryCount > 0
+// awaitingLaunch gates filesystem observations until dispatch has a durable handoff.
+func awaitingLaunch(tk store.TaskRow) bool {
+	return tk.Status == "submitting" && tk.ExternalID == ""
 }
 
-// reconcileObservationCurrent reloads the durable attempt immediately before
-// local file ingestion. A lane can retain a TaskRow loaded just before manual
-// retry commits; comparing the complete reconciliation identity prevents that
-// stale row from reopening the old attempt's files during reset.
+// Reload immediately before ingestion so stale observations cannot settle a
+// changed execution identity or status.
 func (b *Backend) reconcileObservationCurrent(ctx context.Context, loaded store.TaskRow) (bool, error) {
 	current, err := b.Store.GetTask(ctx, loaded.ID)
 	if err != nil {
 		return false, err
 	}
-	if current == nil || awaitingRelaunch(*current) {
+	if current == nil || awaitingLaunch(*current) {
 		return false, nil
 	}
 	return current.Status == loaded.Status &&
 		current.StatusSource == loaded.StatusSource &&
-		current.RetryCount == loaded.RetryCount &&
 		current.TargetGeneration == loaded.TargetGeneration &&
 		current.ExternalID == loaded.ExternalID, nil
 }
 
-// ingestLoadedAttempt makes the identity check and filesystem ingestion one
+// ingestLoadedTask makes the identity check and filesystem ingestion one
 // process-local critical section shared by active and retiring lanes. Status
 // decisions still use durable CAS after this lock is released; this lock only
 // closes the non-transactional file-read/reset window.
-func (b *Backend) ingestLoadedAttempt(ctx context.Context, loaded store.TaskRow, final bool) (current bool, verifyErr, ingestErr error) {
-	verifyErr = b.Store.WithTaskAttemptLock(loaded.ID, func() error {
+func (b *Backend) ingestLoadedTask(ctx context.Context, loaded store.TaskRow, final bool) (current bool, verifyErr, ingestErr error) {
+	verifyErr = b.Store.WithTaskLock(loaded.ID, func() error {
 		var err error
 		current, err = b.reconcileObservationCurrent(ctx, loaded)
 		if err != nil || !current {
@@ -271,7 +252,7 @@ func (b *Backend) ingestLoadedAttempt(ctx context.Context, loaded store.TaskRow,
 
 // persistDecision writes a reconcile decision. A terminal transition of a
 // not-yet-terminal task goes through the scheduler's FinishTask funnel when a
-// Finisher is wired (retry policy, slot release, queue bookkeeping); every
+// Finisher is wired (slot release and queue bookkeeping); every
 // other write — non-terminal moves, display-field refreshes, terminal-to-
 // terminal corrections (inferred→wrapper) — stays a direct store update,
 // because the scheduler only manages in-flight tasks.
@@ -318,13 +299,10 @@ func (b *Backend) persistDecision(ctx context.Context, tk store.TaskRow, d Decis
 		if gerr != nil {
 			return fmt.Errorf("verify terminal persist: %w", gerr)
 		}
-		// A failed verdict may legally advance to a new retry attempt. A manual
-		// retry can do the same while this lane holds an old observation. Either
-		// way, an identity change makes this verdict obsolete and authoritative.
-		attemptChanged := row != nil && (row.RetryCount != tk.RetryCount ||
-			row.TargetGeneration != tk.TargetGeneration || row.ExternalID != tk.ExternalID)
-		if attemptChanged {
-			return nil // this verdict is obsolete; the newer durable attempt wins
+		// A concurrent handoff or stronger verdict can supersede this observation.
+		identityChanged := row != nil && (row.TargetGeneration != tk.TargetGeneration || row.ExternalID != tk.ExternalID)
+		if identityChanged {
+			return nil // this verdict is obsolete; the newer durable identity wins
 		}
 		if row == nil || !isTerminal(row.Status) {
 			return fmt.Errorf("terminal persist for %s did not land (status %q) — verdict will be redelivered",
@@ -460,10 +438,8 @@ func (b *Backend) reconcileWith(ctx context.Context, jobID string, probe bool, p
 	var observationErrs []error
 	var ingestErrs []error
 	for _, tk := range tasks {
-		// Retry intent/pending epoch is durable before wrapper files are reset.
-		// Until relaunch, every on-disk stream belongs to the previous attempt;
-		// gate before ingestion as well as status reconciliation.
-		if awaitingRelaunch(tk) {
+		// Dispatch must publish its identity before files become evidence.
+		if awaitingLaunch(tk) {
 			continue
 		}
 		// Metrics/checkpoints: incremental via the (size,offset) mark —
@@ -471,7 +447,7 @@ func (b *Backend) reconcileWith(ctx context.Context, jobID string, probe bool, p
 		// for hard-final terminals (wrapper/runq source): soft terminals
 		// can still be overturned and rerun.
 		hardFinal := isTerminal(tk.Status) && (tk.StatusSource == SourceWrapper || tk.StatusSource == SourceRunq)
-		current, verifyErr, ingestErr := b.ingestLoadedAttempt(ctx, tk, hardFinal)
+		current, verifyErr, ingestErr := b.ingestLoadedTask(ctx, tk, hardFinal)
 		if verifyErr != nil {
 			return fmt.Errorf("verify task %s attempt before reconcile: %w", tk.ID, verifyErr)
 		}
@@ -486,7 +462,6 @@ func (b *Backend) reconcileWith(ctx context.Context, jobID string, probe bool, p
 		// Scheduler / submit / inferred terminals stay correctable so a late
 		// wrapper signal can overturn them.
 		sf, statusErr := readStatusObserved(rfs.WithContext(b.FS, ctx), tk.TaskDir)
-		sf = statusForAttempt(tk, sf)
 		if statusErr != nil {
 			observationErrs = append(observationErrs, fmt.Errorf("observe task %s: %w", tk.ID, statusErr))
 		}
@@ -605,12 +580,12 @@ func (b *Backend) reconcileWithBatch(ctx context.Context, jobID string, signals 
 	var observationErrs []error
 	var ingestErrs []error
 	for _, tk := range tasks {
-		// Same pre-ingestion retry fence as the per-task probe variant.
-		if awaitingRelaunch(tk) {
+		// Same dispatch fence as the per-task probe variant.
+		if awaitingLaunch(tk) {
 			continue
 		}
 		hardFinal := isTerminal(tk.Status) && (tk.StatusSource == SourceWrapper || tk.StatusSource == SourceRunq)
-		current, verifyErr, ingestErr := b.ingestLoadedAttempt(ctx, tk, hardFinal)
+		current, verifyErr, ingestErr := b.ingestLoadedTask(ctx, tk, hardFinal)
 		if verifyErr != nil {
 			return fmt.Errorf("verify task %s attempt before batch reconcile: %w", tk.ID, verifyErr)
 		}
@@ -622,7 +597,6 @@ func (b *Backend) reconcileWithBatch(ctx context.Context, jobID string, signals 
 		}
 
 		sf, statusErr := readStatusObserved(rfs.WithContext(b.FS, ctx), tk.TaskDir)
-		sf = statusForAttempt(tk, sf)
 		if statusErr != nil {
 			observationErrs = append(observationErrs, fmt.Errorf("observe task %s: %w", tk.ID, statusErr))
 		}

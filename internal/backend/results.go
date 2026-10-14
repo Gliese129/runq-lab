@@ -101,6 +101,7 @@ func jobResultsFromDB(ctx context.Context, st *store.Store, jobID string) (*JobR
 			logger.Warnf("results %s: task %s: corrupt metrics_json (row skipped): %v", jobID, row.TaskID, err)
 			continue
 		}
+		axes["section"] = row.Section
 		rec := &resultRec{taskID: row.TaskID, ts: row.TS, axes: axes, metrics: metrics, order: i}
 		rec.identity, rec.label = identityKey(axes["model"], row.TaskID)
 		recs = append(recs, rec)

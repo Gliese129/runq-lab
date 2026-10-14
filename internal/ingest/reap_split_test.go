@@ -42,17 +42,17 @@ func TestReapResultsNormal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListResultRecords: %v", err)
 	}
-	if len(rows) != 2 {
-		t.Fatalf("row count = %d, want 2: %+v", len(rows), rows)
+	if len(rows) != 1 {
+		t.Fatalf("row count = %d, want one latest snapshot: %+v", len(rows), rows)
 	}
 	r := rows[0]
-	if r.TaskID != "t1" || r.JobID != "j1" || r.TS != 1700000000 {
+	if r.TaskID != "t1" || r.JobID != "j1" || r.TS != 1700000060 {
 		t.Errorf("identity/ts not filled from context: %+v", r)
 	}
-	if r.AxesJSON != `{"model":"a","step":2000}` {
+	if r.AxesJSON != `{"model":"a","step":4000}` {
 		t.Errorf("axes_json = %q", r.AxesJSON)
 	}
-	if r.MetricsJSON != `{"math":24.8}` {
+	if r.MetricsJSON != `{"math":26.1}` {
 		t.Errorf("metrics_json = %q", r.MetricsJSON)
 	}
 }
@@ -91,8 +91,8 @@ func TestReapResultsIncrementalAndIdempotent(t *testing.T) {
 		t.Fatalf("delta reap: %v", err)
 	}
 	rows, _ = st.ListResultRecords(context.Background(), "j1")
-	if len(rows) != 2 {
-		t.Fatalf("after delta pass: row count = %d, want 2: %+v", len(rows), rows)
+	if len(rows) != 1 || rows[0].TS != 2 {
+		t.Fatalf("delta must replace latest snapshot: %+v", rows)
 	}
 }
 
@@ -109,7 +109,7 @@ func TestReapResultsRebuildOnShrink(t *testing.T) {
 		t.Fatalf("first reap: %v", err)
 	}
 
-	// Retry rerun rewrote the file smaller → rows rebuild, no duplicates.
+	// A rewritten file can shrink; rebuild the projection without duplicates.
 	writeTaskFile(t, path, []string{
 		`{"ts":9,"axes":{"step":1},"metrics":{"m":9}}`,
 	})
@@ -125,11 +125,12 @@ func TestReapResultsRebuildOnShrink(t *testing.T) {
 	}
 }
 
-func TestReapResultsCapAndDroppedCount(t *testing.T) {
+func TestReapResultsBeyondTenThousandKeepsUpdating(t *testing.T) {
+	const records = 10000
 	taskDir := t.TempDir()
 	over := 25
-	lines := make([]string, 0, store.MaxResultRecordsPerTask+over)
-	for i := 0; i < store.MaxResultRecordsPerTask+over; i++ {
+	lines := make([]string, 0, records+over)
+	for i := 0; i < records+over; i++ {
 		lines = append(lines, fmt.Sprintf(`{"ts":%d,"axes":{"step":%d},"metrics":{"m":%d}}`, i, i, i))
 	}
 	writeTaskFile(t, workspace.ResultsPath(taskDir), lines)
@@ -139,19 +140,19 @@ func TestReapResultsCapAndDroppedCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReapIncremental: %v", err)
 	}
-	if res.ResultCount != store.MaxResultRecordsPerTask+over {
-		t.Errorf("ResultCount = %d, want %d (parsed pre-cap)", res.ResultCount, store.MaxResultRecordsPerTask+over)
+	if res.ResultCount != records+over {
+		t.Errorf("ResultCount = %d, want %d", res.ResultCount, records+over)
 	}
 	rows, _ := st.ListResultRecords(context.Background(), "j1")
-	if len(rows) != store.MaxResultRecordsPerTask {
-		t.Fatalf("row count = %d, want cap %d", len(rows), store.MaxResultRecordsPerTask)
+	if len(rows) != 1 || rows[0].TS != int64(records+over-1) {
+		t.Fatalf("latest snapshot stopped updating: %+v", rows)
 	}
 	mark, err := st.GetFileIngestMark(context.Background(), "t1", store.IngestFileResults)
 	if err != nil {
 		t.Fatalf("GetFileIngestMark: %v", err)
 	}
-	if mark.Dropped != int64(over) {
-		t.Errorf("dropped_count = %d, want %d", mark.Dropped, over)
+	if mark.Dropped != 0 {
+		t.Errorf("latest projection must not drop new records: %d", mark.Dropped)
 	}
 }
 
@@ -176,11 +177,11 @@ func TestReapResultsMalformedLines(t *testing.T) {
 		t.Errorf("ResultCount = %d, want 3 (broken/wrong-typed lines skipped)", res.ResultCount)
 	}
 	rows, _ := st.ListResultRecords(context.Background(), "j1")
-	if len(rows) != 3 {
-		t.Fatalf("row count = %d, want 3: %+v", len(rows), rows)
+	if len(rows) != 2 {
+		t.Fatalf("row count = %d, want two section snapshots: %+v", len(rows), rows)
 	}
-	if rows[1].AxesJSON != "{}" || rows[1].MetricsJSON != "{}" {
-		t.Errorf("ts-only line should normalize to empty objects: %+v", rows[1])
+	if rows[0].AxesJSON != "{}" || rows[0].MetricsJSON != "{}" {
+		t.Errorf("ts-only line should normalize to empty objects: %+v", rows[0])
 	}
 }
 
@@ -235,10 +236,8 @@ func TestReapFinalFreezesAllMarks(t *testing.T) {
 	}
 }
 
-func TestRetryUnfreezeContinuesResultsAtExistingOffset(t *testing.T) {
-	// SDK streams are task-lifetime append logs. A retry unfreezes the final
-	// mark at its existing offset, preserving the prior attempt and ingesting
-	// only bytes appended by the next attempt.
+func TestTerminalResultsRemainFrozen(t *testing.T) {
+	// One source has one execution. Appends after terminal ingest do not reopen it.
 	taskDir := t.TempDir()
 	writeTaskFile(t, workspace.ResultsPath(taskDir), []string{
 		`{"ts":1,"axes":{"step":1},"metrics":{"m":1}}`,
@@ -252,23 +251,20 @@ func TestRetryUnfreezeContinuesResultsAtExistingOffset(t *testing.T) {
 	if err := st.UpdateTaskStatus(context.Background(), "t1", "failed", map[string]any{
 		"status_source": "wrapper",
 	}); err != nil {
-		t.Fatalf("make task retryable: %v", err)
-	}
-	if err := st.BeginTaskRetry(context.Background(), "t1", 0, "gen-next"); err != nil {
-		t.Fatalf("begin retry: %v", err)
+		t.Fatalf("mark task terminal: %v", err)
 	}
 	writeTaskFile(t, workspace.ResultsPath(taskDir), []string{
 		`{"ts":1,"axes":{"step":1},"metrics":{"m":1}}`,
 		`{"ts":2,"axes":{"step":2},"metrics":{"m":2}}`,
 	})
 	if _, err := ReapIncremental(context.Background(), st, target, false); err != nil {
-		t.Fatalf("next-attempt reap: %v", err)
+		t.Fatalf("reap after terminal append: %v", err)
 	}
 	rows, _ := st.ListResultRecords(context.Background(), "j1")
-	if len(rows) != 2 {
-		t.Fatalf("row count = %d, want 2 task-lifetime records", len(rows))
+	if len(rows) != 1 {
+		t.Fatalf("row count = %d, want one frozen snapshot", len(rows))
 	}
-	if rows[0].TS != 1 || rows[1].TS != 2 {
-		t.Fatalf("result history = %+v, want old then newly appended record", rows)
+	if rows[0].TS != 1 {
+		t.Fatalf("terminal snapshot changed: %+v", rows)
 	}
 }

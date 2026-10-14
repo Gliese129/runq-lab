@@ -22,11 +22,6 @@ func TestTaskTimingSeparatesQueueResourceAndScript(t *testing.T) {
 	if view.QueueSec == nil || *view.QueueSec != 600 || view.SchedulerSec == nil || *view.SchedulerSec != 12 || view.ElapsedSec == nil || *view.ElapsedSec != 2 {
 		t.Fatalf("incorrect durations: %+v", view)
 	}
-	row.RetryCount++
-	applyTaskTiming(&view, row)
-	if view.ElapsedSec != nil || view.StartedAt != nil {
-		t.Fatal("retry reused previous attempt")
-	}
 }
 
 func TestTaskTimingUnknownZeroAndClockSkew(t *testing.T) {
@@ -53,7 +48,7 @@ func TestTaskTimingUnknownZeroAndClockSkew(t *testing.T) {
 }
 
 func TestRestoreKeepsDispatchBaselineSeparateFromExecution(t *testing.T) {
-	row := store.TaskRow{TimingJSON: `{"0":{"dispatch_started_at":{"at":100,"source":"controller"},"execution_started_at":{"at":200,"source":"wrapper"}}}`}
+	row := store.TaskRow{TimingJSON: `{"dispatch_started_at":{"at":100,"source":"controller"},"execution_started_at":{"at":200,"source":"wrapper"}}`}
 	task := TaskRowToSchedulerTask(&row)
 	if task.StartedAt == nil || task.StartedAt.Unix() != 100 {
 		t.Fatal("recovery changed internal dispatch baseline")

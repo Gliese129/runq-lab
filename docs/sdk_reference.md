@@ -118,23 +118,40 @@ Metrics feed the dashboard's metric charts.
 
 ## Results
 
-### `runq.record(metrics, **axes)`
+### `runq.record(metrics, *, section=None, **axes)`
 
-Write a result record — a bounded fact about one evaluation, stored in
-full in `results.jsonl`. Unlike metrics (a stream), records are
-complete rows keyed by axes, which is what makes ablation cells
-comparable in `runq results` and the dashboard results view.
+Write an evaluation result or progress snapshot. `report` is for per-step curves;
+`record` is for table cells. Every call remains in the task's `results.jsonl`;
+the controller keeps the latest snapshot per source, section and axis identity.
+There is no record-count cap. `step` orders snapshots within a source and is
+excluded from identity and the automatic section signature.
 
 ```python
-runq.record({"accuracy": 0.91, "f1": 0.88}, dataset="mmlu", split="test")
+runq.record({"correct": 91, "scored": 100, "total": 200},
+            section="eval", dataset="mmlu", split="test", step=100)
 ```
+
+Omitting `section` derives `auto-<8 SHA1 hex>` from sorted axis and metric key
+names. The first record freezes each source/section's keys: supply the same keys
+every time, using `None` for unknown values. Missing keys become null; new keys
+are ignored with a warning. Axis values are strings, booleans, finite numbers
+or null; metric values are finite numbers or null. Across sources, a view chooses
+the newest timestamp (then source ID), without adding snapshots together.
+See [views and consumers](views.md) for the full contract and examples.
 
 ## Checkpoints
 
-runq only gives each task a stable directory: `ctx.checkpoint_dir`
-(`$RUNQ_CHECKPOINT_DIR`, i.e. `<task_dir>/checkpoints`). It survives
-retries, so a restart with `resume.extra_args` (project config) can find
-the latest file. Writing, retention and selection are up to your script.
+Each new task gets a new `ctx.checkpoint_dir`. Scripts own writing, retention
+and selection. To reuse an old checkpoint, explicitly pass its path in the new
+job's command or parameters. A failed task is never restarted in place.
+
+## Consumer task snapshots
+
+`ctx.job_tasks()` reads the consumer's atomically published `job.json`, returning
+`tasks`, `updated_at`, `observed_at` and `observation_state`. Each task includes
+its ID, params, status, output directory, step and output time. Inspect freshness
+before deciding all work is complete. Read failures raise an error; they never
+become an empty completed job. The consumer script decides when to exit.
 
 ## Utilities
 
@@ -189,11 +206,9 @@ the framework's global rank, or pass `global_rank` to `link_wandb`; `LOCAL_RANK`
 is insufficient on multiple nodes. For frameworks without `RANK`, also set
 `mode="disabled"` in init kwargs for nonzero global ranks.
 
-A retry keeps task identity, outputs, checkpoints and offline files. The default
-`id=task_id, resume="allow"` resumes an online run; offline attempts remain
-separate local run bundles and must be synced with W&B's official `wandb sync`.
-W&B runtime accumulated across retries does not represent one attempt's script
-or scheduler time. A new task has a new run ID.
+A resubmission creates a new task and W&B run ID. Reusing an earlier checkpoint
+or W&B run is an explicit choice in your script. Offline bundles can be synced
+with W&B's official `wandb sync`.
 
 `runq clean --show` previews removal; an explicitly confirmed `all` action
 removes the task directory, including its outputs/checkpoints/W&B files and

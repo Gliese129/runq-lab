@@ -4,6 +4,11 @@
 
 ### Breaking
 
+- Tasks execute once. Removed automatic/manual task retry, retry HTTP routes,
+  max_retry configuration and retry/attempt fields from task responses. Fix and
+  resubmit to create new IDs and workspaces; explicitly choose old checkpoints.
+  No data backfill or retry migration is introduced.
+
 - Removed `runq status` (use `runq ps <job> --fresh`), `runq job ls|show|kill`
   (use `ps` / `kill`; `job` keeps archive/unarchive), `runq project edit` and
   `runq target edit` (edit the YAML, then `submit --project-file` /
@@ -12,6 +17,13 @@
   `runq gpu`, `submit --dry-run` / `--watch`, `ps -o json`.
 
 ### Changes
+
+- Add project views: fixed-schema latest records, typed expressions/expected cells,
+  source freshness and attention, seed statistics, pivot/baseline/rank, text/JSON/
+  LaTeX/Markdown/CSV exports, exact curves/frames and cached custom sources.
+- Add manually started job consumers with SDK task snapshots, independent
+  lifecycle, PID/start identity, heartbeat, logs and cancellation. Users/agents
+  own iqrsh/tmux and the script's exit decision.
 
 - Help leads with what runq is for and the agent loop; `submit --help` shows
   the job shape (command/target/fixed_params/sweep, ctx.params, target

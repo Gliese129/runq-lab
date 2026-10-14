@@ -23,7 +23,6 @@ func TestBuildDeterministicPlan(t *testing.T) {
 		return id
 	}
 	gpus := 2
-	maxRetry := 3
 	timeout := "2h"
 	cfg := job.JobConfig{
 		Project:     "proj",
@@ -38,7 +37,6 @@ func TestBuildDeterministicPlan(t *testing.T) {
 		},
 		Overrides: &job.Overrides{
 			GPUsPerTask: &gpus,
-			MaxRetry:    &maxRetry,
 			Timeout:     &timeout,
 			Env:         map[string]string{"B": "override", "C": "job"},
 		},
@@ -49,7 +47,6 @@ func TestBuildDeterministicPlan(t *testing.T) {
 		CmdTemplate: "python train.py --lr {{lr}}",
 		Defaults: project.Defaults{
 			GPUsPerTask: 1,
-			MaxRetry:    1,
 		},
 		Environment: map[string]string{"A": "project", "B": "project"},
 		Resume:      project.ResumeConfig{Enabled: true, ExtraArgs: "--resume"},
@@ -86,7 +83,7 @@ func TestBuildDeterministicPlan(t *testing.T) {
 	if first.TaskID != "task1" {
 		t.Fatalf("TaskID = %q", first.TaskID)
 	}
-	if first.GPUsNeeded != 2 || first.MaxRetry != 3 || first.Timeout != 7200 {
+	if first.GPUsNeeded != 2 || first.Timeout != 7200 {
 		t.Fatalf("numeric fields mismatch: %+v", first)
 	}
 	if first.TaskDir != filepath.Join(jobRoot, "task1") {

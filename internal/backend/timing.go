@@ -8,7 +8,6 @@ import (
 func applyTaskTiming(view *TaskView, task store.TaskRow) {
 	times := store.CurrentTaskTimes(task)
 	view.Times = times
-	view.TimeHistory = store.ParseTaskTimes(task.TimingJSON)
 	stamp := func(key string) *int64 {
 		if e, ok := times[key]; ok {
 			v := e.At

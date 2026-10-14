@@ -124,7 +124,7 @@ func TestMultiPointReadRechecksOwnershipAfterResolution(t *testing.T) {
 		errCh <- err
 	}()
 	<-delayed.entered // Multi already resolved the old generation.
-	if err := st.WithTaskAttemptLock("task-raced-read", func() error {
+	if err := st.WithTaskLock("task-raced-read", func() error {
 		if err := st.RestampTask(context.Background(), "task-raced-read", newLane.Generation()); err != nil {
 			return err
 		}

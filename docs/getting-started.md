@@ -39,7 +39,7 @@ target: tsubame
 working_dir: /gs/fs/me/grpo            # code on the cluster; tasks run from here
 command: python train.py
 environment: { HF_HOME: /gs/bs/me/hf }
-defaults: { gpus_per_task: 2, timeout: 12h, max_retry: 1 }
+defaults: { gpus_per_task: 2, timeout: 12h }
 ```
 
 ```bash
@@ -112,7 +112,7 @@ the cluster is queueing the task.
 ## 8. When something goes wrong
 
 ```bash
-runq task retry <task_id>     # requeue one task
+runq submit job.yaml --dry  # fix the cause, preview, then submit a new task
 runq kill <job_id>            # stop a whole job
 ```
 

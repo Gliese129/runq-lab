@@ -82,6 +82,52 @@ func TestScanDoneMarkersPropagatesOwnershipLookupFailure(t *testing.T) {
 	}
 }
 
+func TestScanDoneMarkersFinalIngestsShortTask(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	taskDir := t.TempDir()
+	jobID, taskID := seedTask(t, st, taskDir, "running", SourceScheduler)
+	writeFile(t, filepath.Join(taskDir, statusFileName),
+		`{"status":"success","exit_code":0,"finished_at":1730000000}`)
+	writeFile(t, filepath.Join(taskDir, "results.jsonl"),
+		"{\"ts\":1,\"axes\":{\"step\":1},\"metrics\":{\"score\":9}}\n")
+	doneDir := t.TempDir()
+	writeFile(t, filepath.Join(doneDir, taskID), "")
+	loaded, err := st.GetTask(ctx, taskID)
+	if err != nil || loaded == nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+
+	b := &Backend{
+		Cfg:   &config.TargetConfig{Name: loaded.Target, DoneDir: doneDir},
+		Store: st,
+		FS:    rfs.NewLocalFS(),
+	}
+	if err := b.ScanDoneMarkers(ctx); err != nil {
+		t.Fatalf("ScanDoneMarkers: %v", err)
+	}
+	rows, err := st.ListResultRecords(ctx, jobID)
+	if err != nil {
+		t.Fatalf("ListResultRecords: %v", err)
+	}
+	if len(rows) != 1 || rows[0].MetricsJSON != `{"score":9}` {
+		mark, markErr := st.GetFileIngestMark(ctx, taskID, store.IngestFileResults)
+		t.Fatalf("short task results were not ingested before completion: rows=%+v mark=%+v markErr=%v", rows, mark, markErr)
+	}
+	got, err := st.GetTask(ctx, taskID)
+	if err != nil || got == nil || got.Status != "success" {
+		t.Fatalf("completed task = %#v, %v; want success", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(doneDir, taskID)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("settled marker still exists: %v", err)
+	}
+}
+
 func TestHasInFlightIsGenerationScoped(t *testing.T) {
 	ctx := context.Background()
 	s, err := store.Open(":memory:")

@@ -4,7 +4,7 @@ description: >
   Operate runq (runq-lab) — the experiment runner that submits ablation sweeps
   to HPC schedulers (SGE/UGE, Slurm, PBS) and local GPU executors, tracks every
   task, and serves a dashboard. Use whenever the user wants to submit, re-run,
-  monitor, debug, kill, retry or clean experiments; write project.yaml / job.yaml
+  monitor, debug, kill or clean experiments; write project.yaml / job.yaml
   or runq targets; read task logs or results; or wire W&B into a runq task —
   even if they never say "runq". A repo with project.yaml, job.yaml or a .runq/
   directory runs its experiments through runq.
@@ -14,7 +14,7 @@ description: >
 
 You drive runq through its CLI; the researcher watches the dashboard. runq is
 built so an experiment is a short YAML file plus plain training code: it handles
-the environment, directories, retries, code sync and bookkeeping, so your effort
+the environment, directories, code sync and bookkeeping, so your effort
 goes into the experiment itself. The advice below comes from real sessions —
 each item saved hours of tokens when followed.
 
@@ -42,7 +42,7 @@ so start or restart it before looking at the cluster or the network.
 | Log tail | `runq logs <task_id> --no-follow -n 200` |
 | Last matching log lines | `runq logs <task_id> --grep 'loss\|step' -n 20` (ERE, runs on the target) |
 | Result rows from `runq.record` | `runq results <job_id> --json` |
-| Kill / retry | `runq kill <task_id\|job_id>` · `runq task retry <task_id>` |
+| Kill | `runq kill <task_id\|job_id\|consumer_id>` |
 | Register a project / update it | `runq project add -f project.yaml` · `runq submit job.yaml --project-file project.yaml` (upsert, also on `--dry`) |
 | Targets | `runq target show [name]` · `runq target check <name>` · `runq target connect <name>` |
 | Service | `runq serve -d` · `runq serve status` · `runq serve restart` |
@@ -62,14 +62,16 @@ Older names you may remember, and what replaced them in v0.6:
 `runq logs` follows the log by default, which suits a human at a terminal; from a
 tool call, add `--no-follow` or `--grep` so the command returns.
 
+For reusable progress and paper tables: `runq view <file.yaml|name>` — see `references/views.md`.
+
 ## 2. Mental model
 
 - **project** = a code base and how it runs (`project.yaml`, registered once):
   `project_name`, `target` (where the code lives), optional `targets` (where it may
   run), `working_dir`, default `command`, `environment`, `defaults{gpus_per_task,
-  timeout,max_retry}`, `resume`, `preflight`, `python_env`, `wandb`, param annotations.
+  timeout}`, `resume`, `preflight`, `python_env`, `wandb`, param annotations.
 - **job** = one experiment (`job.yaml`): `project`, `note`, optional `command`,
-  `target`, `preflight`, `overrides{gpus_per_task,timeout,max_retry,env}`,
+  `target`, `preflight`, `overrides{gpus_per_task,timeout,env}`,
   `fixed_params` (same in every task) and `sweep` (`grid` = cross product,
   `list` = zip rows; blocks multiply).
 - **task** = one cell, with its own workspace
@@ -126,6 +128,10 @@ multi-stage prepare→train→eval with skip-if-done, in-task sharding, GPU
 telemetry. Implement those in the training code (Python) where possible, and
 mention it in your report so the researcher knows where that logic lives.
 
+For scoring alongside a job, prepare a consumer and start its `run.sh` in your own iqrsh/tmux session; see `references/views.md`.
+
+A task ID executes once. On failure: inspect the error, fix it, preview, then submit a new task.
+
 ## 4. Status: what runq knows vs. what is true
 
 - `runq ps` shows a cached snapshot with observation times; `--fresh` probes once.
@@ -157,6 +163,8 @@ the "first 128 rows done" check counted rows and never read one. Build these hab
    steps). When the first batch looks wrong, stop and fix it there.
 
 ## 6. Reporting to the researcher
+
+Declare a view once, then read `runq view <name>` on heartbeat; use `references/views.md` for the data contract.
 
 1. Lead with the fact, then the evidence for it (task id, file and field, log line
    with its time). A short paragraph is usually enough.
@@ -191,7 +199,7 @@ Each file you add is one more thing the researcher reads or cleans up later. Goo
    submit queues real cluster jobs.
 2. **Check state when there is a reason** — one `runq ps <job> --json`; the researcher
    follows progress on the dashboard (`http://127.0.0.1:8077/`).
-3. **Use runq's built-ins for sync, status, retries and setup** (§3) so there is one
+3. **Use runq's built-ins for sync, status and setup** (§3) so there is one
    source of truth.
 4. **Let runq and the scheduler place work**: declare `gpus_per_task`, read the
    visible GPUs at runtime, bind ports dynamically (port 0).
@@ -223,6 +231,7 @@ the dashboard. Rank gating, offline runs, directories: `references/sdk.md`.
 ## 11. More
 
 - HPC targets, templates, SSH, reservations (`qsub -ar`) → `references/hpc.md`
+- Views, paper tables, charts and consumers → `references/views.md`
 - SDK: params, metrics, results, directories, W&B → `references/sdk.md`
 - Error message → what to do → `references/troubleshooting.md`
 

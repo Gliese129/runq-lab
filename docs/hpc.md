@@ -161,3 +161,13 @@ here". For clusters that restrict login-node work, set
    rendered command and the scheduler's raw output.
 3. `runq target check <name>` re-validates templates after any edit.
 4. `runq doctor` checks the right paths per mode.
+
+## CPU scoring beside a job
+
+Prepare a consumer with `runq consumer add <job_id> scorer -- python score.py`.
+The researcher or agent obtains the CPU allocation with iqrsh, manages tmux,
+and runs the printed `bash <run_sh>` on a node that can access the job workspace.
+runq owns status/results and cancellation; it does not manage session survival.
+The script reads `ctx.job_tasks()` and decides whether to keep waiting or exit.
+Task/job cancellation does not stop its consumers. See the views reference for
+fixed record schemas, source freshness and one-execution consumer IDs.

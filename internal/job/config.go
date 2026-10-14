@@ -2,6 +2,7 @@ package job
 
 import (
 	"fmt"
+	"github.com/gliese129/runq-lab/internal/consumer"
 
 	"github.com/gliese129/runq-lab/internal/project"
 	"gopkg.in/yaml.v3"
@@ -9,6 +10,7 @@ import (
 
 // JobConfig represents a parsed job.yaml file.
 type JobConfig struct {
+	Consumers       []consumer.Config  `yaml:"consumers,omitempty" json:"consumers,omitempty"`
 	Command         string             `yaml:"command,omitempty" json:"command,omitempty"`
 	Target          string             `yaml:"target,omitempty" json:"target,omitempty"`
 	Preflight       *PreflightOverride `yaml:"preflight,omitempty" json:"preflight,omitempty"`
@@ -50,7 +52,6 @@ type ParameterSpec struct {
 // Overrides are job-level overrides for project defaults.
 type Overrides struct {
 	GPUsPerTask *int              `yaml:"gpus_per_task,omitempty" json:"gpus_per_task,omitempty"`
-	MaxRetry    *int              `yaml:"max_retry,omitempty" json:"max_retry,omitempty"`
 	Timeout     *string           `yaml:"timeout,omitempty" json:"timeout,omitempty"` // human duration, e.g. "3h"
 	Env         map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
 }

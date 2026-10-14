@@ -144,7 +144,7 @@ type SSHBackend struct {
 	admissionsInFlight atomic.Int64
 }
 
-// HasInFlightAdmissions reports whether a submit or manual retry is currently
+// HasInFlightAdmissions reports whether a submit is currently
 // executing against this lane. The retirement sweep refuses to close while
 // true, even before the operation has published a non-terminal task row.
 func (b *SSHBackend) HasInFlightAdmissions() bool { return b.admissionsInFlight.Load() > 0 }
@@ -211,7 +211,7 @@ func NewSSHBackend(cfg SSHBackendConfig) (*SSHBackend, error) {
 	sched := scheduler.New(scheduler.DefaultConfig(), q, pool, launcher, cfg.Store, logger)
 
 	// Terminal transitions found by reconcile/markers flow through the
-	// scheduler's FinishTask funnel (retry policy, slot release).
+	// scheduler's FinishTask funnel (slot release).
 	hpcBe.Finisher = sched
 
 	be := &SSHBackend{
@@ -298,40 +298,7 @@ func (b *SSHBackend) restoreLane(ctx context.Context) error {
 			b.logger.Info("adopted task from an unrecorded generation",
 				"task", row.ID, "was", previousGeneration)
 		}
-		if row.Status == "submitting" && row.StatusSource == "retry" {
-			// A manual retry persisted intent before resetting wrapper evidence.
-			// The reset is idempotent, so recovery completes it before making
-			// the task launchable. Recovery uses the same cross-generation task
-			// lock and durable identity fence as the interactive retry path.
-			if rerr := b.store.WithTaskAttemptLock(row.ID, func() error {
-				current, err := b.store.GetTask(ctx, row.ID)
-				if err != nil {
-					return err
-				}
-				if current == nil || current.Status != "submitting" || current.StatusSource != "retry" ||
-					current.RetryCount != row.RetryCount || current.TargetGeneration != row.TargetGeneration ||
-					current.ExternalID != "" {
-					return fmt.Errorf("durable retry intent changed during recovery")
-				}
-				if err := b.backend.ResetWrapperState(ctx, current.TaskDir, current.ID); err != nil {
-					return err
-				}
-				fields := map[string]any{
-					"status_source":  nil,
-					"failure_detail": nil,
-					"kill_requested": 0,
-				}
-				store.FenceTaskStatusUpdate(fields, *current)
-				return b.store.UpdateTaskStatus(ctx, current.ID, "pending", fields)
-			}); rerr != nil {
-				repairErrs = append(repairErrs, fmt.Errorf("resume retry reset %s: %w", row.ID, rerr))
-				continue
-			}
-			row.Status = "pending"
-			row.StatusSource = ""
-			row.FailureDetail = ""
-			row.KillRequested = false
-		} else if row.Status == "submitting" {
+		if row.Status == "submitting" {
 			// The daemon stopped after persisting submit intent but before a
 			// durable external-id verdict. The command may have run, so a
 			// restart must conservatively retain ownership and must not launch
@@ -430,19 +397,25 @@ func (b *SSHBackend) restoreLane(ctx context.Context) error {
 //     don't leak) + background orphan detection (two-strike hysteresis)
 //
 // Both gated on HasInFlight: zero in-flight tasks = zero SSH traffic.
-// Request-driven verdict paths (kill, manual retry, user-triggered refresh)
+// Request-driven verdict paths (kill and user-triggered refresh)
 // still arrive on API goroutines; the target's lifecycleMu serializes them
 // with this loop.
 func (b *SSHBackend) sensorLoop(ctx context.Context) {
 	defer b.loopWG.Done()
 	ticker := time.NewTicker(markerScanInterval)
 	defer ticker.Stop()
+	consumerTicker := time.NewTicker(30 * time.Second)
+	defer consumerTicker.Stop()
 	lastAlign := time.Now()  // warm start: no immediate qstat on daemon boot
 	lastIngest := time.Now() // metrics ingest rides the same loop, own cadence
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-consumerTicker.C:
+			pass, cancel := context.WithTimeout(ctx, 30*time.Second)
+			b.reconcileConsumers(pass)
+			cancel()
 		case <-b.nudgeCh:
 			// Forced full pass (SWR nudge or explicit refresh): runs even
 			// with zero in-flight — the user asked, and a no-op pass is a
@@ -450,6 +423,7 @@ func (b *SSHBackend) sensorLoop(ctx context.Context) {
 			// ForceRefresh waiters wake.
 			pass, cancel := context.WithTimeout(ctx, 30*time.Second)
 			b.forcedSync(pass)
+			b.reconcileConsumers(pass)
 			cancel()
 		case <-ticker.C:
 			func() {
@@ -551,13 +525,12 @@ func (b *SSHBackend) ingestRunningMetrics(ctx context.Context) {
 		if loaded.TaskDir == "" {
 			continue
 		}
-		err := b.store.WithTaskAttemptLock(loaded.ID, func() error {
+		err := b.store.WithTaskLock(loaded.ID, func() error {
 			current, err := b.store.GetTask(ctx, loaded.ID)
 			if err != nil {
 				return err
 			}
 			if current == nil || current.Status != "running" ||
-				current.RetryCount != loaded.RetryCount ||
 				current.TargetGeneration != loaded.TargetGeneration ||
 				current.ExternalID != loaded.ExternalID {
 				return nil
@@ -681,10 +654,10 @@ func (b *SSHBackend) Capabilities() Capabilities {
 	return Capabilities{
 		GPUMap:        b.backend.Cfg.GPUTemplate != "", // gpu_template-driven (runq preset)
 		LiveLog:       true,                            // logs readable via SSH
-		Retry:         true,                            // scheduler lane re-runs submit.cmd (RQ-46)
-		StateModel:    "poll",                          // best-effort projection; staleness surfaced
-		KillAsync:     true,                            // qdel/scancel forwarded
-		SubmitPreview: true,                            // zero-disk dry-run via submit code path
+		Retry:         false,
+		StateModel:    "poll", // best-effort projection; staleness surfaced
+		KillAsync:     true,   // qdel/scancel forwarded
+		SubmitPreview: true,   // zero-disk dry-run via submit code path
 	}
 }
 
@@ -755,7 +728,13 @@ func (b *SSHBackend) ListJobs(ctx context.Context, projectScope string) ([]JobSu
 	}
 	out := make([]JobSummary, 0, len(jobs))
 	for _, j := range jobs {
-		out = append(out, BuildJobSummary(j, byJob[j.ID]))
+		cs, err := b.store.ListConsumers(ctx, j.ID, "")
+		if err != nil {
+			return nil, err
+		}
+		summary := BuildJobSummary(j, byJob[j.ID])
+		summary.Consumers = consumerCounts(cs)
+		out = append(out, summary)
 	}
 	return out, nil
 }
@@ -791,6 +770,11 @@ func (b *SSHBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, erro
 	}
 	keys, _ := b.store.MetricKeys(ctx, jobID) // summaries: exact, remote-safe
 	detail := BuildJobDetail(*j, tasks, keys)
+	detail.Consumers, err = b.store.ListConsumers(ctx, j.ID, "")
+	if err != nil {
+		return nil, err
+	}
+	detail.Job.Consumers = consumerCounts(detail.Consumers)
 	attachTaskLinks(ctx, b.store, detail.Tasks)
 	if cfg, err := b.reg.Get(ctx, j.ProjectName); err == nil && cfg.Wandb != nil {
 		detail.Wandb = &WandbInfo{
@@ -885,7 +869,7 @@ func (b *SSHBackend) GetTask(ctx context.Context, taskID string) (*TaskView, err
 		b.reconcileTask(ctx, taskID, task)
 	}
 	var view TaskView
-	err = b.store.WithTaskAttemptLock(taskID, func() error {
+	err = b.store.WithTaskLock(taskID, func() error {
 		owned, err := b.loadOwnedTask(ctx, taskID, "get task")
 		if err != nil {
 			return err
@@ -1073,12 +1057,11 @@ func (b *SSHBackend) ListTasks(ctx context.Context, opts TaskListOptions) ([]Tas
 // TaskMetrics serves the chart from the task-lifetime RAW TAIL WINDOW of
 // metrics.jsonl (one ranged read — recent data is small by construction).
 // It is deliberately side-effect free: background/reconcile paths own SQL
-// ingestion, while this read shares the task-attempt lock with retry reset
-// and ingestion so it cannot observe a torn attempt boundary. afterTS > 0
+// ingestion, while this read shares the task lock with ingestion. afterTS > 0
 // is the dashboard's incremental pull cursor.
 func (b *SSHBackend) TaskMetrics(ctx context.Context, taskID string, afterTS int64) ([]MetricPoint, error) {
 	var points []MetricPoint
-	err := b.store.WithTaskAttemptLock(taskID, func() error {
+	err := b.store.WithTaskLock(taskID, func() error {
 		task, err := b.loadOwnedTask(ctx, taskID, "task metrics")
 		if err != nil {
 			return err
@@ -1091,16 +1074,15 @@ func (b *SSHBackend) TaskMetrics(ctx context.Context, taskID string, afterTS int
 
 // TaskMetricBuckets — bucket-mode chart (spec §6.4): terminal tasks read
 // the on-target pyramid (1–O(log n) rfs ranged reads) only when the normal
-// wrapper completed and rebuilt it. A retry appends to the task-lifetime raw
-// stream while the prior attempt's pyramid still exists, and TERM cancellation
-// skips the builder, so every other state must use tail-window aggregation.
+// wrapper completed and rebuilt it. TERM cancellation skips the builder,
+// so every other state uses tail-window aggregation.
 // The fallback uses the SAME merge operator.
 func (b *SSHBackend) TaskMetricBuckets(ctx context.Context, taskID, key string, fromTS, toTS int64, maxBuckets int) ([]workspace.PyramidBucket, string, error) {
 	var (
 		buckets []workspace.PyramidBucket
 		source  string
 	)
-	err := b.store.WithTaskAttemptLock(taskID, func() error {
+	err := b.store.WithTaskLock(taskID, func() error {
 		task, err := b.loadOwnedTask(ctx, taskID, "task metric buckets")
 		if err != nil {
 			return err
@@ -1225,7 +1207,7 @@ func (b *SSHBackend) KillTask(ctx context.Context, taskID string) error {
 func (b *SSHBackend) cancelRetryIntent(ctx context.Context, taskID string) (bool, error) {
 	settled := false
 	err := b.backend.WithLifecycleLock(func() error {
-		return b.store.WithTaskAttemptLock(taskID, func() error {
+		return b.store.WithTaskLock(taskID, func() error {
 			row, err := b.store.GetTask(ctx, taskID)
 			if err != nil {
 				return err
@@ -1267,7 +1249,7 @@ func (b *SSHBackend) cancelRetryIntent(ctx context.Context, taskID string) (bool
 // 在 logfile 内 clamp（病态长行防御——review 重点）。
 func (b *SSHBackend) TaskLogRead(ctx context.Context, taskID string, offset int64, maxLines int) (*LogPage, error) {
 	var page *LogPage
-	err := b.store.WithTaskAttemptLock(taskID, func() error {
+	err := b.store.WithTaskLock(taskID, func() error {
 		task, err := b.loadOwnedTask(ctx, taskID, "task log read")
 		if err != nil {
 			return err
@@ -1291,7 +1273,7 @@ func (b *SSHBackend) TaskLogRead(ctx context.Context, taskID string, offset int6
 // 返回页的 Offset 即向上翻页锚点。
 func (b *SSHBackend) TaskLogTail(ctx context.Context, taskID string, maxLines int) (*LogPage, error) {
 	var page *LogPage
-	err := b.store.WithTaskAttemptLock(taskID, func() error {
+	err := b.store.WithTaskLock(taskID, func() error {
 		task, err := b.loadOwnedTask(ctx, taskID, "task log tail")
 		if err != nil {
 			return err
@@ -1315,7 +1297,7 @@ func (b *SSHBackend) TaskLogTail(ctx context.Context, taskID string, maxLines in
 // tail / rotation / optional line count) through the owning target's FS.
 func (b *SSHBackend) TaskLogPage(ctx context.Context, taskID string, req logfile.PageRequest) (*LogPage, error) {
 	var page *LogPage
-	err := b.store.WithTaskAttemptLock(taskID, func() error {
+	err := b.store.WithTaskLock(taskID, func() error {
 		task, err := b.loadOwnedTask(ctx, taskID, "task log page")
 		if err != nil {
 			return err
@@ -1364,7 +1346,7 @@ func (b *SSHBackend) TaskLogFollow(ctx context.Context, taskID string, offset in
 		return nil, err
 	}
 	var follower LogFollower
-	err = b.store.WithTaskAttemptLock(taskID, func() error {
+	err = b.store.WithTaskLock(taskID, func() error {
 		task, err := b.loadOwnedTask(ctx, taskID, "task log follow")
 		if err != nil {
 			return err
@@ -1399,86 +1381,6 @@ func (b *SSHBackend) JobResults(ctx context.Context, jobID string) (*JobResults,
 		return nil, err
 	}
 	return jobResultsFromDB(ctx, b.store, jobID)
-}
-
-func (b *SSHBackend) RetryTask(ctx context.Context, taskID string) error {
-	b.admissionsInFlight.Add(1)
-	defer b.admissionsInFlight.Add(-1)
-	if b.scope.IsRetiring() {
-		return fmt.Errorf("target %s: %w — retry to reach the active configuration", b.targetName, ErrLaneRetired)
-	}
-	// Lock order is lane lifecycle, then the Store's shared task-attempt lock.
-	// The lane lock excludes this generation's verdict producers; the shared
-	// task lock also excludes cross-generation ingestion/reset effects.
-	return b.backend.WithLifecycleLock(func() error {
-		return b.store.WithTaskAttemptLock(taskID, func() error {
-			// Validate only after taking the same lock as every verdict producer.
-			// A persisted status_source=retry row is an interrupted earlier call:
-			// resume its idempotent wrapper reset without consuming another epoch.
-			row, err := b.store.GetTask(ctx, taskID)
-			if err != nil {
-				return err
-			}
-			if row == nil {
-				return fmt.Errorf("task %q not found", taskID)
-			}
-			switch {
-			case row.Status == "failed" || row.Status == "killed":
-				// Persist retry intent and unfreeze task-lifetime SDK stream
-				// offsets in one transaction BEFORE touching wrapper evidence.
-				if err := b.store.BeginTaskRetry(ctx, taskID, row.RetryCount, b.scope.Generation); err != nil {
-					return fmt.Errorf("begin retry: %w", err)
-				}
-				row, err = b.store.GetTask(ctx, taskID)
-				if err != nil {
-					return fmt.Errorf("read retry intent: %w", err)
-				}
-				if row == nil {
-					return fmt.Errorf("task %q disappeared after retry intent", taskID)
-				}
-			case row.Status == "submitting" && row.StatusSource == "retry":
-				// Resume the already-counted epoch.
-			default:
-				return fmt.Errorf("task %q is %s, only failed/killed tasks can be retried", taskID, row.Status)
-			}
-
-			// Wrapper reset is the external effect guarded by the durable retry
-			// intent. Until it succeeds the task is not publishable as pending.
-			if err := b.backend.ResetWrapperState(ctx, row.TaskDir, taskID); err != nil {
-				noteErr := b.store.UpdateTaskStatus(ctx, taskID, "submitting", map[string]any{
-					"status_source":  "retry",
-					"failure_detail": "retry wrapper reset failed: " + err.Error(),
-				})
-				return errors.Join(fmt.Errorf("reset wrapper state: %w", err), noteErr)
-			}
-			if err := b.store.UpdateTaskStatus(ctx, taskID, "pending", map[string]any{
-				"status_source":  nil,
-				"failure_detail": nil,
-				"kill_requested": 0,
-			}); err != nil {
-				// Durable retry intent remains. Recovery or a repeated user retry
-				// safely repeats the wrapper reset and pending publication.
-				return fmt.Errorf("publish retry as pending: %w", err)
-			}
-
-			row, err = b.store.GetTask(ctx, taskID)
-			if err != nil {
-				return fmt.Errorf("read retried task: %w", err)
-			}
-			if row == nil {
-				return fmt.Errorf("task %q disappeared after retry", taskID)
-			}
-			task := TaskRowToSchedulerTask(row)
-			// Fresh attempt by explicit user intent — a stale kill flag from an
-			// earlier refused kill must not assassinate it (RQ-69).
-			b.sched.ClearKillRequest(taskID)
-			if !b.queue.RetryExisting(task) {
-				b.queue.Push(task)
-			}
-			b.sched.RefreshJobStatus(task.JobID)
-			return nil
-		})
-	})
 }
 
 func (b *SSHBackend) KillJob(ctx context.Context, jobID string) error {
@@ -1599,6 +1501,11 @@ func (b *SSHBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts Subm
 		tasks[i] = t
 	}
 	b.queue.PushBatch(tasks)
+	for _, cfg := range cfg.Consumers {
+		if _, err := b.AddConsumer(ctx, jobID, cfg); err != nil {
+			return jobID, len(rows), fmt.Errorf("tasks submitted; consumer preparation failed: %w", err)
+		}
+	}
 	return jobID, len(rows), nil
 }
 
@@ -1611,7 +1518,10 @@ func (b *SSHBackend) PreviewSubmit(ctx context.Context, cfg job.JobConfig, skipP
 	if err != nil {
 		return PreviewResult{}, err
 	}
-	return PreviewResult{Preview: text, Preflight: plan.Preflight, Plan: &plan}, nil
+	for _, c := range cfg.Consumers {
+		text += fmt.Sprintf("\nconsumer %s (manual start after submit): %s\n", c.Name, c.Command)
+	}
+	return PreviewResult{Preview: text, Preflight: plan.Preflight, Plan: &plan, Consumers: cfg.Consumers}, nil
 }
 
 // ── Archive ───────────────────────────────────────────────────────────────
@@ -1635,7 +1545,13 @@ func (b *SSHBackend) ListArchivedJobs(ctx context.Context) ([]JobSummary, error)
 	}
 	out := make([]JobSummary, 0, len(jobs))
 	for _, j := range jobs {
-		out = append(out, BuildJobSummary(j, byJob[j.ID]))
+		cs, err := b.store.ListConsumers(ctx, j.ID, "")
+		if err != nil {
+			return nil, err
+		}
+		summary := BuildJobSummary(j, byJob[j.ID])
+		summary.Consumers = consumerCounts(cs)
+		out = append(out, summary)
 	}
 	return out, nil
 }

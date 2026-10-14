@@ -36,6 +36,9 @@ var logsCmd = &cobra.Command{
 		pattern, _ := cmd.Flags().GetString("grep")
 
 		return withBackend(cmd, func(be backend.Backend) error {
+			if strings.HasPrefix(id, "cs") {
+				return consumerLogs(cmd, be, id, noFollow)
+			}
 			view, err := be.GetTask(cmd.Context(), id)
 			if err != nil {
 				return err

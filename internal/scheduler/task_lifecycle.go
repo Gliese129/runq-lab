@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/gliese129/runq-lab/internal/store"
 )
 
 // launchAsync hands a task to a remote launcher and returns. There is
@@ -261,7 +259,7 @@ func (s *Scheduler) FinishTask(task *Task, status TaskStatus, extra map[string]a
 // FinishTaskChecked is the error-reporting lifecycle funnel for API paths
 // that must not acknowledge a kill/retry transition unless it became durable.
 func (s *Scheduler) FinishTaskChecked(task *Task, status TaskStatus, extra map[string]any) error {
-	if s.finishTaskInner(task, status, extra, true) {
+	if s.finishTaskInner(task, status, extra) {
 		return nil
 	}
 	return fmt.Errorf("task %s transition to %s was not applied", task.ID, status)
@@ -272,10 +270,10 @@ func (s *Scheduler) FinishTaskChecked(task *Task, status TaskStatus, extra map[s
 // non-zero): retrying replays the same answer and, with max_retry=-1
 // (unlimited), becomes a log storm.
 func (s *Scheduler) FinishTaskNoRetry(task *Task, extra map[string]any) {
-	s.finishTaskInner(task, StatusFailed, extra, false)
+	s.finishTaskInner(task, StatusFailed, extra)
 }
 
-func (s *Scheduler) finishTaskInner(task *Task, status TaskStatus, extra map[string]any, allowRetry bool) bool {
+func (s *Scheduler) finishTaskInner(task *Task, status TaskStatus, extra map[string]any) bool {
 	s.finishMu.Lock()
 	defer s.finishMu.Unlock()
 
@@ -314,7 +312,7 @@ func (s *Scheduler) finishTaskInner(task *Task, status TaskStatus, extra map[str
 	// AFTER the staleness gate on purpose: a stale attempt's verdict must
 	// not consume a flag aimed at the current attempt.
 	if status == StatusFailed && s.killPending(task.ID) {
-		s.logger.Info("kill honored on failure verdict", "task", task.ID, "retry", task.RetryCount)
+		s.logger.Info("kill honored on failure verdict", "task", task.ID)
 		status = StatusKilled
 		merged := make(map[string]any, len(extra)+1)
 		for k, v := range extra {
@@ -330,8 +328,6 @@ func (s *Scheduler) finishTaskInner(task *Task, status TaskStatus, extra map[str
 		if transitioned {
 			s.RefreshJobStatus(task.JobID)
 		}
-	case allowRetry:
-		transitioned = s.handleFailure(task, extra)
 	default:
 		transitioned = s.completeTask(task, StatusFailed, extra)
 		if transitioned {
@@ -387,65 +383,12 @@ func (s *Scheduler) completeTask(task *Task, status TaskStatus, extra map[string
 	return true
 }
 
-// handleFailure decides whether to retry or permanently fail a task.
-// MaxRetry < 0 means unlimited retries; 0 means none. extra fields (may
-// be nil) are persisted only with the permanent-failure transition; a
-// requeue resets state instead.
+// handleFailure settles failure permanently. Legacy max_retry values have no effect.
 func (s *Scheduler) handleFailure(task *Task, extra map[string]any) bool {
-	// No kill handling here: the failed×kill decision is made ONCE in
-	// finishTaskInner's funnel checkpoint before this is even reached.
-	//
-	// Retry budget semantics (changed with RQ-69): -1 = unlimited
-	// (explicit opt-in), 0 = no retries. The zero value is now the SAFE
-	// behavior — under the old "0 = unlimited" rule, a project that simply
-	// omitted max_retry defaulted into an infinite resubmit loop.
-	canRetry := task.MaxRetry < 0 || task.RetryCount < task.MaxRetry
-	if canRetry {
-		nextRetry := task.RetryCount + 1
-		dbCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
-		defer cancel()
-		fields := map[string]any{
-			"retry_count": nextRetry,
-			"gpus":        nil,
-			"started_at":  nil,
-			"finished_at": nil,
-			// Clear the external scheduler id: on the remote lane a requeue
-			// means a NEW submission — probing the old id would track a dead
-			// cluster job.
-			"external_id": nil,
-			// A new attempt starts with a clean slate — stale failure
-			// evidence from the previous attempt must not survive into it.
-			"failure_detail": nil,
-			"status_source":  nil,
-			"native_state":   nil,
-			"queue":          nil,
-			"kill_requested": 0,
-		}
-		// Reconciliation attaches a complete durable attempt fence to extra.
-		// Keep that predicate even though terminal evidence fields themselves
-		// do not belong on the fresh pending epoch.
-		store.CarryTaskStatusFence(fields, extra)
-		// Preserve the completed attempt's timing before advancing the epoch.
-		if timing, ok := extra["timing_json"]; ok {
-			fields["timing_json"] = timing
-		}
-		if err := s.store.UpdateTaskStatus(dbCtx, task.ID, "pending", fields); err != nil {
-			s.logger.Error("persist requeue failed; queue left unchanged", "task", task.ID, "error", err)
-			return false
-		}
-		if err := s.queue.Requeue(task.ID); err != nil {
-			s.logger.Error("requeue failed", "task", task.ID, "error", err)
-			return true
-		}
-		s.logger.Info("task re-queued", "task", task.ID, "retry", nextRetry, "max_retry", task.MaxRetry)
-		return true
-	}
-
 	if !s.completeTask(task, StatusFailed, extra) {
 		return false
 	}
 	s.RefreshJobStatus(task.JobID)
-	s.logger.Warn("task failed permanently", "task", task.ID, "retry", task.RetryCount, "max_retry", task.MaxRetry)
 	return true
 }
 

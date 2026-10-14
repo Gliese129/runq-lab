@@ -53,9 +53,6 @@ func EffectiveProject(cfg JobConfig, source *project.Config) (*project.Config, e
 		if o.GPUsPerTask != nil {
 			out.Defaults.GPUsPerTask = *o.GPUsPerTask
 		}
-		if o.MaxRetry != nil {
-			out.Defaults.MaxRetry = *o.MaxRetry
-		}
 		if o.Timeout != nil {
 			out.Defaults.Timeout = *o.Timeout
 		}

@@ -29,7 +29,7 @@ func sampleConfig(t *testing.T, name string) Config {
 		ProjectName: name,
 		WorkingDir:  dir,
 		CmdTemplate: "python train.py {{args}}",
-		Defaults:    Defaults{GPUsPerTask: 1, MaxRetry: 3},
+		Defaults:    Defaults{GPUsPerTask: 1},
 		Resume:      ResumeConfig{Enabled: true, ExtraArgs: "--resume"},
 	}
 }
@@ -58,9 +58,6 @@ func TestAddAndGet(t *testing.T) {
 	}
 	if got.CmdTemplate != cfg.CmdTemplate {
 		t.Errorf("cmd = %q, want %q", got.CmdTemplate, cfg.CmdTemplate)
-	}
-	if got.Defaults.MaxRetry != 3 {
-		t.Errorf("max_retry = %d, want 3", got.Defaults.MaxRetry)
 	}
 	if !got.Resume.Enabled {
 		t.Error("resume.enabled should be true")
@@ -187,7 +184,7 @@ func TestUpdate(t *testing.T) {
 	}
 
 	cfg.CmdTemplate = "python train_v2.py {{args}}"
-	cfg.Defaults.MaxRetry = 5
+	cfg.Defaults.GPUsPerTask = 2
 	if err := reg.Update(context.Background(), cfg); err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -199,8 +196,8 @@ func TestUpdate(t *testing.T) {
 	if got.CmdTemplate != "python train_v2.py {{args}}" {
 		t.Errorf("cmd = %q, want updated value", got.CmdTemplate)
 	}
-	if got.Defaults.MaxRetry != 5 {
-		t.Errorf("max_retry = %d, want 5", got.Defaults.MaxRetry)
+	if got.Defaults.GPUsPerTask != 2 {
+		t.Errorf("gpus_per_task = %d, want 2", got.Defaults.GPUsPerTask)
 	}
 
 	// project.yaml should be overwritten by Update

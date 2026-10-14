@@ -46,7 +46,6 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"strings"
 	"sync"
 	"time"
 
@@ -264,40 +263,15 @@ func (b *Backend) doneDir() string {
 	return path.Join(b.Cfg.Workspace, doneDirName)
 }
 
-// ResetWrapperState clears a previous attempt's status.json and done marker
-// so a (re)launch starts from a blank slate — a stale terminal status.json
-// would be re-reconciled into an instant failure while the new cluster job
-// is still queued. Called by Launcher.Launch before every submission and by
-// user-initiated retry.
-func (b *Backend) ResetWrapperState(ctx context.Context, taskDir, taskID string) error {
-	statusFile := path.Join(taskDir, statusFileName)
-	if err := b.FS.WriteFile(statusFile, []byte("{}\n"), 0o644); err != nil {
-		return fmt.Errorf("reset %s: %w", statusFile, err)
-	}
-	if dir := b.doneDir(); dir != "" {
-		marker := path.Join(dir, taskID)
-		_, stderr, exitCode, err := b.FS.Exec(ctx, "rm", "-f", marker)
-		if err != nil {
-			return fmt.Errorf("reset done marker %s: %w", marker, err)
-		}
-		if exitCode != 0 {
-			return fmt.Errorf("reset done marker %s: rm exited %d: %s", marker, exitCode, strings.TrimSpace(string(stderr)))
-		}
-	}
-	return nil
-}
-
 // rowToTask builds the minimal scheduler.Task that FinishTask needs from a
 // store row. Only lifecycle-relevant fields are populated (retry decision,
 // queue/job bookkeeping) — this is a projection, not a full rehydration.
 func rowToTask(tk store.TaskRow) *scheduler.Task {
 	return &scheduler.Task{
-		ID:         tk.ID,
-		JobID:      tk.JobID,
-		RetryCount: tk.RetryCount,
-		MaxRetry:   tk.MaxRetry,
-		TaskDir:    tk.TaskDir,
-		LogPath:    tk.LogPath,
+		ID:      tk.ID,
+		JobID:   tk.JobID,
+		TaskDir: tk.TaskDir,
+		LogPath: tk.LogPath,
 		// Informational only (restore/display); staleness is handled by
 		// lifecycleMu serialization, not by id comparison.
 		ExternalID: tk.ExternalID,

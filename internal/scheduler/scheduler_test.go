@@ -1,11 +1,9 @@
 package scheduler
 
 import (
-	"bytes"
 	"context"
 	"log/slog"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -56,7 +54,7 @@ func seedTask(t *testing.T, s *store.Store, task *Task) {
 	if err := s.InsertTask(context.Background(), &store.TaskRow{
 		ID: task.ID, JobID: task.JobID, ProjectName: task.ProjectName,
 		Command: task.Command, ParamsJSON: "{}", GPUsNeeded: task.GPUsNeeded,
-		Status: "pending", MaxRetry: task.MaxRetry, LogPath: task.LogPath,
+		Status: "pending", LogPath: task.LogPath,
 		WorkingDir: task.WorkingDir, EnqueuedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("seed task: %v", err)
@@ -119,61 +117,48 @@ func TestSchedulerSkipsPausedJobs(t *testing.T) {
 	}
 }
 
-func TestRemoteFailureRetriesThenFailsPermanently(t *testing.T) {
+func TestRemoteFailureSettlesOnce(t *testing.T) {
 	launcher := &fakeRemoteLauncher{}
 	s, q, _ := newKillRaceHarness(t, launcher)
-	task := seedRunningTask(t, s, q, "t-retry")
-	task.MaxRetry = 1
+	task := seedRunningTask(t, s, q, "t-failure")
 
 	s.FinishTask(task, StatusFailed, map[string]any{"status_source": "probe"})
-	if got := q.Get(task.ID); got == nil || got.Status != StatusPending || got.RetryCount != 1 {
-		t.Fatalf("first failure did not requeue: %+v", got)
+	if got := q.Get(task.ID); got == nil || got.Status != StatusFailed {
+		t.Fatalf("failure must be terminal: %+v", got)
 	}
 	if s.slots.FreeCount() != 1 {
-		t.Fatal("slot was not released after durable retry transition")
+		t.Fatal("slot was not released after durable terminal transition")
 	}
 
-	s.dispatch(task)
-	s.wg.Wait()
+	// Duplicate failure evidence must not create another execution.
 	s.FinishTask(task, StatusFailed, map[string]any{"status_source": "probe"})
 	if got := taskStatus(t, s, task.ID); got != "failed" {
-		t.Fatalf("status after exhausted retry = %q, want failed", got)
+		t.Fatalf("status after duplicate failure = %q, want failed", got)
 	}
 	if s.slots.FreeCount() != 1 {
 		t.Fatal("slot was not released after durable terminal transition")
 	}
 }
 
-func TestHandleFailureLogsNextRetryOnce(t *testing.T) {
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-
+func TestHandleFailureSettlesFailed(t *testing.T) {
 	q := NewQueue()
 	st := testStore(t)
 	task := &Task{
 		ID: "t-fail", JobID: "j1", ProjectName: "test",
-		Command: "exit 1", GPUsNeeded: 1, MaxRetry: 1,
+		Command: "exit 1", GPUsNeeded: 1,
 	}
 	seedJob(t, st, "j1", "test", 1)
 	seedTask(t, st, task)
 	q.Push(task)
 
-	s := New(DefaultConfig(), q, testPool(1), &fakeRemoteLauncher{}, st, logger)
+	s := New(DefaultConfig(), q, testPool(1), &fakeRemoteLauncher{}, st, testLogger())
 	s.handleFailure(task, nil)
-
-	logs := buf.String()
-	if !strings.Contains(logs, "retry=1") {
-		t.Fatalf("expected retry=1 in logs, got %q", logs)
-	}
-	if strings.Contains(logs, "retry=2") {
-		t.Fatalf("unexpected retry=2 in logs: %q", logs)
-	}
 
 	row, err := st.GetTask(context.Background(), "t-fail")
 	if err != nil {
 		t.Fatalf("get task: %v", err)
 	}
-	if row.RetryCount != 1 || q.Get(task.ID).RetryCount != 1 {
-		t.Fatalf("retry count mismatch: db=%d queue=%d", row.RetryCount, q.Get(task.ID).RetryCount)
+	if row.Status != "failed" || q.Get(task.ID).Status != StatusFailed {
+		t.Fatalf("failure did not settle: db=%q queue=%q", row.Status, q.Get(task.ID).Status)
 	}
 }

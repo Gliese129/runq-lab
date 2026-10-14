@@ -73,17 +73,30 @@ func (b *Backend) ScanDoneMarkers(ctx context.Context) error {
 		if b.Scope != nil && tk.TargetGeneration != b.Scope.Generation {
 			continue
 		}
-		if awaitingRelaunch(*tk) {
-			continue // previous attempt's marker; Launch clears it
+		if awaitingLaunch(*tk) {
+			continue // dispatch has not published its execution identity yet
 		}
 
 		sf, statusErr := readStatusObserved(rfs.WithContext(b.FS, ctx), tk.TaskDir)
-		sf = statusForAttempt(*tk, sf)
 		if statusErr != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("read completion marker status for %s: %w", tk.ID, statusErr)
 			}
 			continue
+		}
+		// Short jobs can finish before the periodic running-task ingest. Their
+		// marker must remain until all final output and offsets are durable.
+		if isTerminal(sf.Status) || (isTerminal(tk.Status) && (tk.StatusSource == SourceWrapper || tk.StatusSource == SourceRunq)) {
+			current, verifyErr, ingestErr := b.ingestLoadedTask(ctx, *tk, true)
+			if err := errors.Join(verifyErr, ingestErr); err != nil {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("final ingest for %s: %w", tk.ID, err)
+				}
+				continue
+			}
+			if !current {
+				continue
+			}
 		}
 		if isTerminal(tk.Status) {
 			if err := b.applyTimeOnly(ctx, *tk, observationTimeFields(*tk, sf, ProbeResult{})); err != nil {

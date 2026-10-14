@@ -25,14 +25,14 @@ runq.record({"acc": acc, "f1": f1}, seed=ctx.seed, split="val")  # one comparabl
 ```
 
 - `report` / `log_metric`: per-step scalars; `step` written back to `ctx.current_step`.
-- `record(metrics, **axes)`: bounded result rows keyed by axes (≤10k per
-  task); metrics must be finite numbers, axes str/bool/number. Read with
-  `runq results <job_id> --json` and the dashboard results view. Use it for
-  the numbers you will compare across ablation cells — not for per-sample text.
-- Checkpoints: write under `ctx.checkpoint_dir` (`$RUNQ_CHECKPOINT_DIR` =
-  `<task_dir>/checkpoints`). It is stable across retries, so a restart with
-  `resume.extra_args` (project.yaml) can find the latest file. Retention and
-  early stopping are the script's job.
+- `record(metrics, section=..., **axes)`: evaluation results and progress snapshots.
+  Keep keys fixed per section; use null for unknown values. `step` orders snapshots
+  but is not identity. The controller retains the latest per source/section/axes;
+  full history stays in `results.jsonl`. See `references/views.md`.
+- Checkpoints: write under `ctx.checkpoint_dir`. Every resubmission is a new task;
+  explicitly reference an old checkpoint path when you want to reuse it.
+- Consumer `ctx.job_tasks()` reads cached task facts and observation freshness;
+  the script owns its exit decision. Read failure is not completion.
 - `runq.utils.atomic_write(path)` — tmp + fsync + rename for any output file.
 
 ## W&B
@@ -61,11 +61,11 @@ every GPU on its node). Every key is a default you can override.
 ## RC3 directory and identity contract
 
 - `ctx.output_dir` / `RUNQ_OUTPUT_DIR`: task `outputs/`; write training outputs there explicitly.
-- `ctx.checkpoint_dir` / `RUNQ_CHECKPOINT_DIR`: task `checkpoints/`, retained on retry.
+- `ctx.checkpoint_dir` / `RUNQ_CHECKPOINT_DIR`: task `checkpoints/`.
 - `ctx.wandb_like_cfg["dir"]` = resolved `WANDB_DIR`, default task root. W&B creates `wandb/` under it, so pass the root (the default) rather than `task_dir/wandb`.
 - Project/job explicit path overrides win and appear in preview; relative paths resolve against the target project's `working_dir`. Submission creates/checks the selected target paths. CWD stays the code directory.
 - Set global `RANK` (not `LOCAL_RANK`) before W&B init. Without `RANK`, explicitly disable W&B on nonzero framework global ranks and pass that rank to `ctx.link_wandb`.
 - Call `ctx.link_wandb(run)` after init. It records the run's actual URL, which stays correct for custom run ids. Core SDK does not import W&B.
-- Default task ID plus `resume="allow"` continues an online run on retry. Offline attempts keep independent bundles; use W&B's official sync. W&B cumulative runtime is not the current attempt's runtime.
+- New submissions have new task and W&B IDs. Explicitly choose an old checkpoint or run ID if reuse is needed. Offline bundles use W&B's official sync.
 - Artifact staging (`WANDB_DATA_DIR`), shared cache (`WANDB_CACHE_DIR`) and download (`artifact.download(root=...)`) are independent of run dir. Runq doesn't upload checkpoints or manage W&B credentials.
-- Retry preserves task files. Confirmed `clean all` deletes task dirs (including offline bundles, outputs and checkpoints) and task logs; overridden paths outside task dirs and shared caches survive. Preview before deleting unsynced data.
+- Task files remain until cleanup. Confirmed `clean all` deletes task dirs (including offline bundles, outputs and checkpoints) and task logs; overridden paths outside task dirs and shared caches survive. Preview before deleting unsynced data.

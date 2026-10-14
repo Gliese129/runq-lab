@@ -23,8 +23,6 @@ type TaskRow struct {
 	GPUs          string // comma-separated GPU indices, e.g. "0,1,3"
 	Status        string
 	KillRequested bool
-	RetryCount    int
-	MaxRetry      int
 	PID           int
 	StartTime     int64 // /proc starttime (Unix timestamp) for reclaim validation
 	LogPath       string
@@ -137,7 +135,7 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 	var target sql.NullString
 	err := scanner.Scan(
 		&t.ID, &t.JobID, &t.ProjectName, &t.Command, &t.ParamsJSON,
-		&t.GPUsNeeded, &gpus, &t.Status, &t.RetryCount, &t.MaxRetry,
+		&t.GPUsNeeded, &gpus, &t.Status, new(int), new(int),
 		&pid, &startTime, &logPath, &workingDir, &envJSON,
 		&resumable, &extraArgs, &uid, &timeout, &enqueuedAt, &startedAt, &finishedAt,
 		&taskDir, &target, &externalID, &statusSource, &killRequested,
@@ -200,7 +198,7 @@ func (s *Store) InsertTask(ctx context.Context, t *TaskRow) error {
 
 	_, err := s.db.ExecContext(ctx, query,
 		t.ID, t.JobID, t.ProjectName, t.Command, t.ParamsJSON,
-		t.GPUsNeeded, nullString(t.GPUs), t.Status, t.RetryCount, t.MaxRetry,
+		t.GPUsNeeded, nullString(t.GPUs), t.Status, 0, 0,
 		nullInt(t.PID), nullInt64(t.StartTime), nullString(t.LogPath),
 		nullString(t.WorkingDir), nullString(t.EnvJSON),
 		resumable, t.ExtraArgs, nullInt(t.UID), nullInt(t.Timeout),
@@ -236,7 +234,7 @@ func (s *Store) InsertTaskTx(ctx context.Context, tx *sql.Tx, t *TaskRow) error 
 
 	_, err := tx.ExecContext(ctx, query,
 		t.ID, t.JobID, t.ProjectName, t.Command, t.ParamsJSON,
-		t.GPUsNeeded, nullString(t.GPUs), t.Status, t.RetryCount, t.MaxRetry,
+		t.GPUsNeeded, nullString(t.GPUs), t.Status, 0, 0,
 		nullInt(t.PID), nullInt64(t.StartTime), nullString(t.LogPath),
 		nullString(t.WorkingDir), nullString(t.EnvJSON),
 		resumable, t.ExtraArgs, nullInt(t.UID), nullInt(t.Timeout),
@@ -259,7 +257,6 @@ var allowedStatusFields = map[string]bool{
 	"start_time":        true,
 	"started_at":        true,
 	"finished_at":       true,
-	"retry_count":       true,
 	"log_path":          true,
 	"working_dir":       true,
 	"env_json":          true,
@@ -275,39 +272,33 @@ var allowedStatusFields = map[string]bool{
 
 // ErrTaskStatusConflict means a conditional task transition lost a race with
 // another durable transition. Callers should reload the row rather than
-// retrying an observation made against the old attempt.
+// retrying an observation made against the old observation.
 var ErrTaskStatusConflict = errors.New("task status transition conflict")
 
 const (
 	expectedStatusField           = "__expected_status"
 	expectedStatusSourceField     = "__expected_status_source"
-	expectedRetryCountField       = "__expected_retry_count"
 	expectedTargetGenerationField = "__expected_target_generation"
 	expectedExternalIDField       = "__expected_external_id"
 )
 
-// FenceTaskStatusUpdate attaches the durable identity of the task attempt
+// FenceTaskStatusUpdate attaches the durable identity of the task execution
 // that produced a transition. The metadata travels through lifecycle funnels
 // in fields but is consumed as WHERE predicates by UpdateTaskStatus; it is
 // never written as task data.
 func FenceTaskStatusUpdate(fields map[string]any, expected TaskRow) {
 	fields[expectedStatusField] = expected.Status
 	fields[expectedStatusSourceField] = expected.StatusSource
-	fields[expectedRetryCountField] = expected.RetryCount
 	fields[expectedTargetGenerationField] = expected.TargetGeneration
 	fields[expectedExternalIDField] = expected.ExternalID
 }
 
-// CarryTaskStatusFence copies only FenceTaskStatusUpdate's private predicate
-// metadata into another transition field map. Lifecycle reducers such as the
-// scheduler's failed→pending retry intentionally discard terminal evidence
-// fields, but they must not discard the attempt identity that guards the
-// write against a stronger concurrent verdict or a newer generation.
+// CarryTaskStatusFence preserves execution identity when lifecycle reducers
+// replace evidence fields. A stronger verdict or generation still wins.
 func CarryTaskStatusFence(dst, src map[string]any) {
 	for _, key := range []string{
 		expectedStatusField,
 		expectedStatusSourceField,
-		expectedRetryCountField,
 		expectedTargetGenerationField,
 		expectedExternalIDField,
 	} {
@@ -365,6 +356,9 @@ func (s *Store) UpdateTaskStatus(ctx context.Context, taskID string, status stri
 	whereClauses := []string{"id = ?"}
 	whereArgs := []any{taskID}
 	fenced := false
+	if status == "pending" || status == "submitting" {
+		whereClauses = append(whereClauses, "status NOT IN ('success', 'failed', 'killed')")
+	}
 
 	if expected, ok := fields[expectedStatusField]; ok {
 		fenced = true
@@ -373,10 +367,6 @@ func (s *Store) UpdateTaskStatus(ctx context.Context, taskID string, status stri
 	}
 	if expected, ok := fields[expectedStatusSourceField]; ok {
 		whereClauses = append(whereClauses, "COALESCE(status_source, '') = ?")
-		whereArgs = append(whereArgs, expected)
-	}
-	if expected, ok := fields[expectedRetryCountField]; ok {
-		whereClauses = append(whereClauses, "retry_count = ?")
 		whereArgs = append(whereArgs, expected)
 	}
 	if expected, ok := fields[expectedTargetGenerationField]; ok {
@@ -390,7 +380,7 @@ func (s *Store) UpdateTaskStatus(ctx context.Context, taskID string, status stri
 
 	for col, val := range fields {
 		switch col {
-		case expectedStatusField, expectedStatusSourceField, expectedRetryCountField,
+		case expectedStatusField, expectedStatusSourceField,
 			expectedTargetGenerationField, expectedExternalIDField:
 			continue
 		}
@@ -399,16 +389,6 @@ func (s *Store) UpdateTaskStatus(ctx context.Context, taskID string, status stri
 		}
 		setClauses = append(setClauses, col+" = ?")
 		args = append(args, val)
-	}
-	// Automatic failure retry increments retry_count but intentionally drops
-	// terminal evidence fields. Requiring the immediately preceding epoch is
-	// its attempt fence: a manual retry records the same next epoch first, so
-	// an old failure can no longer republish pending over that reset intent.
-	if !fenced {
-		if next, ok := intField(fields["retry_count"]); ok && next > 0 {
-			whereClauses = append(whereClauses, "retry_count = ?")
-			whereArgs = append(whereArgs, next-1)
-		}
 	}
 
 	query := fmt.Sprintf("UPDATE tasks SET %s WHERE %s",

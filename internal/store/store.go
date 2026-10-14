@@ -10,8 +10,8 @@ import (
 )
 
 type Store struct {
-	db           *sql.DB
-	attemptLocks [attemptLockShards]sync.Mutex
+	db        *sql.DB
+	taskLocks [taskLockShards]sync.Mutex
 }
 
 // Open creates or opens the SQLite database at dbPath, configures it for

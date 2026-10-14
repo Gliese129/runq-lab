@@ -182,3 +182,48 @@ CREATE TABLE IF NOT EXISTS sync_state (
     last_error   TEXT NOT NULL DEFAULT '',    -- '' = last attempt succeeded
     PRIMARY KEY (target, resource)
 );
+
+-- Source IDs are either task IDs or consumer IDs; the owning job is the FK.
+CREATE TABLE IF NOT EXISTS record_latest (
+ task_id TEXT NOT NULL, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+ section TEXT NOT NULL, key_json TEXT NOT NULL, step REAL, ts INTEGER NOT NULL,
+ axes_json TEXT NOT NULL, metrics_json TEXT NOT NULL,
+ PRIMARY KEY(task_id, section, key_json)
+);
+CREATE INDEX IF NOT EXISTS record_latest_job ON record_latest(job_id);
+CREATE TABLE IF NOT EXISTS record_schema (
+ source_id TEXT NOT NULL, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+ section TEXT NOT NULL, axes_json TEXT NOT NULL, metrics_json TEXT NOT NULL,
+ warning TEXT NOT NULL DEFAULT '', PRIMARY KEY(source_id, section)
+);
+CREATE TABLE IF NOT EXISTS views (
+ project_name TEXT NOT NULL, name TEXT NOT NULL, spec_json TEXT NOT NULL,
+ source_path TEXT NOT NULL DEFAULT '', templates_json TEXT NOT NULL DEFAULT '{}',
+ updated_at INTEGER NOT NULL, PRIMARY KEY(project_name,name)
+);
+CREATE TABLE IF NOT EXISTS view_source_cache (
+ project_name TEXT NOT NULL, view_name TEXT NOT NULL, source TEXT NOT NULL,
+ ran_at INTEGER NOT NULL, updated_at INTEGER, ok INTEGER NOT NULL, json TEXT, stderr_tail TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(project_name,view_name,source),
+ FOREIGN KEY(project_name,view_name) REFERENCES views(project_name,name) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS consumers (
+ id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+ name TEXT NOT NULL, target TEXT NOT NULL, generation TEXT NOT NULL,
+ status TEXT NOT NULL, data_json TEXT NOT NULL, final_ingest INTEGER NOT NULL DEFAULT 0,
+ UNIQUE(job_id,name)
+);
+CREATE TABLE IF NOT EXISTS source_file_ingest (
+ source_id TEXT NOT NULL REFERENCES consumers(id) ON DELETE CASCADE, file TEXT NOT NULL,
+ file_size INTEGER NOT NULL, parsed_offset INTEGER NOT NULL, final INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(source_id,file)
+);
+CREATE TABLE IF NOT EXISTS consumer_metrics (
+ source_id TEXT NOT NULL REFERENCES consumers(id) ON DELETE CASCADE, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+ key TEXT NOT NULL, last REAL NOT NULL, last_ts INTEGER NOT NULL, step REAL,
+ PRIMARY KEY(source_id,key)
+);
+CREATE TABLE IF NOT EXISTS source_observations (
+ source_id TEXT PRIMARY KEY, observed_at INTEGER NOT NULL, step REAL,
+ last_output_at INTEGER, last_heartbeat_at INTEGER
+);

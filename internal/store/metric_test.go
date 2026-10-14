@@ -127,7 +127,7 @@ func TestIngestMarkRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBeginTaskRetryPreservesTaskLifetimeIngest(t *testing.T) {
+func TestTerminalTaskPreservesFrozenIngest(t *testing.T) {
 	s, err := Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestBeginTaskRetryPreservesTaskLifetimeIngest(t *testing.T) {
 	ctx := context.Background()
 
 	if err := s.UpdateTaskStatus(ctx, "t1", "failed", map[string]any{"status_source": "wrapper"}); err != nil {
-		t.Fatalf("make task retryable: %v", err)
+		t.Fatalf("mark task terminal: %v", err)
 	}
 	if err := s.MergeMetricSummaries(ctx, []MetricSummaryRow{{
 		TaskID: "t1", JobID: "j1", Key: "loss", Min: 1, Max: 1,
@@ -154,29 +154,25 @@ func TestBeginTaskRetryPreservesTaskLifetimeIngest(t *testing.T) {
 		t.Fatalf("seed results: %v", err)
 	}
 
-	if err := s.BeginTaskRetry(ctx, "t1", 0, "gen-next"); err != nil {
-		t.Fatalf("begin retry: %v", err)
-	}
-
 	metricMark, err := s.GetIngestMark(ctx, "t1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metricMark.Size != 100 || metricMark.Offset != 100 || metricMark.Final {
-		t.Fatalf("metric mark after retry = %+v, want preserved offset and final=false", metricMark)
+	if metricMark.Size != 100 || metricMark.Offset != 100 || !metricMark.Final {
+		t.Fatalf("terminal metric mark changed: %+v", metricMark)
 	}
 	resultMark, err := s.GetFileIngestMark(ctx, "t1", IngestFileResults)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resultMark.Size != 80 || resultMark.Offset != 80 || resultMark.Final || resultMark.Dropped != 2 {
-		t.Fatalf("result mark after retry = %+v, want preserved state and final=false", resultMark)
+	if resultMark.Size != 80 || resultMark.Offset != 80 || !resultMark.Final || resultMark.Dropped != 0 {
+		t.Fatalf("terminal result mark changed: %+v", resultMark)
 	}
 
 	summaries, _ := s.ListMetricSummaries(ctx, "j1", "loss")
 	results, _ := s.ListResultRecords(ctx, "j1")
 	if len(summaries) != 1 || len(results) != 1 {
-		t.Fatalf("retry erased task history: summaries=%d results=%d",
+		t.Fatalf("terminal transition erased task history: summaries=%d results=%d",
 			len(summaries), len(results))
 	}
 }

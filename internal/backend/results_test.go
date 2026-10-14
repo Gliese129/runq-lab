@@ -132,8 +132,8 @@ func TestResultsSortByPrimaryXWithinGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jobResultsFromDB: %v", err)
 	}
-	if col := res.Cols.Axes["step"]; col[0] != 2000.0 || col[1] != 4000.0 {
-		t.Errorf("step column not sorted: %v", col)
+	if col := res.Cols.Axes["step"]; len(col) != 1 || col[0] != 4000.0 {
+		t.Errorf("latest step not retained: %v", col)
 	}
 }
 
@@ -178,10 +178,10 @@ func TestResultsMultiModelTaskSplitsRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jobResultsFromDB: %v", err)
 	}
-	if len(res.Schema.Groups) != 2 || res.Schema.Groups[0].Key != "a" || res.Schema.Groups[0].Count != 2 {
+	if len(res.Schema.Groups) != 2 || res.Schema.Groups[0].Key != "a" || res.Schema.Groups[0].Count != 1 {
 		t.Errorf("groups = %+v", res.Schema.Groups)
 	}
-	wantTasks := []ResultRange{{ID: "t1", Offset: 0, Count: 2}, {ID: "t1", Offset: 2, Count: 1}}
+	wantTasks := []ResultRange{{ID: "t1", Offset: 0, Count: 1}, {ID: "t1", Offset: 1, Count: 1}}
 	if len(res.Schema.Tasks) != 2 || res.Schema.Tasks[0] != wantTasks[0] || res.Schema.Tasks[1] != wantTasks[1] {
 		t.Errorf("tasks = %+v, want %+v", res.Schema.Tasks, wantTasks)
 	}
@@ -225,7 +225,7 @@ func TestResultsCrossTaskSeriesMonotonicX(t *testing.T) {
 		t.Fatalf("jobResultsFromDB: %v", err)
 	}
 	col := res.Cols.Axes["step"]
-	want := []any{10.0, 20.0, 100.0, 200.0}
+	want := []any{20.0, 200.0}
 	for i := range want {
 		if col[i] != want[i] {
 			t.Fatalf("step column = %v, want %v (monotonic within the group)", col, want)
@@ -237,7 +237,7 @@ func TestResultsCrossTaskSeriesMonotonicX(t *testing.T) {
 		t.Errorf("group last x = %v, want 200", last)
 	}
 	// The task runs split by x interleave: t2 then t1, nested in the group.
-	wantTasks := []ResultRange{{ID: "t2", Offset: 0, Count: 2}, {ID: "t1", Offset: 2, Count: 2}}
+	wantTasks := []ResultRange{{ID: "t2", Offset: 0, Count: 1}, {ID: "t1", Offset: 1, Count: 1}}
 	if len(res.Schema.Tasks) != 2 || res.Schema.Tasks[0] != wantTasks[0] || res.Schema.Tasks[1] != wantTasks[1] {
 		t.Errorf("tasks = %+v, want %+v", res.Schema.Tasks, wantTasks)
 	}
@@ -269,11 +269,11 @@ func TestResultsOffAxisTailInvariant(t *testing.T) {
 		t.Fatalf("jobResultsFromDB: %v", err)
 	}
 	col := res.Cols.Axes["step"]
-	if col[0] != 100.0 || col[1] != 200.0 || col[2] != nil || col[3] != nil {
-		t.Fatalf("step column = %v, want monotonic prefix + null tail", col)
+	if len(col) != 1 || col[0] != 200.0 {
+		t.Fatalf("step column = %v, want latest step", col)
 	}
-	if res.Cols.TS[2] != 50 || res.Cols.TS[3] != 100 {
-		t.Errorf("off-axis tail not ts-ordered: ts = %v", res.Cols.TS)
+	if res.Cols.TS[0] != 101 {
+		t.Errorf("older step or timestamp replaced snapshot: ts = %v", res.Cols.TS)
 	}
 }
 
@@ -341,15 +341,15 @@ func TestResultsMixedTypeAxisMajorityWins(t *testing.T) {
 		t.Fatalf("jobResultsFromDB: %v", err)
 	}
 	ax := res.Schema.Axes["step"]
-	if ax.Type != "num" {
-		t.Errorf("majority type = %q, want num", ax.Type)
+	if ax.Type != "str" {
+		t.Errorf("latest type = %q, want str", ax.Type)
 	}
-	if ax.Nulled != 1 {
-		t.Errorf("nulled = %d, want 1", ax.Nulled)
+	if ax.Nulled != 0 {
+		t.Errorf("nulled = %d, want 0", ax.Nulled)
 	}
 	col := res.Cols.Axes["step"]
 	// The "final" record sorts after numeric x (nulls last).
-	if col[0] != 100.0 || col[1] != 200.0 || col[2] != nil {
+	if len(col) != 1 || col[0] != 0 || ax.Vocab[0] != "final" {
 		t.Errorf("step column = %v", col)
 	}
 }

@@ -204,6 +204,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/refresh", s.handleRefreshJob)
 
 	// ── §5.5 Tasks ───────────────────────────────────────────────────
+	s.registerViews()
+	s.registerConsumers()
 	s.mux.HandleFunc("GET /api/v1/tasks", s.handleListTasks) // ?job=&status=&target=&limit=&offset=
 	s.mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleGetTask)
 	s.mux.HandleFunc("GET /api/v1/tasks/{id}/log", s.handleTaskLog)
@@ -211,7 +213,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/tasks/{id}/log/grep", s.handleTaskLogGrep) // ?pattern=&tail=
 	s.mux.HandleFunc("GET /api/v1/tasks/{id}/metrics", s.handleTaskMetrics)
 	s.mux.HandleFunc("POST /api/v1/tasks/{id}/kill", s.handleKillTask)
-	s.mux.HandleFunc("POST /api/v1/tasks/{id}/retry", s.handleRetryTask)
 
 	// ── runq self-logs（RQ-74: 死因至少能在浏览器里读到）────────────────
 	s.mux.HandleFunc("GET /api/v1/daemon/logs", s.handleDaemonLogList)
@@ -470,10 +471,6 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeErrorStatus(w, http.StatusBadRequest, fmt.Errorf("project_name is required"))
 		return
 	}
-	if err := project.ValidateRetryBounds(cfg.Defaults.MaxRetry); err != nil {
-		writeErrorStatus(w, http.StatusBadRequest, err)
-		return
-	}
 	if err := s.backend.CreateProject(r.Context(), cfg); err != nil {
 		writeError(w, err)
 		return
@@ -495,10 +492,6 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.ProjectName = name
-	if err := project.ValidateRetryBounds(cfg.Defaults.MaxRetry); err != nil {
-		writeErrorStatus(w, http.StatusBadRequest, err)
-		return
-	}
 	if err := s.backend.UpdateProject(r.Context(), cfg); err != nil {
 		writeError(w, err)
 		return
@@ -1178,21 +1171,7 @@ func (s *Server) handleKillTask(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleRetryTask — POST /tasks/{id}/retry[?confirm_generation=true].
-// A rerun of a task whose target config changed since submission needs
-// explicit confirmation (RQ-75): unconfirmed → 409 generation_changed,
-// the WebUI shows a dialog and the CLI prompts y/N (-y skips).
-func (s *Server) handleRetryTask(w http.ResponseWriter, r *http.Request) {
-	confirm := r.URL.Query().Get("confirm_generation") == "true"
-	s.handleAction(w, r, func() error {
-		if gr, ok := s.backend.(interface {
-			RetryTaskGen(context.Context, string, bool) error
-		}); ok {
-			return gr.RetryTaskGen(r.Context(), r.PathValue("id"), confirm)
-		}
-		return s.backend.RetryTask(r.Context(), r.PathValue("id"))
-	})
-}
+// Old clients receive an explicit, side-effect-free retirement response.
 
 func (s *Server) handleKillJob(w http.ResponseWriter, r *http.Request) {
 	s.handleAction(w, r, func() error {

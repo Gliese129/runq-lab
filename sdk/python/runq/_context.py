@@ -99,6 +99,21 @@ class Context:
 
     # ---- convenience accessors ----
 
+    def job_tasks(self) -> dict:
+        """Read the last complete controller snapshot; errors never mean done.
+
+        Returns tasks plus updated_at / observed_at / observation_state.
+        The caller decides whether to wait, finish processing or exit.
+        """
+        root = os.environ.get("RUNQ_CONSUMER_DIR")
+        if not root:
+            raise RuntimeError("job_tasks() requires a runq consumer")
+        with (Path(root) / "job.json").open(encoding="utf-8") as stream:
+            snapshot = json.load(stream)
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("tasks"), list):
+            raise ValueError("invalid job task snapshot")
+        return snapshot
+
     def get(self, name: str, default: Any = None) -> Any:
         """Look up a param with a fallback default.
 
@@ -249,7 +264,7 @@ def _detect_mode() -> str:
     3. No socket path → daemon isn't reachable → no_daemon.
     4. Otherwise daemon.
     """
-    if not os.environ.get("RUNQ_TASK_ID"):
+    if not (os.environ.get("RUNQ_TASK_ID") or os.environ.get("RUNQ_CONSUMER_ID")):
         return "manual"
     if _truthy(os.environ.get("RUNQ_NO_DAEMON")):
         return "no_daemon"
@@ -322,7 +337,7 @@ def context() -> Context:
         params = _load_params(local_params) if local_params.exists() else {}
     else:
         # daemon / no_daemon: daemon injects all the RUNQ_* vars.
-        task_id = env["RUNQ_TASK_ID"]
+        task_id = env.get("RUNQ_TASK_ID") or env["RUNQ_CONSUMER_ID"]
         task_dir = Path(env["RUNQ_TASK_DIR"]) if env.get("RUNQ_TASK_DIR") else None
         checkpoint_dir = (
             Path(env["RUNQ_CHECKPOINT_DIR"]) if env.get("RUNQ_CHECKPOINT_DIR") else None

@@ -13,14 +13,6 @@ const IngestFileResults = "results"
 // IngestFileLinks identifies links.json (SDK runq.link) in file_ingest marks.
 const IngestFileLinks = "links"
 
-// MaxResultRecordsPerTask caps how many result records one task may ingest.
-// The cap is a MISUSE guard, not capacity planning: the record contract is
-// one row per eval checkpoint (typically a few hundred per task); hitting
-// 10k means someone pointed runq.record at a training inner loop. Overflow
-// rows are dropped and tallied in file_ingest.dropped_count so the results
-// endpoint can report `truncated` honestly.
-const MaxResultRecordsPerTask = 10000
-
 // ResultRecordRow maps one line of results.jsonl:
 //
 //	{"ts":1700000000,"axes":{"model":"a","step":2000},"metrics":{"math":24.8}}
@@ -28,6 +20,8 @@ const MaxResultRecordsPerTask = 10000
 // axes/metrics stay opaque JSON here — key classification (identity/x/label)
 // is the results endpoint's assembly concern, not storage's.
 type ResultRecordRow struct {
+	Section string
+
 	TaskID      string
 	JobID       string
 	TS          int64
@@ -80,16 +74,7 @@ const upsertFileIngestSQL = `
 		final         = excluded.final,
 		dropped_count = excluded.dropped_count`
 
-// ApplyResultsIngestDelta commits one incremental pass over results.jsonl
-// ATOMICALLY: optional rebuild delete, cap-limited inserts, and the mark
-// land in one transaction (same double-count defense as ApplyIngestDelta —
-// result_records has no natural PK, so exactly-once is entirely the mark's
-// doing).
-//
-// parsedTotal is how many valid records the pass parsed; rows carries at
-// most MaxResultRecordsPerTask of them (the caller stops materializing
-// beyond the cap — the DB can never have room for more). The difference
-// between parsedTotal and what actually fits feeds dropped_count.
+// ApplyResultsIngestDelta commits latest records and the read offset together.
 func (s *Store) ApplyResultsIngestDelta(ctx context.Context, taskID string, rebuild bool,
 	rows []ResultRecordRow, parsedTotal int, mark FileIngestMark) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -98,50 +83,17 @@ func (s *Store) ApplyResultsIngestDelta(ctx context.Context, taskID string, rebu
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	priorDropped := int64(0)
 	if rebuild {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM result_records WHERE task_id = ?`, taskID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM record_latest WHERE task_id=?`, taskID); err != nil {
 			return err
 		}
-	} else {
-		// Carry the running tally forward; a rebuild recounts from zero.
-		var d sql.NullInt64
-		err := tx.QueryRowContext(ctx,
-			`SELECT dropped_count FROM file_ingest WHERE task_id = ? AND file = ?`,
-			taskID, IngestFileResults).Scan(&d)
-		if err != nil && err != sql.ErrNoRows {
+	}
+	for _, r := range rows {
+		if err := upsertLatest(ctx, tx, r); err != nil {
 			return err
 		}
-		priorDropped = d.Int64
 	}
-
-	var existing int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM result_records WHERE task_id = ?`, taskID).Scan(&existing); err != nil {
-		return err
-	}
-	room := MaxResultRecordsPerTask - existing
-	if room < 0 {
-		room = 0
-	}
-	insertN := min(len(rows), room)
-
-	if insertN > 0 {
-		stmt, err := tx.PrepareContext(ctx, `
-			INSERT INTO result_records (task_id, job_id, ts, axes_json, metrics_json)
-			VALUES (?, ?, ?, ?, ?)`)
-		if err != nil {
-			return err
-		}
-		defer stmt.Close()
-		for _, r := range rows[:insertN] {
-			if _, err := stmt.ExecContext(ctx, r.TaskID, r.JobID, r.TS, r.AxesJSON, r.MetricsJSON); err != nil {
-				return err
-			}
-		}
-	}
-
-	mark.Dropped = priorDropped + int64(parsedTotal-insertN)
+	mark.Dropped = 0
 	if _, err := tx.ExecContext(ctx, upsertFileIngestSQL,
 		taskID, IngestFileResults, mark.Size, mark.Offset, boolToInt(mark.Final), mark.Dropped); err != nil {
 		return err
@@ -166,9 +118,9 @@ func (s *Store) SumResultsDropped(ctx context.Context, jobID string) (int64, err
 // assembly (RQ2-1 c3).
 func (s *Store) ListResultRecords(ctx context.Context, jobID string) ([]ResultRecordRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT task_id, job_id, ts, axes_json, metrics_json
-		 FROM result_records WHERE job_id = ?
-		 ORDER BY task_id, rowid`, jobID)
+		`SELECT task_id, job_id, ts, axes_json, metrics_json, section
+		 FROM record_latest WHERE job_id = ?
+		 ORDER BY task_id, section, key_json`, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +128,7 @@ func (s *Store) ListResultRecords(ctx context.Context, jobID string) ([]ResultRe
 	var out []ResultRecordRow
 	for rows.Next() {
 		var r ResultRecordRow
-		if err := rows.Scan(&r.TaskID, &r.JobID, &r.TS, &r.AxesJSON, &r.MetricsJSON); err != nil {
+		if err := rows.Scan(&r.TaskID, &r.JobID, &r.TS, &r.AxesJSON, &r.MetricsJSON, &r.Section); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

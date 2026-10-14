@@ -373,13 +373,12 @@ func (b *Backend) buildRunScript(t submitplan.PlannedTask, plan submitplan.Plan)
 			fmt.Fprintf(&s, "export %s=%s\n", key, utils.ShellQuote(env[key]))
 		}
 	}
-	s.WriteString(`_RUNQ_ATTEMPT=0
-_RUNQ_WRAPPER_START=$(date +%s)
+	s.WriteString(`_RUNQ_WRAPPER_START=$(date +%s)
 _RUNQ_EXEC_START=0
 _RUNQ_EXEC_FINISH=0
 _RUNQ_ACTIVITY_PID=
 _runq_status() {
- printf '{"time_version":1,"attempt":%s,"status":"%s","exit_code":%s,"wrapper_started_at":%s,"execution_started_at":%s,"execution_finished_at":%s,"started_at":%s,"finished_at":%s}\n' "$_RUNQ_ATTEMPT" "$1" "$2" "$_RUNQ_WRAPPER_START" "$_RUNQ_EXEC_START" "$_RUNQ_EXEC_FINISH" "$_RUNQ_EXEC_START" "$3" > "$STATUS_FILE.tmp" && mv "$STATUS_FILE.tmp" "$STATUS_FILE"
+ printf '{"time_version":1,"status":"%s","exit_code":%s,"wrapper_started_at":%s,"execution_started_at":%s,"execution_finished_at":%s,"started_at":%s,"finished_at":%s}\n' "$1" "$2" "$_RUNQ_WRAPPER_START" "$_RUNQ_EXEC_START" "$_RUNQ_EXEC_FINISH" "$_RUNQ_EXEC_START" "$3" > "$STATUS_FILE.tmp" && mv "$STATUS_FILE.tmp" "$STATUS_FILE"
 }
 _runq_done() { if [ -n "$RUNQ_DONE_DIR" ]; then mkdir -p "$RUNQ_DONE_DIR" 2>/dev/null; : > "$RUNQ_DONE_DIR/$RUNQ_TASK_ID"; fi; }
 _runq_finish() {
@@ -450,7 +449,7 @@ func planToTaskRow(t submitplan.PlannedTask, plan submitplan.Plan, now time.Time
 	return store.TaskRow{
 		ID: t.TaskID, JobID: plan.JobID, ProjectName: plan.Project,
 		Command: t.Command, ParamsJSON: string(paramsJSON), GPUsNeeded: t.GPUsNeeded,
-		Status: "pending", MaxRetry: t.MaxRetry, LogPath: t.LogPath,
+		Status: "pending", LogPath: t.LogPath,
 		WorkingDir: t.WorkingDir, EnvJSON: string(envJSON),
 		Resumable: t.Resumable, ExtraArgs: t.ExtraArgs,
 		UID: t.UID, Timeout: t.Timeout, EnqueuedAt: now,

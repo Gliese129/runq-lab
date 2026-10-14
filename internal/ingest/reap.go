@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"path"
 
 	"github.com/bytedance/gopkg/util/logger"
 	"github.com/gliese129/runq-lab/internal/rfs"
@@ -31,8 +32,9 @@ type Target struct {
 // Result summarizes what was ingested from the task's SDK output files.
 // Counts are informational; no decision logic depends on them.
 type Result struct {
+	LatestStep  *float64
 	MetricCount int
-	ResultCount int // result records parsed from results.jsonl (pre-cap)
+	ResultCount int // result records parsed from results.jsonl
 }
 
 // SDK file contract — each stream has its own file so the semantics split
@@ -114,6 +116,10 @@ func (c *collector) line(lineBytes []byte) {
 			}
 			agg.Count++
 		}
+		if e.Step != nil {
+			v := float64(*e.Step)
+			c.result.LatestStep = &v
+		}
 		c.result.MetricCount++
 	default:
 		logger.Debugf("reap %s line %d: unknown event type %q (skipped)", c.path, c.lineN, t.Type)
@@ -132,6 +138,7 @@ func (c *collector) summaryRows() []store.MetricSummaryRow {
 // resultLine maps one results.jsonl line. Axes/metrics stay raw JSON —
 // key classification is the results endpoint's concern.
 type resultLine struct {
+	Section string          `json:"section"`
 	TS      int64           `json:"ts"`
 	Axes    json.RawMessage `json:"axes"`
 	Metrics json.RawMessage `json:"metrics"`
@@ -141,7 +148,7 @@ type resultCollector struct {
 	target Target
 	path   string
 	lineN  int
-	parsed int // valid records seen (pre-cap)
+	parsed int // valid records seen
 	rows   []store.ResultRecordRow
 }
 
@@ -166,12 +173,11 @@ func (c *resultCollector) line(lineBytes []byte) {
 		return
 	}
 	c.parsed++
-	// Materialize at most the cap — the DB can never have room for more;
-	// the parsed tally beyond it feeds dropped_count in the apply.
-	if len(c.rows) < store.MaxResultRecordsPerTask {
+	// Every snapshot participates in the latest-record projection.
+	{
 		c.rows = append(c.rows, store.ResultRecordRow{
 			TaskID: c.target.TaskID, JobID: c.target.JobID,
-			TS: rl.TS, AxesJSON: axes, MetricsJSON: metrics,
+			TS: rl.TS, AxesJSON: axes, MetricsJSON: metrics, Section: rl.Section,
 		})
 	}
 }
@@ -210,7 +216,7 @@ type scanOutcome struct {
 //	size unchanged → zero transfer, zero parse (the common idle case)
 //	size grew      → seek to parsed_offset, parse the delta's COMPLETE
 //	                 lines (an unterminated tail waits for the next pass)
-//	size shrank    → the file was rewritten (retry rerun): rebuild from 0
+//	size shrank    → the file was rewritten: rebuild from 0
 //
 // final consumes the tail even without a trailing newline. The function
 // performs NO store writes — pairing the parsed delta with its mark update
@@ -280,7 +286,24 @@ func ReapIncremental(ctx context.Context, st *store.Store, target Target, final 
 	merr := reapMetricsFile(ctx, st, target, fsys, final, &res)
 	rerr := reapResultsFile(ctx, st, target, fsys, final, &res)
 	lerr := reapLinksFile(ctx, st, target, fsys, final)
-	return res, errors.Join(merr, rerr, lerr)
+	var observationErr error
+	if merr == nil && rerr == nil && lerr == nil {
+		var output, heartbeat *int64
+		logPath := path.Join(target.Dir, "log.txt")
+		if task, err := st.GetTask(ctx, target.TaskID); err == nil && task != nil && task.LogPath != "" {
+			logPath = task.LogPath
+		}
+		if fi, err := fsys.Stat(logPath); err == nil {
+			v := fi.ModTime().Unix()
+			output = &v
+		}
+		if fi, err := fsys.Stat(workspace.ActivityPath(target.Dir)); err == nil {
+			v := fi.ModTime().Unix()
+			heartbeat = &v
+		}
+		observationErr = st.ObserveSource(ctx, target.TaskID, res.LatestStep, output, heartbeat)
+	}
+	return res, errors.Join(merr, rerr, lerr, observationErr)
 }
 
 func reapMetricsFile(ctx context.Context, st *store.Store, target Target, fsys rfs.FS, final bool, res *Result) error {
@@ -315,6 +338,7 @@ func reapMetricsFile(ctx context.Context, st *store.Store, target Target, fsys r
 		return err
 	}
 	res.MetricCount += c.result.MetricCount
+	res.LatestStep = c.result.LatestStep
 	return nil
 }
 

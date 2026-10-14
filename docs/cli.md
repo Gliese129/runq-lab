@@ -13,14 +13,13 @@ server-side). Errors say what is wrong and how to fix it, and exit non-zero.
 | `runq submit <job.yaml \| .> --dry` | Preview: expanded tasks, chosen target, rendered command (HPC: run.sh + submit line), params that reach the code only via `ctx.params`. Submits nothing |
 | `runq submit <job.yaml \| .> --json` | Submit → `{"job_id", "total_tasks"}`. `-t <target>` overrides the target (`-t` > `job.target` > `project.target`) · `-n/--note` label · `--project-file project.yaml` registers/updates the project first (also on `--dry`) · `--no-preflight` skips submit-time checks |
 | `runq kill <task_id \| job_id>` | Cancel a task, or every task of a job |
-| `runq task retry <task_id>` | Requeue a failed task (`-y` if the target config changed since submit) |
 
 ## Watch it
 
 | Command | What it does |
 |---|---|
 | `runq ps --json` | Jobs: id, status, counts, note (alias `ls`; `-t` filters by target) |
-| `runq ps <job_id> --json` | That job's tasks: status, scheduler state, queue, retry, step, elapsed, params |
+| `runq ps <job_id> --json` | That job's tasks: status, scheduler state, queue, step, elapsed, params |
 | `runq ps <job_id> --fresh --json` | Same, after forcing a scheduler probe |
 | `runq task show <task_id>` | One task as JSON: command, dirs, external id, status source, links |
 | `runq logs <task_id> --no-follow -n 200` | Last 200 log lines, then exit |
@@ -89,3 +88,21 @@ walks project → job → confirmation.
 - `runq logs` follows by default and blocks; pass `--no-follow` or `--grep`.
 - Check progress with one `runq ps <job_id> --json`; don't loop.
 - `runq clean` is irreversible; preview with `--show`.
+
+## Reusable views and consumers
+
+| Command | Purpose |
+|---|---|
+| `runq view <file.yaml|name>` | Save/render a progress or paper table |
+| `runq view <name> --json` | Rows, source freshness, attention and custom data |
+| `runq view <name> --format latex` | Export a paper table |
+| `runq view <name> --refresh` | Refresh on-demand script sources |
+| `runq view ls --json` | List saved views |
+| `runq view rm <name> --project <project>` | Remove a view |
+| `runq consumer add <job_id> <name> -- python score.py` | Prepare a manually started scorer |
+| `runq consumer ls <job_id>` | Consumer states (JSON) |
+| `runq consumer show <consumer_id>` | Identity, status and run.sh path (JSON) |
+| `runq kill <consumer_id>` | Cancel a consumer independently of tasks |
+
+Each task executes once; fix a failed task and submit a new task.
+View YAML, data contracts and manual iqrsh/tmux sessions: [views.md](views.md).

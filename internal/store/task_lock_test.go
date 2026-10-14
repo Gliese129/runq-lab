@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestTaskAttemptLockSerializesSameTask(t *testing.T) {
+func TestTaskLockSerializesSameTask(t *testing.T) {
 	st, err := Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -19,7 +19,7 @@ func TestTaskAttemptLockSerializesSameTask(t *testing.T) {
 	done := make(chan struct{})
 	var secondEntered atomic.Bool
 	go func() {
-		_ = st.WithTaskAttemptLock("task", func() error {
+		_ = st.WithTaskLock("task", func() error {
 			close(entered)
 			<-release
 			return nil
@@ -28,7 +28,7 @@ func TestTaskAttemptLockSerializesSameTask(t *testing.T) {
 	<-entered
 	go func() {
 		close(secondStarted)
-		_ = st.WithTaskAttemptLock("task", func() error {
+		_ = st.WithTaskLock("task", func() error {
 			secondEntered.Store(true)
 			return nil
 		})
@@ -37,12 +37,12 @@ func TestTaskAttemptLockSerializesSameTask(t *testing.T) {
 	<-secondStarted
 	time.Sleep(20 * time.Millisecond)
 	if secondEntered.Load() {
-		t.Fatal("same-task attempt effects overlapped")
+		t.Fatal("same-task effects overlapped")
 	}
 	close(release)
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("second same-task attempt effect did not resume")
+		t.Fatal("second same-task effect did not resume")
 	}
 }

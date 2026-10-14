@@ -120,8 +120,6 @@ func TestRejectedStillFailsPermanently(t *testing.T) {
 	fl := &fakeRemoteLauncher{launchErr: errors.New("submit t rejected (exit 255):\nqsub: invalid group")}
 	s, q, _ := newKillRaceHarness(t, fl)
 	task := seedRunningTask(t, s, q, "t-rejected")
-	task.MaxRetry = 0
-
 	s.launchAsync(task)
 
 	if got := taskStatus(t, s, task.ID); got != "failed" {

@@ -7,12 +7,8 @@ import (
 	"time"
 )
 
-// Regression tests for RQ-69: a user kill must terminate a task even when
-// it lands in the windows where no external cancel handle exists —
-// between retry attempts (pending, external_id cleared) or while the
-// remote submit is in flight (running, external_id not yet backfilled).
-// Before the ownership-flag protocol this was an unkillable resubmit loop
-// under unlimited retry (max_retry -1; 0 was "unlimited" at the time).
+// A user kill must terminate a task even when it lands while the remote
+// submit is in flight and no external cancel handle has been persisted yet.
 
 // fakeRemoteLauncher models the production remote-launcher contract.
 type fakeRemoteLauncher struct {
@@ -70,7 +66,6 @@ func seedRunningTask(t *testing.T, s *Scheduler, q *Queue, id string) *Task {
 	task := &Task{
 		ID: id, JobID: "j-" + id, ProjectName: "test",
 		Command: "true", GPUsNeeded: 1,
-		MaxRetry: -1, // unlimited retry — the RQ-69 loop precondition
 	}
 	seedJob(t, s.store, task.JobID, "test", 1)
 	seedTask(t, s.store, task)
@@ -91,9 +86,8 @@ func taskStatus(t *testing.T, s *Scheduler, id string) string {
 	return row.Status
 }
 
-// A failure verdict arriving after RequestKill must settle killed — never
-// requeue. This is the "kill during pending-retry / refused remote kill"
-// path: the flag persists until a lifecycle event can honor it.
+// A failure verdict arriving after RequestKill must settle killed. The flag
+// persists until a lifecycle event can honor it.
 func TestKillFlagSettlesFailureAsKilled(t *testing.T) {
 	fl := &fakeRemoteLauncher{}
 	s, q, _ := newKillRaceHarness(t, fl)
@@ -103,7 +97,7 @@ func TestKillFlagSettlesFailureAsKilled(t *testing.T) {
 	s.FinishTask(task, StatusFailed, map[string]any{"status_source": "probe"})
 
 	if got := taskStatus(t, s, task.ID); got != "killed" {
-		t.Fatalf("status = %q, want killed (flag must beat retry)", got)
+		t.Fatalf("status = %q, want killed (kill intent must win)", got)
 	}
 	row, err := s.store.GetTask(context.Background(), task.ID)
 	if err != nil {
@@ -113,23 +107,23 @@ func TestKillFlagSettlesFailureAsKilled(t *testing.T) {
 		t.Fatalf("status_source = %q, want authoritative runq cancellation", row.StatusSource)
 	}
 	if qt := q.Get(task.ID); qt != nil && qt.Status == StatusPending {
-		t.Fatal("task was requeued despite kill flag — unkillable loop regressed")
+		t.Fatal("task returned to pending despite kill intent")
 	}
 }
 
-// Control: without the flag, the same verdict retries (unlimited budget).
-func TestFailureWithoutKillFlagStillRetries(t *testing.T) {
+// Control: without the flag, the same verdict settles failed.
+func TestFailureWithoutKillFlagSettlesFailed(t *testing.T) {
 	fl := &fakeRemoteLauncher{}
 	s, q, _ := newKillRaceHarness(t, fl)
-	task := seedRunningTask(t, s, q, "t-retries")
+	task := seedRunningTask(t, s, q, "t-failure")
 
 	s.FinishTask(task, StatusFailed, map[string]any{"status_source": "probe"})
 
-	if got := taskStatus(t, s, task.ID); got != "pending" {
-		t.Fatalf("status = %q, want pending (retry)", got)
+	if got := taskStatus(t, s, task.ID); got != "failed" {
+		t.Fatalf("status = %q, want failed", got)
 	}
-	if qt := q.Get(task.ID); qt == nil || qt.Status != StatusPending || qt.RetryCount != 1 {
-		t.Fatalf("queue entry not requeued correctly: %+v", qt)
+	if qt := q.Get(task.ID); qt == nil || qt.Status != StatusFailed {
+		t.Fatalf("failure reopened task: %+v", qt)
 	}
 }
 
@@ -166,8 +160,7 @@ func TestKillDuringInflightSubmitCancelsLateJob(t *testing.T) {
 }
 
 // Kill must win on a transient launch failure: the submit never reached
-// the scheduler, so settling killed locally is honest — requeueing would
-// resubmit a task the user already killed.
+// the scheduler, so settling killed locally is honest.
 func TestKillWinsOnTransientLaunch(t *testing.T) {
 	fl := &fakeRemoteLauncher{launchErr: ErrLaunchTransient}
 	s, q, _ := newKillRaceHarness(t, fl)
@@ -177,10 +170,10 @@ func TestKillWinsOnTransientLaunch(t *testing.T) {
 	s.launchAsync(task)
 
 	if got := taskStatus(t, s, task.ID); got != "killed" {
-		t.Fatalf("status = %q, want killed (kill must beat transient requeue)", got)
+		t.Fatalf("status = %q, want killed (kill must beat transient failure)", got)
 	}
 	if qt := q.Get(task.ID); qt != nil && qt.Status == StatusPending {
-		t.Fatal("task requeued despite kill flag on transient failure")
+		t.Fatal("task returned to pending despite kill intent")
 	}
 }
 
@@ -220,21 +213,5 @@ func TestLateCancelFailureRetainsKillIntent(t *testing.T) {
 	s.FinishTask(task, StatusFailed, map[string]any{"status_source": "probe"})
 	if got := taskStatus(t, s, task.ID); got != "killed" {
 		t.Fatalf("status = %q, want killed (retained flag must settle the verdict)", got)
-	}
-}
-
-// Manual retry clears a stale flag: a kill refused earlier must not
-// assassinate an explicitly retried fresh attempt.
-func TestClearKillRequestProtectsManualRetry(t *testing.T) {
-	fl := &fakeRemoteLauncher{}
-	s, q, _ := newKillRaceHarness(t, fl)
-	task := seedRunningTask(t, s, q, "t-cleared")
-
-	s.RequestKill(task.ID)
-	s.ClearKillRequest(task.ID) // what the manual-retry path now does
-	s.FinishTask(task, StatusFailed, map[string]any{"status_source": "probe"})
-
-	if got := taskStatus(t, s, task.ID); got != "pending" {
-		t.Fatalf("status = %q, want pending (cleared flag must not kill)", got)
 	}
 }

@@ -133,6 +133,23 @@ def test_get_ctx_after_init(clean_env, tmp_path, monkeypatch):
     assert runq.get_ctx() is ctx
 
 
+def test_consumer_job_tasks_reads_controller_snapshot(clean_env, tmp_path, monkeypatch):
+    snapshot = {
+        "job_id": "j1",
+        "updated_at": 10,
+        "observed_at": 11,
+        "observation_state": "fresh",
+        "tasks": [{"id": "t1", "status": "success"}],
+    }
+    (tmp_path / "job.json").write_text(json.dumps(snapshot))
+    monkeypatch.setenv("RUNQ_CONSUMER_ID", "consumer-1")
+    monkeypatch.setenv("RUNQ_CONSUMER_DIR", str(tmp_path))
+
+    ctx = runq.context()
+
+    assert ctx.job_tasks() == snapshot
+
+
 # ---- dir creation ----
 
 def test_checkpoint_dir_auto_created(clean_env, tmp_path, monkeypatch):

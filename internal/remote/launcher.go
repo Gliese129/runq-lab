@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gliese129/runq-lab/internal/store"
-	"io/fs"
 	"path"
-	"regexp"
 	"strings"
 	"time"
 
@@ -18,8 +16,8 @@ import (
 
 // submitCmdFileName is the rendered submit command, persisted at submit time
 // next to run.sh. The launcher replays it verbatim, which makes launches
-// deterministic across retries — a requeued task re-runs the exact command
-// that was validated at submit time. Written 0o600: like run.sh it can embed
+// deterministic after a pre-launch transport failure: the command is the one
+// validated at submit time. Written 0o600: like run.sh it can embed
 // project environment values.
 const submitCmdFileName = "submit.cmd"
 
@@ -61,36 +59,10 @@ func (l *Launcher) Launch(ctx context.Context, t *scheduler.Task) error {
 		return fmt.Errorf("%w: read %s: %v", scheduler.ErrLaunchTransient, cmdFile, err)
 	}
 
-	// New attempt = fresh wrapper state, BEFORE the submit so the new job
-	// can't race the reset.
-	if werr := l.b.ResetWrapperState(ctx, t.TaskDir, t.ID); werr != nil {
-		return fmt.Errorf("%w: %v", scheduler.ErrLaunchTransient, werr)
-	}
-
-	// Bake the immutable attempt into the script so scheduler environment
-	// export policies cannot accidentally label every retry as attempt zero.
-	scriptPath := path.Join(t.TaskDir, "run.sh")
-	script, serr := l.b.FS.ReadFile(scriptPath)
-	if serr != nil && !errors.Is(serr, fs.ErrNotExist) {
-		return fmt.Errorf("%w: read wrapper attempt: %v", scheduler.ErrLaunchTransient, serr)
-	}
-	if serr == nil {
-		updated := regexp.MustCompile(`(?m)^_RUNQ_ATTEMPT=[0-9]+$`).ReplaceAll(script, []byte(fmt.Sprintf("_RUNQ_ATTEMPT=%d", t.RetryCount)))
-		if string(updated) != string(script) {
-			if err := l.b.FS.WriteFile(scriptPath, updated, 0755); err != nil {
-				return fmt.Errorf("%w: stamp wrapper attempt: %v", scheduler.ErrLaunchTransient, err)
-			}
-		}
-	}
-	// RQ-69: deterministic per-attempt cancel handle, known BEFORE the
-	// submit. The runqd preset's `runqd submit` adopts it as the remote task
-	// id (external_id = handle — the "submit id was lost" class dies for
-	// that lane); dialect schedulers (sbatch/qdel) ignore the variable.
-	// The attempt suffix keeps a stale verdict from a previous attempt from
-	// being attributed to this one. RetryCount is the durable attempt epoch:
-	// both automatic and explicit retries advance it before relaunch.
-	handle := attemptHandle(t.ID, t.RetryCount)
-	cmd := "export RUNQ_ATTEMPT=" + utils.ShellQuote(fmt.Sprint(t.RetryCount)) + "\n" + "export RUNQ_SUBMIT_HANDLE=" + utils.ShellQuote(handle) + "\n" + string(cmdBytes)
+	// The task ID is the durable, idempotent submission handle. A transport
+	// recovery may confirm this execution, but never reset its evidence.
+	handle := submitHandle(t.ID)
+	cmd := "export RUNQ_SUBMIT_HANDLE=" + utils.ShellQuote(handle) + "\n" + string(cmdBytes)
 
 	out, exitCode, rerr := l.b.shellRunClassified(ctx, cmd)
 	if rerr != nil {
@@ -149,9 +121,7 @@ func (l *Launcher) Launch(ctx context.Context, t *scheduler.Task) error {
 	return nil
 }
 
-func attemptHandle(taskID string, retryCount int) string {
-	return fmt.Sprintf("%s-a%d", taskID, retryCount)
-}
+func submitHandle(taskID string) string { return taskID }
 
 // compile-time interface check
 var _ scheduler.Launcher = (*Launcher)(nil)

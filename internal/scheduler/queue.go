@@ -39,8 +39,6 @@ type Task struct {
 	GPUsNeeded  int
 	GPUs        []int // legacy persisted assignment; runq-lab does not allocate it
 	Status      TaskStatus
-	RetryCount  int
-	MaxRetry    int // -1 = unlimited, 0 = no retries (zero value is safe)
 	PID         int // legacy persisted process identity owned by runqd
 	LogPath     string
 	WorkingDir  string
@@ -210,29 +208,8 @@ func (q *Queue) Complete(taskID string, status TaskStatus) error {
 	return nil
 }
 
-// Requeue moves a failed task back to pending for retry. Increments RetryCount.
-func (q *Queue) Requeue(taskID string) error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	t := q.findLocked(taskID)
-	if t == nil {
-		return fmt.Errorf("task %q not found in queue", taskID)
-	}
-	t.Status = StatusPending
-	t.RetryCount++
-	t.GPUs = nil
-	t.StartedAt = nil
-	t.FinishedAt = nil
-	// New attempt: the old external id belongs to a dead cluster job, and
-	// clearing it is what invalidates any in-flight stale verdicts.
-	t.ExternalID = ""
-	return nil
-}
-
-// RequeueTransient returns a task to pending WITHOUT consuming retry budget:
-// the launch never happened (scheduler unreachable), so this is not an
-// attempt — no count, no external id (it was never assigned).
+// RequeueTransient returns an undispatched task to pending after a transport
+// failure. No execution has started.
 func (q *Queue) RequeueTransient(taskID string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -251,44 +228,6 @@ func (q *Queue) RequeueTransient(taskID string) error {
 
 // RetryExisting updates an existing terminal task in-place for manual retry.
 // Returns false if the task is not currently in the queue.
-func (q *Queue) RetryExisting(task *Task) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	existing := q.findLocked(task.ID)
-	if existing == nil {
-		return false
-	}
-	existing.JobID = task.JobID
-	existing.ProjectName = task.ProjectName
-	existing.Command = task.Command
-	existing.Params = task.Params
-	existing.GPUsNeeded = task.GPUsNeeded
-	existing.GPUs = nil
-	existing.Status = StatusPending
-	existing.RetryCount = task.RetryCount
-	existing.MaxRetry = task.MaxRetry
-	existing.PID = 0
-	existing.LogPath = task.LogPath
-	existing.WorkingDir = task.WorkingDir
-	existing.Env = task.Env
-	existing.EnqueuedAt = time.Now()
-	existing.StartedAt = nil
-	existing.FinishedAt = nil
-	existing.Resumable = task.Resumable
-	existing.ExtraArgs = task.ExtraArgs
-	existing.UID = task.UID
-	existing.User = task.User
-	existing.Group = task.Group
-	existing.CheckpointDir = task.CheckpointDir
-	existing.TaskDir = task.TaskDir
-	existing.SweepKeys = task.SweepKeys
-	existing.JobNote = task.JobNote
-	// Manual retry reads the row AFTER external_id was cleared, so this
-	// resets the attempt identity just like Requeue does.
-	existing.ExternalID = task.ExternalID
-	return true
-}
 
 // Get returns a task by ID. Returns nil if not found.
 func (q *Queue) Get(taskID string) *Task {

@@ -2,36 +2,32 @@ package store
 
 import (
 	"encoding/json"
-	"strconv"
 	"time"
 )
 
-// TimeEvidence belongs to an execution attempt. At is a source timestamp;
+// TimeEvidence belongs to an execution. At is a source timestamp;
 // ObservedAt is the controller's receipt time and never substitutes for At.
 type TimeEvidence struct {
 	At         int64  `json:"at"`
 	Source     string `json:"source"`
 	ObservedAt int64  `json:"observed_at"`
-	Attempt    int    `json:"attempt"`
 	Estimated  bool   `json:"estimated,omitempty"`
 }
-type TaskTimeHistory map[string]map[string]TimeEvidence
+type TaskTimes map[string]TimeEvidence
 
-func ParseTaskTimes(raw string) TaskTimeHistory {
-	history := TaskTimeHistory{}
+func ParseTaskTimes(raw string) TaskTimes {
+	history := TaskTimes{}
 	_ = json.Unmarshal([]byte(raw), &history)
 	if history == nil {
-		history = TaskTimeHistory{}
+		history = TaskTimes{}
 	}
 	return history
 }
 func CurrentTaskTimes(row TaskRow) map[string]TimeEvidence {
-	return ParseTaskTimes(row.TimingJSON)[strconv.Itoa(row.RetryCount)]
+	return ParseTaskTimes(row.TimingJSON)
 }
 func TimingFields(row TaskRow, events map[string]TimeEvidence) map[string]any {
-	history := ParseTaskTimes(row.TimingJSON)
-	key := strconv.Itoa(row.RetryCount)
-	times := history[key]
+	times := ParseTaskTimes(row.TimingJSON)
 	if times == nil {
 		times = map[string]TimeEvidence{}
 	}
@@ -40,7 +36,6 @@ func TimingFields(row TaskRow, events map[string]TimeEvidence) map[string]any {
 		if e.At <= 0 {
 			continue
 		}
-		e.Attempt = row.RetryCount
 		if e.ObservedAt == 0 {
 			e.ObservedAt = time.Now().Unix()
 		}
@@ -57,8 +52,7 @@ func TimingFields(row TaskRow, events map[string]TimeEvidence) map[string]any {
 	if !changed {
 		return map[string]any{}
 	}
-	history[key] = times
-	raw, _ := json.Marshal(history)
+	raw, _ := json.Marshal(times)
 	return map[string]any{"timing_json": string(raw)}
 }
 func ControllerTime(row TaskRow, name string, now time.Time) map[string]any {

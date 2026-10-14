@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gliese129/runq-lab/internal/backend"
 	"github.com/spf13/cobra"
@@ -11,8 +12,8 @@ import (
 // ── runq kill (shortcut for task kill) ──
 
 var killCmd = &cobra.Command{
-	Use:   "kill <task_id | job_id>",
-	Short: "Kill a task or all tasks in a job",
+	Use:   "kill <task_id | job_id | consumer_id>",
+	Short: "Kill a task, consumer, or job tasks (job kill excludes consumers)",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runKill,
 }
@@ -23,6 +24,18 @@ func runKill(cmd *cobra.Command, args []string) error {
 
 	return withBackend(cmd, func(be backend.Backend) error {
 		ctx := cmd.Context()
+		if strings.HasPrefix(id, "cs") {
+			err := be.(backend.Consumers).KillConsumer(ctx, id)
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				printJSON(map[string]bool{"ok": true})
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "consumer %s cancellation requested\n", id)
+			}
+			return nil
+		}
 
 		// Prefix dispatch: try task, fall through to job — but ONLY on
 		// not-found (D21: branch on the code, never on error presence).

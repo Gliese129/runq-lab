@@ -133,7 +133,6 @@ type Backend interface {
 	// backends refresh ingest first (EnsureFresh) so the store is current.
 	JobResults(ctx context.Context, jobID string) (*JobResults, error)
 	KillTask(ctx context.Context, taskID string) error
-	RetryTask(ctx context.Context, taskID string) error
 	KillJob(ctx context.Context, jobID string) error
 
 	SubmitJob(ctx context.Context, cfg job.JobConfig, opts SubmitOptions) (jobID string, totalTasks int, err error)

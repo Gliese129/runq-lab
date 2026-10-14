@@ -39,7 +39,6 @@ params:
 # (local runqd sets CUDA_VISIBLE_DEVICES; on HPC the scheduler decides).
 defaults:
   gpus_per_task: 1
-  max_retry: 3       # 0 = no retry; -1 = unlimited retries
 
 # Optional: runs ONCE per submit, before anything is persisted (e.g. model
 # pre-download on an HPC login node). May reference FIXED params only;

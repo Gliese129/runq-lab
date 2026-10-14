@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/gliese129/runq-lab/internal/consumer"
 	"github.com/gliese129/runq-lab/internal/store"
 	"time"
 
@@ -21,20 +22,22 @@ import (
 // HF pre-download command into the project's setup command — instead of
 // re-parsing the text blob.
 type PreviewResult struct {
-	Target       string           `json:"target"`
-	TargetSource string           `json:"target_source"`
-	SyncPending  bool             `json:"sync_pending,omitempty"`
-	Plan         *submitplan.Plan `json:"plan,omitempty"`
+	Consumers    []consumer.Config `json:"consumers,omitempty"`
+	Target       string            `json:"target"`
+	TargetSource string            `json:"target_source"`
+	SyncPending  bool              `json:"sync_pending,omitempty"`
+	Plan         *submitplan.Plan  `json:"plan,omitempty"`
 
 	Preview   string           `json:"preview"`
 	Preflight preflight.Report `json:"preflight"`
 }
 
 type JobSummary struct {
-	Stale   bool   `json:"stale"`
-	ID      string `json:"id"`
-	Project string `json:"project"`
-	Note    string `json:"note"`
+	Consumers map[string]int `json:"consumers"`
+	Stale     bool           `json:"stale"`
+	ID        string         `json:"id"`
+	Project   string         `json:"project"`
+	Note      string         `json:"note"`
 	// Status: pending / running / paused while live; done / failed /
 	// partial / killed once terminal (see store.TerminalJobStatus).
 	Status       string         `json:"status"`
@@ -66,12 +69,13 @@ type WandbInfo struct {
 }
 
 type JobDetail struct {
-	Capabilities *Capabilities   `json:"capabilities,omitempty"`
-	Job          JobSummary      `json:"job"`
-	Tasks        []TaskView      `json:"tasks"`
-	MetricKeys   []string        `json:"metric_keys"`
-	Wandb        *WandbInfo      `json:"wandb,omitempty"`
-	Config       json.RawMessage `json:"config,omitempty"` // raw JobConfig (re-run as template)
+	Consumers    []consumer.Consumer `json:"consumers"`
+	Capabilities *Capabilities       `json:"capabilities,omitempty"`
+	Job          JobSummary          `json:"job"`
+	Tasks        []TaskView          `json:"tasks"`
+	MetricKeys   []string            `json:"metric_keys"`
+	Wandb        *WandbInfo          `json:"wandb,omitempty"`
+	Config       json.RawMessage     `json:"config,omitempty"` // raw JobConfig (re-run as template)
 	// DataDir is the job's workspace directory (RQ2-1 §F: the Data tab's
 	// fs/list root). ABSOLUTE path with TARGET semantics — it only means
 	// something on the filesystem of job.target; pair it with that target
@@ -102,11 +106,8 @@ type TaskView struct {
 	TimeEstimated  bool                          `json:"time_estimated,omitempty"`
 	QueueEstimated bool                          `json:"queue_estimated,omitempty"`
 	Times          map[string]store.TimeEvidence `json:"times,omitempty"`
-	TimeHistory    store.TaskTimeHistory         `json:"time_history,omitempty"`
 	ElapsedSec     *float64                      `json:"elapsed_seconds,omitempty"`
 	ExitCode       *int                          `json:"exit_code,omitempty"`
-	RetryCount     int                           `json:"retry_count"`
-	MaxRetry       int                           `json:"max_retry"`
 	GPUs           string                        `json:"gpus,omitempty"`
 	WandbRunID     string                        `json:"wandb_run_id,omitempty"`
 	// Links the task reported via SDK runq.link(name, url), e.g. "wandb" →

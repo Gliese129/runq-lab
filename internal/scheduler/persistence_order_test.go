@@ -30,38 +30,38 @@ func TestMarkUnknownPersistenceFailureLeavesQueueRunning(t *testing.T) {
 	}
 }
 
-func TestAutomaticRetryPersistenceFailureLeavesQueueRunning(t *testing.T) {
+func TestFailurePersistenceErrorLeavesQueueRunning(t *testing.T) {
 	s, q, _ := newKillRaceHarness(t, &fakeRemoteLauncher{})
-	task := seedRunningTask(t, s, q, "t-retry-persist-fail")
+	task := seedRunningTask(t, s, q, "t-failure-persist-fail")
 	s.slots.Reserve(task.ID)
 	if _, err := s.store.DB().Exec(`
-		CREATE TRIGGER fail_retry BEFORE UPDATE OF retry_count ON tasks
-		WHEN NEW.retry_count > OLD.retry_count
-		BEGIN SELECT RAISE(ABORT, 'injected retry write failure'); END;
+		CREATE TRIGGER fail_terminal BEFORE UPDATE OF status ON tasks
+		WHEN NEW.status = 'failed'
+		BEGIN SELECT RAISE(ABORT, 'injected terminal write failure'); END;
 	`); err != nil {
 		t.Fatalf("create trigger: %v", err)
 	}
 
 	s.FinishTask(task, StatusFailed, nil)
 
-	if got := q.Get(task.ID); got == nil || got.Status != StatusRunning || got.RetryCount != 0 {
-		t.Fatalf("queue requeued despite failed persistence: %+v", got)
+	if got := q.Get(task.ID); got == nil || got.Status != StatusRunning {
+		t.Fatalf("queue advanced despite failed persistence: %+v", got)
 	}
 	row, err := s.store.GetTask(context.Background(), task.ID)
 	if err != nil {
 		t.Fatalf("get task: %v", err)
 	}
-	if row.Status != "pending" || row.RetryCount != 0 {
-		t.Fatalf("durable retry changed despite rollback: status=%q retry=%d", row.Status, row.RetryCount)
+	if row.Status != "pending" {
+		t.Fatalf("durable task changed despite rollback: status=%q", row.Status)
 	}
 	if s.slots.FreeCount() != 0 {
-		t.Fatal("submission slot released despite failed retry persistence")
+		t.Fatal("submission slot released despite failed terminal persistence")
 	}
 }
 
-func TestAutomaticRetryCarriesCompleteAttemptFence(t *testing.T) {
+func TestFailureCarriesCompleteExecutionFence(t *testing.T) {
 	s, q, _ := newKillRaceHarness(t, &fakeRemoteLauncher{})
-	task := seedRunningTask(t, s, q, "t-retry-fence")
+	task := seedRunningTask(t, s, q, "t-failure-fence")
 	if err := s.store.UpdateTaskStatus(context.Background(), task.ID, "running", map[string]any{
 		"status_source":     "scheduler",
 		"external_id":       "attempt-0",
@@ -79,8 +79,8 @@ func TestAutomaticRetryCarriesCompleteAttemptFence(t *testing.T) {
 	store.FenceTaskStatusUpdate(extra, *loaded)
 
 	// A stronger concurrent verdict wins durably while this failure remains
-	// queued in the stale scheduler view. The failed→pending reducer must keep
-	// the full fence and therefore must not reopen the terminal row.
+	// queued in the stale scheduler view. The fence must prevent the stale
+	// failure from overwriting the terminal row.
 	if err := s.store.UpdateTaskStatus(context.Background(), task.ID, "success", map[string]any{
 		"status_source": "wrapper",
 	}); err != nil {
@@ -92,17 +92,17 @@ func TestAutomaticRetryCarriesCompleteAttemptFence(t *testing.T) {
 	if err != nil || row == nil {
 		t.Fatalf("read winner: %v", err)
 	}
-	if row.Status != "success" || row.RetryCount != 0 {
-		t.Fatalf("stale automatic retry reopened winner: %#v", row)
+	if row.Status != "success" {
+		t.Fatalf("stale failure overwrote winner: %#v", row)
 	}
 	if got := q.Get(task.ID); got == nil || got.Status != StatusRunning {
 		t.Fatalf("queue advanced after rejected stale transition: %+v", got)
 	}
 }
 
-func TestAutomaticRetryClearsPriorAttemptEvidence(t *testing.T) {
+func TestFailurePreservesExecutionIdentity(t *testing.T) {
 	s, q, _ := newKillRaceHarness(t, &fakeRemoteLauncher{})
-	task := seedRunningTask(t, s, q, "t-retry-clean")
+	task := seedRunningTask(t, s, q, "t-failure-identity")
 	if err := s.store.UpdateTaskStatus(context.Background(), task.ID, "running", map[string]any{
 		"status_source":     "scheduler",
 		"external_id":       "attempt-0",
@@ -122,14 +122,14 @@ func TestAutomaticRetryClearsPriorAttemptEvidence(t *testing.T) {
 
 	row, err := s.store.GetTask(context.Background(), task.ID)
 	if err != nil || row == nil {
-		t.Fatalf("read retry: %v", err)
+		t.Fatalf("read failure: %v", err)
 	}
-	if row.Status != "pending" || row.RetryCount != 1 || row.StatusSource != "" ||
-		row.ExternalID != "" || row.NativeState != "" || row.Queue != "" {
-		t.Fatalf("fresh retry retained prior-attempt evidence: %#v", row)
+	if row.Status != "failed" || row.StatusSource != "wrapper" ||
+		row.ExternalID != "attempt-0" || row.NativeState != "" || row.Queue != "gpu" {
+		t.Fatalf("failure lost execution evidence: %#v", row)
 	}
-	if got := q.Get(task.ID); got == nil || got.Status != StatusPending || got.RetryCount != 1 {
-		t.Fatalf("queue retry = %+v", got)
+	if got := q.Get(task.ID); got == nil || got.Status != StatusFailed {
+		t.Fatalf("queue failure = %+v", got)
 	}
 }
 
@@ -347,7 +347,7 @@ func TestTerminalPersistenceFailureRetainsSubmissionSlot(t *testing.T) {
 	pool := testPool(1)
 	task := &Task{
 		ID: "t-terminal-persist-fail", JobID: "j-terminal-persist-fail", ProjectName: "test",
-		Command: "submit", GPUsNeeded: 1, MaxRetry: 0, Status: StatusRunning,
+		Command: "submit", GPUsNeeded: 1, Status: StatusRunning,
 	}
 	seedJob(t, st, task.JobID, task.ProjectName, 1)
 	seedTask(t, st, task)
@@ -376,10 +376,9 @@ func TestTerminalPersistenceFailureRetainsSubmissionSlot(t *testing.T) {
 	}
 }
 
-func TestAutomaticRetryRetainsCompletedAttemptTimes(t *testing.T) {
+func TestFailureRetainsExecutionTimes(t *testing.T) {
 	s, q, _ := newKillRaceHarness(t, &fakeRemoteLauncher{})
-	task := seedRunningTask(t, s, q, "t-time-retry")
-	task.MaxRetry = 1
+	task := seedRunningTask(t, s, q, "t-failure-times")
 	row, err := s.store.GetTask(context.Background(), task.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -390,7 +389,7 @@ func TestAutomaticRetryRetainsCompletedAttemptTimes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.RetryCount != 1 || len(store.CurrentTaskTimes(*row)) != 0 || store.ParseTaskTimes(row.TimingJSON)["0"]["execution_finished_at"].At != 101 {
-		t.Fatalf("retry timing history lost: %+v", row)
+	if store.CurrentTaskTimes(*row)["execution_finished_at"].At != 101 {
+		t.Fatalf("failure timing evidence lost: %+v", row)
 	}
 }

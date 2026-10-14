@@ -86,7 +86,6 @@ type PlannedTask struct {
 	Params        job.TaskParams    `json:"params"`
 	Env           map[string]string `json:"env"`
 	GPUsNeeded    int               `json:"gpus_needed"`
-	MaxRetry      int               `json:"max_retry"`
 	Timeout       int               `json:"timeout"`
 	LogPath       string            `json:"log_path"`
 	WorkingDir    string            `json:"working_dir"`
@@ -214,6 +213,17 @@ func resolveEnvFile(proj *project.Config, fsys rfs.FS) (string, error) {
 // backend-neutral plan. It has no persistent side effects: no workspace
 // creation, no DB writes, no scheduler/queue interaction.
 func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps) (Plan, error) {
+	names := map[string]bool{}
+	for _, c := range cfg.Consumers {
+		if err := c.Validate(); err != nil {
+			return Plan{}, err
+		}
+		if names[c.Name] {
+			return Plan{}, fmt.Errorf("duplicate consumer name %q", c.Name)
+		}
+		names[c.Name] = true
+	}
+
 	if proj == nil {
 		return Plan{}, fmt.Errorf("project config is nil")
 	}
@@ -236,23 +246,14 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 	}
 
 	gpusPerTask := proj.Defaults.GPUsPerTask
-	maxRetry := proj.Defaults.MaxRetry
 	if cfg.Overrides != nil {
 		if cfg.Overrides.GPUsPerTask != nil {
 			gpusPerTask = *cfg.Overrides.GPUsPerTask
 		}
-		if cfg.Overrides.MaxRetry != nil {
-			maxRetry = *cfg.Overrides.MaxRetry
-		}
+
 	}
 	if gpusPerTask < 0 {
 		gpusPerTask = 0
-	}
-	// Contract boundary: only -1 means unlimited. Validated AFTER the
-	// override merge so a hand-written job.yaml can't smuggle an arbitrary
-	// negative past a clean project config.
-	if err := project.ValidateRetryBounds(maxRetry); err != nil {
-		return Plan{}, err
 	}
 
 	var timeoutSec int
@@ -381,7 +382,6 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 			Params:        params,
 			Env:           cloneEnv(env),
 			GPUsNeeded:    gpusPerTask,
-			MaxRetry:      maxRetry,
 			Timeout:       timeoutSec,
 			LogPath:       posixpath.Join(d.Paths.LogRoot, taskID+".log"),
 			WorkingDir:    proj.WorkingDir,

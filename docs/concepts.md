@@ -103,7 +103,7 @@ The embedded web dashboard (`runq-dashboard` build) provides:
 - Job and task tables with real-time status
 - Parameter sweep visualization
 - Metric charts and comparison
-- Stop, retry and archive/restore operations
+- Stop and archive/restore operations
 - On-demand paginated archived history
 - Local display preferences; configuration and submission use files/CLI
 
@@ -128,6 +128,6 @@ See [sdk_reference.md](./sdk_reference.md) for the full API.
 setup. `queue_seconds` measures scheduler waiting; `scheduler_seconds` measures
 resource allocation when native timestamps are available. Unknown values stay
 absent; a zero-second execution is valid. An `≈` marks estimates. Task detail
-includes UTC timestamp evidence, its source/observation time and attempt history.
+includes UTC timestamp evidence, its source/observation time for the execution.
 Retries retain history and begin a fresh execution interval. Legacy database
 `started_at` values alone do not establish an execution start.

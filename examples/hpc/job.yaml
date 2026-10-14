@@ -26,4 +26,4 @@ sweep:
       h_rt: ["4:00:00", "2:00:00", "1:00:00"]
 
 # Everything not listed here uses the catalog defaults from project.yaml
-# (num_shots=5, node_kind=node_q, 1 GPU, retry 2).
+# (num_shots=5, node_kind=node_q, 1 GPU).

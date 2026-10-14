@@ -4,7 +4,7 @@ One codebase has one project; each experiment has its own job file.
 
 - **project.yaml** holds the code directory, source/default target and stable execution defaults.
 - **job.yaml** holds the experiment's command, optional target/preflight overrides and parameters.
-- The dashboard reads locally recorded state and results, with stop, retry and archive operations.
+- The dashboard reads locally recorded state and results, with stop and archive operations.
   Configure and submit with files and the CLI.
 
 Execution target: **explicit `-t` > job.target > project.target**.
@@ -32,7 +32,6 @@ params:                         # optional submission constraints
 
 defaults:
   gpus_per_task: 1
-  max_retry: 3                  # 0 = no retry; -1 = unlimited
 
 setup_command: hf download {{base_model}}   # optional; runs ONCE per submit,
                                 # before anything is persisted; may reference
@@ -165,7 +164,6 @@ sweep:                          # a LIST of blocks; blocks combine via
 
 overrides:                      # optional per-job overrides of project defaults
   gpus_per_task: 4
-  max_retry: 0
   env:
     WANDB_RUN_GROUP: sweep-v2
 ```
@@ -208,3 +206,10 @@ resolve against `working_dir`) — only do that for a single-task job or a
 deliberately shared directory. runq creates and permission-checks the
 directories on the target before submitting. `runq clean` deletes task
 directories only; overridden paths outside them survive.
+
+## Views and consumers
+
+Views are project-scoped YAML files saved with `runq view <file.yaml>`. Job YAML
+accepts `consumers: [{name: scorer, command: python score.py}]`; submit prepares
+launch files for manual execution in a user/agent-managed session. See
+[views.md](views.md). Each task ID executes once; reruns are new submissions.

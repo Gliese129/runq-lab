@@ -185,72 +185,59 @@ func TestPreHandoffSubmittingSkipsAllIngestionVariants(t *testing.T) {
 			},
 		},
 	}
-	phases := []struct {
-		name   string
-		source string
-	}{
-		{name: "retry_reset_intent", source: "retry"},
-		{name: "scheduler_dispatch_intent", source: "submit"},
-	}
 	for _, variant := range variants {
-		for _, phase := range phases {
-			t.Run(variant.name+"/"+phase.name, func(t *testing.T) {
-				st, err := store.Open(":memory:")
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { _ = st.Close() })
-				dir := t.TempDir()
-				jobID, taskID := seedTask(t, st, dir, "failed", SourceWrapper)
-				if err := st.BeginTaskRetry(context.Background(), taskID, 0, "gen-next"); err != nil {
-					t.Fatalf("begin retry: %v", err)
-				}
-				if phase.source == "submit" {
-					if err := st.UpdateTaskStatus(context.Background(), taskID, "submitting", map[string]any{
-						"status_source": "submit",
-					}); err != nil {
-						t.Fatalf("publish dispatch intent: %v", err)
-					}
-				}
-				writeFile(t, filepath.Join(dir, statusFileName),
-					`{"status":"failed","exit_code":1,"finished_at":1730000000}`)
-				writeFile(t, filepath.Join(dir, "metrics.jsonl"),
-					"{\"type\":\"metric\",\"key\":\"old_loss\",\"value\":9,\"step\":1,\"ts\":1}\n")
-				writeFile(t, filepath.Join(dir, "results.jsonl"),
-					"{\"ts\":1,\"axes\":{\"attempt\":\"old\"},\"metrics\":{\"score\":9}}\n")
+		t.Run(variant.name, func(t *testing.T) {
+			st, err := store.Open(":memory:")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = st.Close() })
+			dir := t.TempDir()
+			jobID, taskID := seedTask(t, st, dir, "pending", "")
+			if err := st.UpdateTaskStatus(context.Background(), taskID, "submitting", map[string]any{
+				"status_source": "submit",
+				"external_id":   nil,
+			}); err != nil {
+				t.Fatalf("publish dispatch intent: %v", err)
+			}
+			writeFile(t, filepath.Join(dir, statusFileName),
+				`{"status":"failed","exit_code":1,"finished_at":1730000000}`)
+			writeFile(t, filepath.Join(dir, "metrics.jsonl"),
+				"{\"type\":\"metric\",\"key\":\"old_loss\",\"value\":9,\"step\":1,\"ts\":1}\n")
+			writeFile(t, filepath.Join(dir, "results.jsonl"),
+				"{\"ts\":1,\"axes\":{\"source\":\"old\"},\"metrics\":{\"score\":9}}\n")
 
-				b := &Backend{Cfg: &config.TargetConfig{}, Store: st, FS: newTestFSFromRunner(nopRunner)}
-				if err := variant.run(context.Background(), b, jobID); err != nil {
-					t.Fatalf("reconcile: %v", err)
+			b := &Backend{Cfg: &config.TargetConfig{}, Store: st, FS: newTestFSFromRunner(nopRunner)}
+			if err := variant.run(context.Background(), b, jobID); err != nil {
+				t.Fatalf("reconcile: %v", err)
+			}
+			got, err := st.GetTask(context.Background(), taskID)
+			if err != nil || got == nil {
+				t.Fatalf("get task: %v", err)
+			}
+			if got.Status != "submitting" || got.StatusSource != "submit" {
+				t.Fatalf("old status evidence changed pre-handoff intent: %#v", got)
+			}
+			var summaries, results, metricMarks, fileMarks int
+			for _, check := range []struct {
+				name string
+				dest *int
+				q    string
+			}{
+				{"summaries", &summaries, `SELECT COUNT(*) FROM metric_summary WHERE task_id = ?`},
+				{"results", &results, `SELECT COUNT(*) FROM result_records WHERE task_id = ?`},
+				{"metric marks", &metricMarks, `SELECT COUNT(*) FROM metrics_ingest WHERE task_id = ?`},
+				{"file marks", &fileMarks, `SELECT COUNT(*) FROM file_ingest WHERE task_id = ?`},
+			} {
+				if err := st.DB().QueryRow(check.q, taskID).Scan(check.dest); err != nil {
+					t.Fatalf("count %s: %v", check.name, err)
 				}
-				got, err := st.GetTask(context.Background(), taskID)
-				if err != nil || got == nil {
-					t.Fatalf("get task: %v", err)
-				}
-				if got.Status != "submitting" || got.StatusSource != phase.source || got.RetryCount != 1 {
-					t.Fatalf("old status evidence changed pre-handoff intent: %#v", got)
-				}
-				var summaries, results, metricMarks, fileMarks int
-				for _, check := range []struct {
-					name string
-					dest *int
-					q    string
-				}{
-					{"summaries", &summaries, `SELECT COUNT(*) FROM metric_summary WHERE task_id = ?`},
-					{"results", &results, `SELECT COUNT(*) FROM result_records WHERE task_id = ?`},
-					{"metric marks", &metricMarks, `SELECT COUNT(*) FROM metrics_ingest WHERE task_id = ?`},
-					{"file marks", &fileMarks, `SELECT COUNT(*) FROM file_ingest WHERE task_id = ?`},
-				} {
-					if err := st.DB().QueryRow(check.q, taskID).Scan(check.dest); err != nil {
-						t.Fatalf("count %s: %v", check.name, err)
-					}
-				}
-				if summaries != 0 || results != 0 || metricMarks != 0 || fileMarks != 0 {
-					t.Fatalf("pre-handoff evidence was ingested: summaries=%d results=%d metric_marks=%d file_marks=%d",
-						summaries, results, metricMarks, fileMarks)
-				}
-			})
-		}
+			}
+			if summaries != 0 || results != 0 || metricMarks != 0 || fileMarks != 0 {
+				t.Fatalf("pre-handoff evidence was ingested: summaries=%d results=%d metric_marks=%d file_marks=%d",
+					summaries, results, metricMarks, fileMarks)
+			}
+		})
 	}
 }
 

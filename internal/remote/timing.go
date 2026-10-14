@@ -13,11 +13,11 @@ func observationTimeFields(tk store.TaskRow, sf statusFile, pr ProbeResult) map[
 			events[name] = store.TimeEvidence{At: at, Source: source, ObservedAt: time.Now().Unix(), Estimated: estimated}
 		}
 	}
-	if sf.TimeVersion == 1 && sf.Attempt != nil && *sf.Attempt == tk.RetryCount {
+	if sf.TimeVersion == 1 {
 		add("wrapper_started_at", sf.WrapperStartedAt, "wrapper", false)
 		add("execution_started_at", sf.ExecutionStartedAt, "wrapper", false)
 		add("execution_finished_at", sf.ExecutionFinishedAt, "wrapper", false)
-	} else if sf.TimeVersion == 0 && tk.RetryCount == 0 {
+	} else if sf.TimeVersion == 0 {
 		// The old wrapper timestamp is near the command entrance, but cannot
 		// distinguish setup/cd/sidecar overhead. Keep its uncertainty explicit.
 		add("execution_started_at", sf.StartedAt, "legacy_wrapper", true)
@@ -35,11 +35,4 @@ func (b *Backend) applyTimeOnly(ctx context.Context, tk store.TaskRow, fields ma
 		return nil
 	}
 	return b.persistDecision(ctx, tk, Decision{Status: tk.Status, Source: tk.StatusSource}, fields)
-}
-
-func statusForAttempt(tk store.TaskRow, sf statusFile) statusFile {
-	if sf.TimeVersion == 1 && (sf.Attempt == nil || *sf.Attempt != tk.RetryCount) {
-		return statusFile{}
-	}
-	return sf
 }

@@ -1,4 +1,4 @@
-"""Tests for runq.record — results.jsonl format, leniency semantics.
+"""Tests for runq.record — sectioned latest-result emission and leniency.
 
 record() is pure data emission: no ctx.current_step
 writeback. Its leniency doctrine (drop invalid keys individually, never
@@ -40,16 +40,49 @@ def test_record_basic_format(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
     runq.record({"math-bench": 24.8}, model="baseline-8b", step=2000)
+    runq.record({"math-bench": 25.1}, model="baseline-8b", step=4000)
     recs = _read_records(tmp_path / "runq_results.jsonl")
-    assert len(recs) == 1
+    assert len(recs) == 2
     r = recs[0]
     assert r["metrics"] == {"math-bench": 24.8}
     assert r["axes"] == {"model": "baseline-8b", "step": 2000}
     assert isinstance(r["ts"], int)
+    assert r["section"].startswith("auto-")
+    assert recs[1]["section"] == r["section"]
+    assert r["section_keys"] == {"axes": ["model"], "metrics": ["math-bench"]}
     # SDK does NOT write task_id / job_id (daemon fills on reap).
     assert "task_id" not in r
     assert "job_id" not in r
     assert "type" not in r  # results.jsonl is single-purpose: no discriminator
+
+
+def test_record_explicit_section_freezes_first_schema(clean_env, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runq.context()
+    runq.record(
+        {"loss": 0.4, "score": 8},
+        section="eval",
+        model="a",
+        data="validation",
+        step=1,
+    )
+    with pytest.warns(UserWarning, match="missing keys become null, new keys are ignored"):
+        runq.record(
+            {"score": 9, "extra_metric": 10},
+            section="eval",
+            model="b",
+            extra_axis="ignored",
+            step=2,
+        )
+
+    first, second = _read_records(tmp_path / "runq_results.jsonl")
+    assert first["section_keys"] == {
+        "axes": ["data", "model"],
+        "metrics": ["loss", "score"],
+    }
+    assert second["section_keys"] == first["section_keys"]
+    assert second["axes"] == {"data": None, "model": "b", "step": 2}
+    assert second["metrics"] == {"loss": None, "score": 9.0}
 
 
 def test_record_writes_to_results_not_metrics(clean_env, tmp_path, monkeypatch):

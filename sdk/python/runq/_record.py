@@ -2,9 +2,9 @@
 
 ``record(metrics, **axes)`` is the data-plane counterpart of ``report``:
 ``report`` streams unbounded per-step training metrics (summarized on
-ingest), ``record`` emits bounded checkpoint-granularity FACTS meant to
-be stored in full and analyzed later (light-eval scores, ablation
-results). One line per call in ``results.jsonl``:
+ingest), ``record`` emits evaluation results and progress snapshots.
+The controller keeps the latest per source, section and axis identity;
+the raw file retains history. Step orders snapshots but is not identity. One line per call in ``results.jsonl``:
 
     {"ts":1700000000,"axes":{"model":"a","step":2000},"metrics":{"math":24.8}}
 
@@ -31,6 +31,8 @@ every provided key is invalid is discarded outright.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import time
 import warnings
@@ -46,6 +48,8 @@ def _coerce_scalar(value):
     be finite; numpy scalars / 0-d arrays coerce via ``.item()`` (duck
     typing — the SDK never imports numpy). Everything else fails.
     """
+    if value is None:
+        return True, None
     if isinstance(value, (str, bool)):
         return True, value
     if hasattr(value, "item") and not isinstance(value, (int, float)):
@@ -69,17 +73,21 @@ def _coerce_metric(value):
     ok, v = _coerce_scalar(value)
     if not ok or isinstance(v, str):
         return False, None
-    return True, float(v)
+    return True, None if v is None else float(v)
 
 
-def record(metrics: dict | None = None, **axes) -> None:
-    """Record one result row (eval score, ablation datapoint) in full.
+def record(metrics: dict | None = None, *, section: str | None = None, **axes) -> None:
+    """Record one result or progress snapshot.
 
     Parameters
     ----------
     metrics :
         Mapping of metric name → finite number. ``None`` (or ``{}``) is
         legal — the record then carries axes only.
+    section :
+        Explicit section name, or a hash of the axis and metric key names.
+        First keys are frozen: missing keys become null, extra keys warn and
+        are ignored. Step is excluded from the signature.
     **axes :
         Identity / coordinate keys for this datapoint, e.g.
         ``model="baseline-8b"``, ``step=2000``, ``data="dclm"``. Values
@@ -142,6 +150,53 @@ def record(metrics: dict | None = None, **axes) -> None:
     if "step" not in axes and ctx.current_step is not None:
         kept_axes["step"] = ctx.current_step
 
-    _append_result(
-        {"ts": int(time.time()), "axes": kept_axes, "metrics": kept_metrics}
-    )
+    axis_keys = sorted(k for k in kept_axes if k != "step")
+    metric_keys = sorted(kept_metrics)
+    signature = [axis_keys, metric_keys]
+    if section is None:
+        raw = json.dumps(signature, separators=(",", ":"), ensure_ascii=False)
+        section = "auto-" + hashlib.sha1(raw.encode()).hexdigest()[:8]
+    elif not isinstance(section, str) or not section.strip():
+        warnings.warn("runq.record: section must be a non-empty string", stacklevel=2)
+        return
+    if not hasattr(ctx, "_record_schemas"):
+        ctx._record_schemas = {}
+        ctx._record_warnings = set()
+        # A restarted writer must preserve the source's first schema.
+        if ctx.results_file and ctx.results_file.exists():
+            with ctx.results_file.open(encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        old = json.loads(line)
+                        name = old.get("section")
+                        if name and name not in ctx._record_schemas:
+                            ctx._record_schemas[name] = [
+                                sorted(k for k in old.get("axes", {}) if k != "step"),
+                                sorted(old.get("metrics", {})),
+                            ]
+                    except (ValueError, TypeError):
+                        continue
+    frozen = ctx._record_schemas.setdefault(section, signature)
+    if frozen != signature:
+        warning = (section, "schema")
+        if warning not in ctx._record_warnings:
+            warnings.warn(f"runq.record: section {section!r} keys changed; missing keys become null, new keys are ignored", stacklevel=2)
+            ctx._record_warnings.add(warning)
+    if section.startswith("auto-"):
+        for other, keys in ctx._record_schemas.items():
+            if other == section:
+                continue
+            a, m = map(set, signature)
+            oa, om = map(set, keys)
+            if (a <= oa and m <= om) or (a >= oa and m >= om):
+                warning = (section, other)
+                if warning not in ctx._record_warnings:
+                    warnings.warn(f'record keys differ from section "{other}"; pass section= or write null', stacklevel=2)
+                    ctx._record_warnings.add(warning)
+    normalized_axes = {k: kept_axes.get(k) for k in frozen[0]}
+    if "step" in kept_axes:
+        normalized_axes["step"] = kept_axes["step"]
+    _append_result({"ts": int(time.time()), "section": section,
+                    "section_keys": {"axes": frozen[0], "metrics": frozen[1]},
+                    "axes": normalized_axes,
+                    "metrics": {k: kept_metrics.get(k) for k in frozen[1]}})

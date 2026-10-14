@@ -1,0 +1,219 @@
+package cli
+
+import (
+	"bytes"
+	"fmt"
+	"github.com/gliese129/runq-lab/internal/config"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/gliese129/runq-lab/internal/api"
+	"github.com/gliese129/runq-lab/internal/backend"
+	"github.com/gliese129/runq-lab/internal/store"
+	"github.com/gliese129/runq-lab/internal/views"
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+)
+
+func viewProject(cmd *cobra.Command, p *api.Proxy, name string) (string, error) {
+	project, _ := cmd.Flags().GetString("project")
+	if project != "" {
+		return project, nil
+	}
+	raw, err := os.ReadFile("project.yaml")
+	if err == nil {
+		var cfg struct {
+			Name string `yaml:"project_name"`
+		}
+		if yaml.Unmarshal(raw, &cfg) == nil && cfg.Name != "" {
+			return cfg.Name, nil
+		}
+	}
+	if name == "" {
+		return "", nil
+	}
+	list, err := p.ListViews(cmd.Context(), "")
+	if err != nil {
+		return "", err
+	}
+	matches := []string{}
+	for _, v := range list {
+		if v.Name == name {
+			matches = append(matches, v.Project)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("view %q not found; save a view file first", name)
+	}
+	return "", fmt.Errorf("view %q exists in %v; use --project", name, matches)
+}
+
+var viewCmd = &cobra.Command{Use: "view <file.yaml | name>", Short: "Render a saved research view (cached data)", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	return withBackend(cmd, func(be backend.Backend) error {
+		p := be.(*api.Proxy)
+		name := args[0]
+		var project string
+		if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
+			raw, err := os.ReadFile(name)
+			if err != nil {
+				return err
+			}
+			var spec views.Spec
+			dec := yaml.NewDecoder(bytes.NewReader(raw))
+			dec.KnownFields(true)
+			if err = dec.Decode(&spec); err != nil {
+				return err
+			}
+			flag, _ := cmd.Flags().GetString("project")
+			if flag != "" && spec.Project != "" && flag != spec.Project {
+				return fmt.Errorf("--project conflicts with file project")
+			}
+			if flag != "" {
+				spec.Project = flag
+			}
+			if spec.Project == "" {
+				spec.Project, err = viewProject(cmd, p, "")
+				if err != nil {
+					return err
+				}
+			}
+			absolute, err := filepath.Abs(name)
+			if err != nil {
+				return err
+			}
+			v := store.SavedView{Spec: spec, SourcePath: filepath.Clean(absolute), Templates: map[string]string{}}
+			for kind, file := range spec.Custom {
+				path := file
+				if !filepath.IsAbs(path) {
+					path = filepath.Join(filepath.Dir(absolute), path)
+				}
+				info, err := os.Stat(path)
+				if err != nil {
+					return err
+				}
+				if info.Size() > 256<<10 {
+					return fmt.Errorf("template %s exceeds 256 KB", file)
+				}
+				content, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				v.Templates[kind] = string(content)
+			}
+			if err = p.SaveView(cmd.Context(), v); err != nil {
+				return err
+			}
+			name = spec.Name
+			project = spec.Project
+		} else {
+			var err error
+			project, err = viewProject(cmd, p, name)
+			if err != nil {
+				return err
+			}
+		}
+		openView, _ := cmd.Flags().GetBool("open")
+		if openView {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			listen := "127.0.0.1:8077"
+			if cfg.Dashboard != nil && cfg.Dashboard.Listen != "" {
+				listen = cfg.Dashboard.Listen
+			}
+			address := "http://" + listen + "/projects/" + url.PathEscape(project) + "/views/" + url.PathEscape(name)
+			fmt.Fprintln(cmd.OutOrStdout(), address)
+			program := "xdg-open"
+			if runtime.GOOS == "darwin" {
+				program = "open"
+			}
+			return exec.CommandContext(cmd.Context(), program, address).Run()
+		}
+		jobs, _ := cmd.Flags().GetStringArray("job")
+		refresh, _ := cmd.Flags().GetBool("refresh")
+		r, err := p.RenderView(cmd.Context(), project, name, jobs, refresh)
+		if err != nil {
+			return err
+		}
+		format, _ := cmd.Flags().GetString("format")
+		jsonOut, _ := cmd.Flags().GetBool("json")
+		if jsonOut {
+			format = "json"
+		}
+		wide, _ := cmd.Flags().GetBool("wide")
+		color, _ := cmd.Flags().GetBool("latex-color")
+		text, err := views.Export(r, format, wide, color)
+		if format == "latex" || format == "markdown" {
+			saved, getErr := p.GetView(cmd.Context(), project, name)
+			if getErr != nil {
+				return getErr
+			}
+			if tpl, ok := saved.Templates[format]; ok {
+				text, err = views.RenderTemplate(tpl, format, r)
+			}
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(cmd.OutOrStdout(), text)
+		return nil
+	})
+}}
+
+func init() {
+	viewCmd.Flags().String("project", "", "Project containing the view")
+	viewCmd.Flags().StringArray("job", nil, "Use this job for this render only (repeatable)")
+	viewCmd.Flags().Bool("json", false, "Output the render API response")
+	viewCmd.Flags().Bool("wide", false, "Include source IDs and timestamps")
+	viewCmd.Flags().String("format", "text", "text, json, latex, markdown or csv")
+	viewCmd.Flags().Bool("latex-color", false, "Color baseline deltas (requires xcolor)")
+	viewCmd.Flags().Bool("open", false, "Open this view in the dashboard")
+	viewCmd.Flags().Bool("refresh", false, "Refresh on-demand script sources")
+	ls := &cobra.Command{Use: "ls", Short: "List saved views", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return withBackend(cmd, func(be backend.Backend) error {
+			p := be.(*api.Proxy)
+			project, err := viewProject(cmd, p, "")
+			if err != nil {
+				return err
+			}
+			list, err := p.ListViews(cmd.Context(), project)
+			if err != nil {
+				return err
+			}
+			jsonOut, _ := cmd.Flags().GetBool("json")
+			if jsonOut {
+				printJSON(list)
+				return nil
+			}
+			for _, v := range list {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", v.Project, v.Name, v.Title)
+			}
+			return nil
+		})
+	}}
+	ls.Flags().Bool("json", false, "Output JSON")
+	rm := &cobra.Command{Use: "rm <name>", Short: "Delete a saved view", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return withBackend(cmd, func(be backend.Backend) error {
+			p := be.(*api.Proxy)
+			project, err := viewProject(cmd, p, args[0])
+			if err != nil {
+				return err
+			}
+			return p.DeleteView(cmd.Context(), project, args[0])
+		})
+	}}
+	for _, c := range []*cobra.Command{ls, rm} {
+		c.Flags().String("project", "", "Project containing the view")
+		viewCmd.AddCommand(c)
+	}
+	viewCmd.GroupID = groupCore
+	rootCmd.AddCommand(viewCmd)
+}

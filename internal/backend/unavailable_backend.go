@@ -97,10 +97,6 @@ func (b *UnavailableBackend) KillTask(ctx context.Context, taskID string) error 
 	return b.wrap()
 }
 
-func (b *UnavailableBackend) RetryTask(ctx context.Context, taskID string) error {
-	return b.wrap()
-}
-
 func (b *UnavailableBackend) KillJob(ctx context.Context, jobID string) error {
 	return b.wrap()
 }

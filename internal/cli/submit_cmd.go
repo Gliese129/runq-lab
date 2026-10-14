@@ -6,11 +6,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/gliese129/runq-lab/internal/backend"
+	"github.com/gliese129/runq-lab/internal/consumer"
 	job2 "github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/project"
 	"github.com/gliese129/runq-lab/internal/utils"
@@ -101,21 +101,33 @@ the command line. Target precedence: -t > job.target > project.target.
 				return err
 			}
 			target, source := "", ""
+			var consumers []consumer.Consumer
 			if detail, err := be.GetJob(ctx, jobID); err == nil && detail != nil {
 				target, source = detail.Job.Target, detail.Job.TargetSource
+				consumers = detail.Consumers
 			}
 			if jsonOut {
 				printJSON(struct {
-					JobID        string `json:"job_id"`
-					TotalTasks   int    `json:"total_tasks"`
-					Target       string `json:"target,omitempty"`
-					TargetSource string `json:"target_source,omitempty"`
-				}{JobID: jobID, TotalTasks: n, Target: target, TargetSource: source})
+					Consumers    []consumer.Consumer `json:"consumers"`
+					JobID        string              `json:"job_id"`
+					TotalTasks   int                 `json:"total_tasks"`
+					Target       string              `json:"target,omitempty"`
+					TargetSource string              `json:"target_source,omitempty"`
+				}{JobID: jobID, TotalTasks: n, Target: target, TargetSource: source, Consumers: consumers})
 				return nil
 			}
 			fmt.Printf("submitted job %s (%d tasks)\n", utils.IDColor(jobID), n)
 			if target != "" {
 				fmt.Printf("target: %s (%s)\n", target, source)
+			}
+			if len(jobCfg.Consumers) > 0 {
+				list, err := be.(backend.Consumers).ListConsumers(ctx, jobID)
+				if err != nil {
+					return err
+				}
+				for _, c := range list {
+					fmt.Printf("consumer %s (%s): run on a CPU node with workspace access: bash %s\n", c.Name, c.ID, utils.ShellQuote(c.RunSH))
+				}
 			}
 			printGPUHint(ctx, be)
 
@@ -204,7 +216,7 @@ func watchJob(ctx context.Context, be backend.Backend, jobID string) error {
 				return err
 			}
 			table := tablewriter.NewTable(writer)
-			table.Header([]string{"ID", "STATUS", "GPUS", "RETRY", "SCRIPT"})
+			table.Header([]string{"ID", "STATUS", "GPUS", "SCRIPT"})
 			data := make([][]string, 0, len(detail.Tasks))
 			for _, task := range detail.Tasks {
 				duration := "-"
@@ -213,7 +225,7 @@ func watchJob(ctx context.Context, be backend.Backend, jobID string) error {
 				}
 				data = append(data, []string{
 					task.ID, task.Status, task.GPUs,
-					strconv.Itoa(task.RetryCount), duration,
+					duration,
 				})
 			}
 			if err := table.Bulk(data); err != nil {

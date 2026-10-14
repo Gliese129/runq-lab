@@ -110,11 +110,12 @@ runq logs <task_id> --no-follow -n 200
 runq logs <task_id> --grep '<regex>' -n 20
 runq results <job_id> --json          # rows written by runq.record
 runq kill <task_id|job_id>
-runq task retry <task_id>
+runq submit job.yaml --dry           # after fixing a failed task, submit a new one
 runq clean --job <job_id> --show      # preview; deletion is irreversible
 ```
 
-Every read command supports `--json`. Job ids look like `jb…`, task ids like `tk…`.
+Structured commands provide JSON output. Job IDs look like `jb…`, tasks `tk…`, consumers `cs…`.
+Reusable progress/paper tables and CPU scorers: [views and consumers](docs/views.md).
 Full reference: [docs/cli.md](./docs/cli.md)
 
 ## For agents

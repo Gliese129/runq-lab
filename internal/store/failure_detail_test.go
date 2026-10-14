@@ -6,9 +6,8 @@ import (
 	"time"
 )
 
-// RQ-74: failure_detail round-trip — the submit-rejection evidence written by
-// the scheduler must come back verbatim through GetTask/ListTasks, and a
-// requeue-style update (failure_detail: nil) must clear it.
+// Submit-rejection evidence written by the scheduler must come back verbatim
+// through GetTask/ListTasks.
 func TestFailureDetailRoundTrip(t *testing.T) {
 	s, err := Open(":memory:")
 	if err != nil {
@@ -51,19 +50,5 @@ func TestFailureDetailRoundTrip(t *testing.T) {
 	}
 	if got.StatusSource != "submit" {
 		t.Errorf("status_source = %q, want submit", got.StatusSource)
-	}
-
-	// Requeue clears the evidence: a new attempt starts clean.
-	if err := s.UpdateTaskStatus(ctx, "t1", "pending", map[string]any{
-		"failure_detail": nil,
-	}); err != nil {
-		t.Fatalf("clear failure_detail: %v", err)
-	}
-	got, err = s.GetTask(ctx, "t1")
-	if err != nil {
-		t.Fatalf("get task after clear: %v", err)
-	}
-	if got.FailureDetail != "" {
-		t.Errorf("failure_detail not cleared on requeue: %q", got.FailureDetail)
 	}
 }

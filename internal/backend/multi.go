@@ -721,7 +721,13 @@ func (m *MultiBackend) renderJobRows(ctx context.Context, jobs []store.JobRow) (
 	}
 	out := make([]JobSummary, 0, len(jobs))
 	for i := range jobs {
-		out = append(out, BuildJobSummary(jobs[i], byJob[jobs[i].ID]))
+		cs, err := m.store.ListConsumers(ctx, jobs[i].ID, "")
+		if err != nil {
+			return nil, err
+		}
+		summary := BuildJobSummary(jobs[i], byJob[jobs[i].ID])
+		summary.Consumers = consumerCounts(cs)
+		out = append(out, summary)
 	}
 	return out, nil
 }
@@ -783,6 +789,11 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 	}
 	keys, _ := m.store.MetricKeys(ctx, jobID)
 	detail := BuildJobDetail(*j, tasks, keys)
+	detail.Consumers, err = m.store.ListConsumers(ctx, j.ID, "")
+	if err != nil {
+		return nil, err
+	}
+	detail.Job.Consumers = consumerCounts(detail.Consumers)
 	for i, row := range tasks {
 		detail.Tasks[i] = m.storedTaskView(ctx, row)
 	}
@@ -1212,45 +1223,6 @@ func (m *MultiBackend) KillTask(ctx context.Context, taskID string) error {
 		return err
 	}
 	return be.KillTask(ctx, taskID)
-}
-
-// RetryTask reruns a terminal task on the target's ACTIVE lane (RQ-75):
-// a rerun is a NEW submission, so it belongs to the new generation — never
-// to the (permanently quiesced) retiring lane that owned the original run.
-// An unconfirmed cross-generation rerun is refused with
-// *GenerationChangedError so CLI/WebUI ask the human first.
-func (m *MultiBackend) RetryTask(ctx context.Context, taskID string) error {
-	return m.RetryTaskGen(ctx, taskID, false)
-}
-
-// RetryTaskGen is RetryTask with the cross-generation confirmation knob.
-func (m *MultiBackend) RetryTaskGen(ctx context.Context, taskID string, confirmGeneration bool) error {
-	m.controlMu.Lock()
-	defer m.controlMu.Unlock()
-	m.routingMu.RLock()
-	defer m.routingMu.RUnlock()
-	t, err := m.store.GetTask(ctx, taskID)
-	if err != nil {
-		return err
-	}
-	if t == nil {
-		return fmt.Errorf("task %q: %w", taskID, ErrNotFound)
-	}
-	be, err := m.resolve(t.Target)
-	if err != nil {
-		return err
-	}
-	activeGen := ""
-	if g, ok := be.(interface{ Generation() string }); ok {
-		activeGen = g.Generation()
-	}
-	if t.TargetGeneration != "" && activeGen != "" && t.TargetGeneration != activeGen && !confirmGeneration {
-		return &GenerationChangedError{TaskGeneration: t.TargetGeneration, ActiveGeneration: activeGen}
-	}
-	// BeginTaskRetry atomically stamps the active generation together with
-	// durable submitting/retry intent before wrapper reset. A failed reset
-	// therefore remains owned and recoverable by this active lane.
-	return be.RetryTask(ctx, taskID)
 }
 
 func (m *MultiBackend) KillJob(ctx context.Context, jobID string) error {

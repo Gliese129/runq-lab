@@ -119,7 +119,7 @@ func (p *Proxy) Capabilities() backend.Capabilities {
 	return backend.Capabilities{
 		GPUMap:     true,
 		LiveLog:    true,
-		Retry:      true,
+		Retry:      false,
 		StateModel: "push",
 		KillAsync:  false,
 	}
@@ -510,17 +510,6 @@ func (p *Proxy) JobResults(ctx context.Context, jobID string) (*backend.JobResul
 
 func (p *Proxy) KillTask(ctx context.Context, taskID string) error {
 	return p.do(ctx, "POST", "/api/v1/tasks/"+url.PathEscape(taskID)+"/kill", nil, nil)
-}
-
-func (p *Proxy) RetryTask(ctx context.Context, taskID string) error {
-	return p.do(ctx, "POST", "/api/v1/tasks/"+url.PathEscape(taskID)+"/retry", nil, nil)
-}
-
-// RetryTaskConfirm reruns a task ACKNOWLEDGING that its target config
-// changed since submission (RQ-75): the server restamps it to the active
-// generation and runs it under the NEW config.
-func (p *Proxy) RetryTaskConfirm(ctx context.Context, taskID string) error {
-	return p.do(ctx, "POST", "/api/v1/tasks/"+url.PathEscape(taskID)+"/retry?confirm_generation=true", nil, nil)
 }
 
 func (p *Proxy) KillJob(ctx context.Context, jobID string) error {

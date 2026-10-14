@@ -35,7 +35,7 @@ func TestWrapperTimeSurvivesShortRunSetupFailureAndTERM(t *testing.T) {
 			if err = json.Unmarshal(raw, &sf); err != nil {
 				t.Fatal(err)
 			}
-			if sf.Status != tc.status || sf.WrapperStartedAt <= 0 || sf.Attempt == nil || *sf.Attempt != 0 {
+			if sf.Status != tc.status || sf.WrapperStartedAt <= 0 {
 				t.Fatalf("bad status %s", raw)
 			}
 			if tc.executes && sf.ExecutionStartedAt <= 0 {
@@ -62,7 +62,7 @@ func TestLateTimeRepairsHardTerminalWithoutReopening(t *testing.T) {
 	defer st.Close()
 	dir := t.TempDir()
 	jobID, taskID := seedTask(t, st, dir, "success", SourceWrapper)
-	raw := []byte(`{"time_version":1,"attempt":0,"status":"failed","wrapper_started_at":100,"execution_started_at":110,"execution_finished_at":110}`)
+	raw := []byte(`{"time_version":1,"status":"failed","wrapper_started_at":100,"execution_started_at":110,"execution_finished_at":110}`)
 	if err = os.WriteFile(filepath.Join(dir, statusFileName), raw, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -81,12 +81,6 @@ func TestLateTimeRepairsHardTerminalWithoutReopening(t *testing.T) {
 	row, _ = st.GetTask(context.Background(), taskID)
 	if row.TimingJSON != before {
 		t.Fatal("repeat read changed receipt time")
-	}
-	row.RetryCount = 1
-	var sf statusFile
-	_ = json.Unmarshal(raw, &sf)
-	if len(observationTimeFields(*row, sf, ProbeResult{})) != 0 || statusForAttempt(*row, sf).Status != "" {
-		t.Fatal("old attempt reused")
 	}
 }
 

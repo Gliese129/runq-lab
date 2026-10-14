@@ -26,7 +26,7 @@ func TestRemoteWandbConfigDoesNotDependOnControllerStat(t *testing.T) {
 		}
 	}
 }
-func TestWandbPreviewPrepareAndRetryDirectoryContract(t *testing.T) {
+func TestWandbPreviewAndPrepareDirectoryContract(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")
 	if err != nil {
@@ -67,19 +67,6 @@ func TestWandbPreviewPrepareAndRetryDirectoryContract(t *testing.T) {
 	for _, dir := range []string{filepath.Join(working, "tracking"), filepath.Join(working, "results"), workspace.CheckpointsDir(row.TaskDir)} {
 		if _, err = os.Stat(dir); err != nil {
 			t.Fatal(err)
-		}
-	}
-	for _, file := range []string{filepath.Join(working, "tracking", "offline.bin"), filepath.Join(working, "results", "result.json"), filepath.Join(workspace.CheckpointsDir(row.TaskDir), "model.pt")} {
-		if err = os.WriteFile(file, []byte("retain"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err = b.ResetWrapperState(ctx, row.TaskDir, row.ID); err != nil {
-		t.Fatal(err)
-	}
-	for _, file := range []string{filepath.Join(working, "tracking", "offline.bin"), filepath.Join(working, "results", "result.json"), filepath.Join(workspace.CheckpointsDir(row.TaskDir), "model.pt")} {
-		if _, err = os.Stat(file); err != nil {
-			t.Fatalf("retry deleted %s", file)
 		}
 	}
 }
