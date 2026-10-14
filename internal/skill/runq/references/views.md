@@ -156,10 +156,24 @@ read failure must not become “all done.” The script reads outputs, writes fi
 records, and decides when to exit. It may keep waiting for later work.
 Job completion or `runq kill <job_id>` does not stop consumers.
 
-One cs ID = one execution. A permanent atomic start lock rejects duplicate starts;
-heartbeat expiry never unlocks it. Inspect host/PID when lost; confirm the old
-process has ended, then add a new consumer name/ID and explicitly reuse progress
-paths if needed. Ready/running/stopped/failed/killed/lost are independent of tasks.
+A consumer can restart under the same cs ID: rerun its existing `bash run.sh`.
+Keep its name and directory; logs/results append and `ctx.output_dir` retains the
+processed-file ledger. Persist processed task/file IDs there and resume metric
+steps from saved progress. Task single-execution rules do not apply to consumers.
+
+A fresh heartbeat from an unfinished session rejects a duplicate launch. Expiry
+alone does not prove exit: the launcher checks the old process group on the same
+host, or uses the old watcher's exit confirmation when moving hosts. If that proof
+is missing after iqrsh expires, inspect the old host/allocation. Only after verifying
+that the entire old process group ended, rerun `bash run.sh --confirm-stopped`.
+The flag cannot bypass a fresh heartbeat or locally detected live processes. Never
+use it just because the consumer is lost. Do not delete lifecycle locks or create a
+new consumer name merely to restart scoring. runq manages neither iqrsh nor tmux.
+
+Restart resets execution markers, while old watcher/exit/cancel evidence is isolated
+by an internal run token; there is no attempt history. The controller keeps watching
+terminal consumers so restarted output reaches views.
+Ready/running/stopped/failed/killed/lost are independent of tasks.
 runq sends TERM then KILL after 30 seconds using verified process identities.
 
 ## Errors → corrections
@@ -170,4 +184,4 @@ runq sends TERM then KILL after 30 seconds using verified process identities.
 - No data yet → check selected jobs, section, expected axes and consumer state.
 - Unconfirmed observation → report last observed time; inspect connection/source.
 - Failed task → read error, fix, dry-run, submit a new task; there is no task retry.
-- Lost consumer → inspect original host/PID before creating a new execution.
+- Lost consumer → inspect original host/PID/allocation; confirm the whole group ended before restarting the same run.sh.

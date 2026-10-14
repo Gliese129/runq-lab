@@ -137,7 +137,7 @@ func (b *SSHBackend) AddConsumer(ctx context.Context, id string, cfg consumer.Co
 	}
 	for _, c := range existing {
 		if c.Name == cfg.Name {
-			return nil, fmt.Errorf("consumer %q exists: runq consumer show %s; use a new name for a new execution", cfg.Name, c.ID)
+			return nil, fmt.Errorf("consumer %q exists: runq consumer show %s; restart using its existing run.sh", cfg.Name, c.ID)
 		}
 	}
 	tasks, err := b.store.ListTasks(ctx, store.TaskFilter{JobID: j.ID})
@@ -184,7 +184,7 @@ func (b *SSHBackend) AddConsumer(ctx context.Context, id string, cfg consumer.Co
 			envFile = path.Join(proj.WorkingDir, envFile)
 		}
 	}
-	script := "#!/bin/bash\nset -e\nexec >> " + utils.ShellQuote(path.Join(dir, "log.txt")) + " 2>&1\ncd " + utils.ShellQuote(proj.WorkingDir) + "\n" + (utils.EnvPrelude{EnvSetup: b.backend.Cfg.EnvSetup, EnvFile: envFile, Env: env}).Render() + "exec python3 " + utils.ShellQuote(path.Join(dir, "runner.py")) + "\n"
+	script := "#!/bin/bash\nset -e\nexec >> " + utils.ShellQuote(path.Join(dir, "log.txt")) + " 2>&1\ncd " + utils.ShellQuote(proj.WorkingDir) + "\n" + (utils.EnvPrelude{EnvSetup: b.backend.Cfg.EnvSetup, EnvFile: envFile, Env: env}).Render() + "exec python3 " + utils.ShellQuote(path.Join(dir, "runner.py")) + " \"$@\"\n"
 	fsys := rfs.WithContext(b.backend.FS, ctx)
 	if err = fsys.MkdirAll(path.Join(dir, "outputs"), 0700); err != nil {
 		return nil, err
@@ -256,7 +256,7 @@ func (b *SSHBackend) reconcileConsumers(ctx context.Context) {
 	}
 	fsys := rfs.WithContext(b.backend.FS, ctx)
 	for _, c := range list {
-		if c.Generation != b.Generation() || c.FinalIngest {
+		if c.Generation != b.Generation() {
 			continue
 		}
 		err = b.writeConsumerSnapshot(ctx, fsys, c)
@@ -274,6 +274,7 @@ func (b *SSHBackend) reconcileConsumers(ctx context.Context) {
 					c.PID = state.PID
 					c.PGID = state.PGID
 					c.PIDStart = state.PIDStart
+					c.ProcessExited = state.ProcessExited
 					c.StartedAt = state.StartedAt
 					c.FinishedAt = state.FinishedAt
 					c.LastHeartbeatAt = state.LastHeartbeatAt
@@ -283,13 +284,13 @@ func (b *SSHBackend) reconcileConsumers(ctx context.Context) {
 					c.Reason = state.Reason
 					if c.Status == "running" && c.LastHeartbeatAt != nil && time.Now().Unix()-*c.LastHeartbeatAt > 180 {
 						c.Status = "lost"
-						c.Reason = "process heartbeat expired; inspect host/pid before preparing a new consumer"
+						c.Reason = "process heartbeat expired; inspect host/pid before restarting this consumer"
 					}
 				}
 			}
 		}
 		if err == nil {
-			final := consumer.Terminal(c.Status)
+			final := consumer.Terminal(c.Status) || c.ProcessExited
 			err = ingest.ReapConsumer(ctx, b.store, c, fsys, final)
 			if err == nil {
 				c.FinalIngest = final
@@ -311,9 +312,6 @@ func (b *SSHBackend) KillConsumer(ctx context.Context, id string) error {
 	c, err := b.GetConsumer(ctx, id)
 	if err != nil {
 		return err
-	}
-	if consumer.Terminal(c.Status) {
-		return nil
 	}
 	_, stderr, code, err := b.backend.FS.Exec(ctx, "python3", path.Join(c.Dir, "runner.py"), "cancel")
 	if err != nil {

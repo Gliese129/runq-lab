@@ -30,6 +30,7 @@ type Consumer struct {
 	PID              int               `json:"pid,omitempty"`
 	PGID             int               `json:"pgid,omitempty"`
 	PIDStart         string            `json:"pid_start,omitempty"`
+	ProcessExited    bool              `json:"process_exited,omitempty"`
 	StartedAt        *int64            `json:"started_at"`
 	FinishedAt       *int64            `json:"finished_at"`
 	LastHeartbeatAt  *int64            `json:"last_heartbeat_at"`

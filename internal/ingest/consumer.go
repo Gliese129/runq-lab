@@ -17,9 +17,8 @@ func ReapConsumer(ctx context.Context, st *store.Store, c consumer.Consumer, fsy
 		if err != nil {
 			return err
 		}
-		if mark.Final {
-			continue
-		}
+		// A consumer can append again after a terminal state. Keep its byte
+		// cursor, but never treat a previous final ingest as permanent.
 		collector := resultCollector{target: Target{TaskID: c.ID, JobID: c.JobID}, path: path.Join(c.Dir, file+".jsonl")}
 		metrics := []store.ConsumerMetric{}
 		line := collector.line

@@ -160,7 +160,7 @@ or consumer instead of running it on a login node. Custom data appears under
 `data.<name>.{state,updated_at,value,error}`. Record values are rendered rows;
 report values are series; script values are the returned JSON.
 
-## Consumers: manual sessions, one execution
+## Consumers: restartable manual sessions
 
 Declare consumers in job.yaml, or add one to an existing job:
 
@@ -206,9 +206,26 @@ describe the controller's source observation. Check their age for your workload.
 Job completion and `runq kill <job_id>` never stop consumers. A script exits when
 its own work is complete. `report` and `record` from a consumer belong to its job.
 
-An atomic start lock permits exactly one execution per cs ID, with no stale-lock
-auto-unlock. To run again, confirm the prior process has ended and add a consumer
-with a new name; explicitly reference any reusable progress/output paths.
+Run the same `bash /path/to/run.sh` again after the previous session ends. The
+consumer ID, name, `ctx.output_dir` and processed-file ledger stay in place;
+logs, records and metrics append. The controller keeps observing stopped consumers
+and ingests new output after a restart. Task IDs remain single-execution.
+
+Lifecycle changes share an atomic filesystem lock. An unfinished session with a
+fresh heartbeat rejects another launch. An expired heartbeat alone is insufficient:
+on the same host, the launcher checks the original process group; on another host,
+it requires the previous watcher's exit confirmation. If the allocation ended
+before the watcher could publish that confirmation, inspect the old host/allocation
+and confirm the entire old process group has ended, then run
+`bash /path/to/run.sh --confirm-stopped`. This explicit acknowledgement cannot
+bypass a fresh heartbeat or a live process group on the current host. runq does
+not reconnect allocations or terminate an old process to make room for a new one.
+
+Each launch gets an internal run token, not a task attempt. Old watchers, exit
+records and cancellation requests cannot update the new session. Restart clears
+execution markers only; business files and ingestion offsets are retained. Persist
+processed task/file identities in `ctx.output_dir` and resume any monotonic metric
+step from that progress.
 States: ready, running, stopped (exit 0), failed, killed, lost. A watcher checks
 identity and publishes heartbeat every 60 s; >180 s without heartbeat is lost.
 Read errors mean unconfirmed observation. Python commands record exit status

@@ -165,6 +165,7 @@ the "first 128 rows done" check counted rows and never read one. Build these hab
 ## 6. Reporting to the researcher
 
 Declare a view once, then read `runq view <name>` on heartbeat; use `references/views.md` for the data contract.
+For iqrsh consumer restarts, reuse the same consumer and run.sh; follow the exit-confirmation rules in that reference. Task retry remains removed.
 
 1. Lead with the fact, then the evidence for it (task id, file and field, log line
    with its time). A short paragraph is usually enough.

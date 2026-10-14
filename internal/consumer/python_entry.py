@@ -36,6 +36,7 @@ except BaseException:
     code = 1
     raise
 finally:
-    temp = root / ("exit.json.tmp." + str(os.getpid()))
+    name = "exit." + os.environ["RUNQ_CONSUMER_RUN_ID"] + ".json"
+    temp = root / (name + ".tmp." + str(os.getpid()))
     temp.write_text(json.dumps({"exit_code": code}))
-    os.replace(temp, root / "exit.json")
+    os.replace(temp, root / name)
