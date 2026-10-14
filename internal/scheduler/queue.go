@@ -48,8 +48,6 @@ type Task struct {
 	FinishedAt  *time.Time
 
 	// Resume support
-	Resumable bool   // from project config
-	ExtraArgs string // appended to command on resume restart
 
 	// B1: task timeout (seconds); 0 = no timeout
 	Timeout int `json:"timeout,omitempty"`

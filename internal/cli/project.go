@@ -108,20 +108,16 @@ func runProjectLs(cmd *cobra.Command, args []string) error {
 		}
 
 		w := newTable()
-		fmt.Fprintf(w, "NAME\tDIR\tGPUs/TASK\tRESUME\tJOBS\n")
+		fmt.Fprintf(w, "NAME\tDIR\tGPUs/TASK\tJOBS\n")
 		for _, s := range summaries {
 			// Fetch full config for display fields not in ProjectSummary.
 			gpus := 1
-			resume := "off"
 			if cfg, err := be.GetProject(ctx, s.Name); err == nil {
 				if cfg.Defaults.GPUsPerTask > 0 {
 					gpus = cfg.Defaults.GPUsPerTask
 				}
-				if cfg.Resume.Enabled {
-					resume = "on"
-				}
 			}
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%d\n", s.Name, s.WorkDir, gpus, resume, s.JobCount)
+			fmt.Fprintf(w, "%s\t%s\t%d\t%d\n", s.Name, s.WorkDir, gpus, s.JobCount)
 		}
 		w.Flush()
 		return nil

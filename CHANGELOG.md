@@ -8,6 +8,8 @@
   max_retry configuration and retry/attempt fields from task responses. Fix and
   resubmit to create new IDs and workspaces; explicitly choose old checkpoints.
   No data backfill or retry migration is introduced.
+  The `resume:` project block went with it (it only applied to restarts) and is
+  now ignored; express a resume as a job with `fixed_params: { resume_from: … }`.
 
 - Removed `runq status` (use `runq ps <job> --fresh`), `runq job ls|show|kill`
   (use `ps` / `kill`; `job` keeps archive/unarchive), `runq project edit` and

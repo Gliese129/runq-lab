@@ -89,8 +89,6 @@ type PlannedTask struct {
 	Timeout       int               `json:"timeout"`
 	LogPath       string            `json:"log_path"`
 	WorkingDir    string            `json:"working_dir"`
-	Resumable     bool              `json:"resumable"`
-	ExtraArgs     string            `json:"extra_args"`
 	UID           int               `json:"uid"`
 	TaskDir       string            `json:"task_dir"`
 	CheckpointDir string            `json:"checkpoint_dir"`
@@ -385,8 +383,6 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 			Timeout:       timeoutSec,
 			LogPath:       posixpath.Join(d.Paths.LogRoot, taskID+".log"),
 			WorkingDir:    proj.WorkingDir,
-			Resumable:     proj.Resume.Enabled,
-			ExtraArgs:     proj.Resume.ExtraArgs,
 			UID:           callerUID,
 			TaskDir:       taskDir,
 			CheckpointDir: workspace.CheckpointsDir(taskDir),

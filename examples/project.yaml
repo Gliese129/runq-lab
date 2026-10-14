@@ -50,12 +50,6 @@ defaults:
 # never digit-first). Default: rq-{{task_id}}.
 # job_name: "{{project}}-{{task_id}}"
 
-# Resume configuration — enable only if your script supports checkpoint
-# resume. extra_args are appended when a crashed task is auto-restarted.
-resume:
-  enabled: true
-  extra_args: --resume --ckpt latest
-
 # Optional wandb integration. When present, runq writes
 # <task_dir>/wandb_config.json and the SDK folds it into ctx.wandb_like_cfg:
 #   run = wandb.init(**ctx.wandb_like_cfg); ctx.link_wandb(run)

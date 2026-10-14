@@ -30,7 +30,6 @@ func sampleConfig(t *testing.T, name string) Config {
 		WorkingDir:  dir,
 		CmdTemplate: "python train.py {{args}}",
 		Defaults:    Defaults{GPUsPerTask: 1},
-		Resume:      ResumeConfig{Enabled: true, ExtraArgs: "--resume"},
 	}
 }
 
@@ -58,9 +57,6 @@ func TestAddAndGet(t *testing.T) {
 	}
 	if got.CmdTemplate != cfg.CmdTemplate {
 		t.Errorf("cmd = %q, want %q", got.CmdTemplate, cfg.CmdTemplate)
-	}
-	if !got.Resume.Enabled {
-		t.Error("resume.enabled should be true")
 	}
 }
 

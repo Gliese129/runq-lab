@@ -595,8 +595,6 @@ func TaskRowToSchedulerTask(row *store.TaskRow) *scheduler.Task {
 		EnqueuedAt:    row.EnqueuedAt,
 		StartedAt:     dispatchAt,
 		FinishedAt:    row.FinishedAt,
-		Resumable:     row.Resumable,
-		ExtraArgs:     row.ExtraArgs,
 		Timeout:       row.Timeout,
 		UID:           row.UID,
 		TaskDir:       row.TaskDir,

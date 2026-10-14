@@ -69,7 +69,7 @@ For reusable progress and paper tables: `runq view <file.yaml|name>` — see `re
 - **project** = a code base and how it runs (`project.yaml`, registered once):
   `project_name`, `target` (where the code lives), optional `targets` (where it may
   run), `working_dir`, default `command`, `environment`, `defaults{gpus_per_task,
-  timeout}`, `resume`, `preflight`, `python_env`, `wandb`, param annotations.
+  timeout}`, `preflight`, `python_env`, `wandb`, param annotations.
 - **job** = one experiment (`job.yaml`): `project`, `note`, optional `command`,
   `target`, `preflight`, `overrides{gpus_per_task,timeout,env}`,
   `fixed_params` (same in every task) and `sweep` (`grid` = cross product,
@@ -119,7 +119,7 @@ setting visible in `--dry`, and applies it the same way to every task:
 | `mkdir -p $OUT $CKPT` | already done — `ctx.output_dir` / `ctx.checkpoint_dir` exist at start |
 | `test -f …`, `python -c 'import x'` | `preflight: { extra_run: "test -f …", imports: true, hf: [repo] }` |
 | building `--lr $LR --seed $SEED` | `fixed_params` / `sweep` + `ctx.params` |
-| choosing `--resume` | `resume: { enabled: true, extra_args: --resume }` + `ctx.checkpoint_dir` |
+| choosing `--resume` | a resume job: `fixed_params: { resume_from: <checkpoint path> }`, read with `ctx.params` |
 | rsync to another cluster | project `targets:` + `<working_dir>/.rsync` (mirrored on submit) |
 | waiting on `qstat` | `runq ps <job> --json` when there is a reason to look |
 

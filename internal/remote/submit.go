@@ -451,7 +451,6 @@ func planToTaskRow(t submitplan.PlannedTask, plan submitplan.Plan, now time.Time
 		Command: t.Command, ParamsJSON: string(paramsJSON), GPUsNeeded: t.GPUsNeeded,
 		Status: "pending", LogPath: t.LogPath,
 		WorkingDir: t.WorkingDir, EnvJSON: string(envJSON),
-		Resumable: t.Resumable, ExtraArgs: t.ExtraArgs,
 		UID: t.UID, Timeout: t.Timeout, EnqueuedAt: now,
 		TaskDir: t.TaskDir, ExternalID: extID, Target: target,
 		// RQ-75: stamp lane-generation ownership at creation — the row is

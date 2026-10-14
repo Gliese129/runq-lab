@@ -135,7 +135,6 @@ type Config struct {
 	// other → path (relative to working_dir), missing file = submit error.
 	EnvFile   *string         `yaml:"env_file,omitempty" json:"env_file,omitempty"`
 	Defaults  Defaults        `yaml:"defaults,omitempty" json:"defaults,omitempty"`
-	Resume    ResumeConfig    `yaml:"resume,omitempty" json:"resume,omitempty"`
 	PythonEnv PythonEnvConfig `yaml:"python_env,omitempty" json:"python_env,omitempty"`
 	Wandb     *WandbConfig    `yaml:"wandb,omitempty" json:"wandb,omitempty"`
 	Params    []ParamDef      `yaml:"params,omitempty" json:"params,omitempty"`
@@ -286,10 +285,4 @@ type PythonEnvConfig struct {
 	Type string `yaml:"type,omitempty" json:"type,omitempty"` // "venv", "conda", "uv", "system", "" (auto)
 	Path string `yaml:"path,omitempty" json:"path,omitempty"` // venv: relative path to venv dir (e.g. ".venv")
 	Name string `yaml:"name,omitempty" json:"name,omitempty"` // conda: environment name
-}
-
-// ResumeConfig controls whether a crashed task can resume from checkpoint.
-type ResumeConfig struct {
-	Enabled   bool   `yaml:"enabled" json:"enabled"`
-	ExtraArgs string `yaml:"extra_args,omitempty" json:"extra_args,omitempty"` // appended to cmd when resuming
 }

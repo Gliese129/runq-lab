@@ -41,10 +41,6 @@ job_name: "rq-{{task_id}}"      # HPC scheduler job name template; exposed to
                                 # submit_template as {{name}}, always sanitized
                                 # (scheduler-safe charset, never digit-first)
 
-resume:
-  enabled: true                 # only if your script supports checkpoint resume
-  extra_args: --resume --ckpt latest   # appended when a crashed task restarts
-
 # env_file: .env                # override which env file to source (default:
                                 # working_dir/.env — sourced at task start,
                                 # NEVER stored by runq; explicit environment: wins)

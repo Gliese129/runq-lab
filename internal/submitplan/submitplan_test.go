@@ -49,7 +49,6 @@ func TestBuildDeterministicPlan(t *testing.T) {
 			GPUsPerTask: 1,
 		},
 		Environment: map[string]string{"A": "project", "B": "project"},
-		Resume:      project.ResumeConfig{Enabled: true, ExtraArgs: "--resume"},
 		Wandb:       &project.WandbConfig{Project: "wandb-proj"},
 	}
 
@@ -97,9 +96,6 @@ func TestBuildDeterministicPlan(t *testing.T) {
 	}
 	if first.Env["A"] != "project" || first.Env["B"] != "override" || first.Env["C"] != "job" {
 		t.Fatalf("Env = %#v", first.Env)
-	}
-	if !first.Resumable || first.ExtraArgs != "--resume" {
-		t.Fatalf("resume fields mismatch: %+v", first)
 	}
 	if first.WorkingDir != workDir {
 		t.Fatalf("WorkingDir = %q", first.WorkingDir)
