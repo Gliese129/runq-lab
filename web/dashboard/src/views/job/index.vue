@@ -2,8 +2,7 @@
   <div v-if="detail">
     <JobHeader
       :detail="detail"
-      :top-runs="topRuns"
-      :metric-key="compareKey"
+      :swept-params="sweptParams"
       :is-poll="caps.state_model === 'poll'"
       :refreshing="refreshing"
       :killing="killing"
@@ -27,7 +26,7 @@
 
     <template v-if="tab === 'tasks'">
     <!-- Filter bar -->
-    <div class="d-flex align-center ga-2 mb-3 flex-wrap">
+    <div v-if="statusOptions.length" class="d-flex align-center ga-2 mb-3 flex-wrap">
       <!-- role=button + aria-pressed: VChip is a focusable span and already
            handles Enter/Space itself; SR users just need the toggle semantics. -->
       <v-chip
@@ -177,9 +176,9 @@ const jobLive = computed(() => ['running', 'pending'].includes(detail.value?.job
 const activityQuery = useJobActivityQuery(() => props.jobId, jobLive, () => !!detail.value)
 const lastOutput = computed<Record<string, number>>(() => {
   const out: Record<string, number> = {}
-  for (const t of activityQuery.data.value?.tasks ?? []) {
-    const ts = lastOutputTs(t.points)
-    if (ts) out[t.task_id] = ts
+  for (const series of activityQuery.data.value?.tasks ?? []) {
+    const ts = lastOutputTs(series.points)
+    if (ts) out[series.task_id] = ts
   }
   return out
 })
@@ -204,14 +203,23 @@ const statusFilter = ref(prefs.lastStatusFilter.value)
 // Task-level filter — the "done" option matches success tasks, so it uses
 // the task success dot from statusGrammar. Computed so labels follow
 // live locale switches.
-const statusOptions = computed(() => [
-  { value: '', label: t('common.all'), dot: '' },
-  { value: 'running', label: t('status.task.running'), dot: 'running' },
-  { value: 'done', label: t('common.done'), dot: 'success' },
-  { value: 'failed', label: t('status.task.failed'), dot: 'failed' },
-  { value: 'killed', label: t('status.task.killed'), dot: 'killed' },
-  { value: 'pending', label: t('status.task.pending'), dot: 'pending' },
-])
+// Only statuses that actually occur, with their counts; no chips at all
+// when every task shares one status — there is nothing to filter.
+const statusOptions = computed(() => {
+  const count = new Map<string, number>()
+  for (const task of detail.value?.tasks ?? []) {
+    const key = task.status === 'success' ? 'done' : task.status
+    count.set(key, (count.get(key) ?? 0) + 1)
+  }
+  const all = [
+    { value: 'running', label: t('status.task.running'), dot: 'running' },
+    { value: 'done', label: t('common.done'), dot: 'success' },
+    { value: 'failed', label: t('status.task.failed'), dot: 'failed' },
+    { value: 'killed', label: t('status.task.killed'), dot: 'killed' },
+    { value: 'pending', label: t('status.task.pending'), dot: 'pending' },
+  ].filter((o) => count.has(o.value)).map((o) => ({ ...o, label: `${o.label} ${count.get(o.value)}` }))
+  return all.length > 1 ? [{ value: '', label: t('common.all'), dot: '' }, ...all] : []
+})
 
 const isActiveJob = computed(() => {
   const s = detail.value?.job.status
@@ -252,7 +260,6 @@ const compareKey = computed(() => {
   return preferred && keys.includes(preferred) ? preferred : keys[0]
 })
 const compareQuery = useCompareQuery(() => props.jobId, compareKey, () => true, isActiveJob)
-const topRuns = computed(() => (compareQuery.data.value ?? []).slice(0, 3))
 
 const filteredTasks = computed(() => {
   if (!detail.value) return []

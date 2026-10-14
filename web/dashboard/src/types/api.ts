@@ -28,6 +28,8 @@ export interface JobSummary {
   id: string
   project: string
   note: string
+  /** job.yaml description — the long sentence behind the short note */
+  description?: string
   /**
    * pending | running | paused while live; done | failed | partial | killed
    * once terminal (mirrors store.TerminalJobStatus — see statusGrammar for

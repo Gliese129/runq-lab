@@ -1,151 +1,67 @@
 <template>
-  <div>
-    <!-- Header -->
-    <div class="d-flex align-center justify-space-between mb-4">
-      <div class="text-h5 font-weight-bold">{{ project }}</div>
-      <div class="d-flex ga-2">
-        <v-btn variant="text" size="small"
-          :title="projectArchived ? undefined : t('archive.project_tooltip')"
-          @click="toggleProjectArchive"
-        >
-          <v-icon start size="16">{{ projectArchived ? 'mdi-archive-arrow-up-outline' : 'mdi-archive-arrow-down-outline' }}</v-icon>
-          {{ projectArchived ? t('archive.unarchive') : t('archive.archive') }}
-        </v-btn>
-      </div>
-    </div>
-
-    <!-- Filters -->
-    <div class="d-flex align-center ga-2 mb-3 flex-wrap">
-      <!-- role=button + aria-pressed: VChip is a focusable span and already
-           handles Enter/Space itself; SR users just need the toggle semantics. -->
-      <v-chip
-        v-for="s in statusFilters"
-        :key="s.value"
-        role="button"
-        :aria-pressed="statusFilter === s.value"
-        :variant="statusFilter === s.value ? 'flat' : 'outlined'"
-        :color="statusFilter === s.value ? 'primary' : undefined"
-        size="small"
-        @click="statusFilter = statusFilter === s.value ? '' : s.value"
-      >
-        <StatusDot v-if="s.dot" :status="s.dot" :kind="s.kind" :size="6" class="mr-1" />
-        {{ s.label }}
-      </v-chip>
+  <div class="project-page">
+    <div class="d-flex align-center ga-3 mb-4">
+      <ProjectDot :project="project" :size="12" />
+      <div class="text-h6 font-weight-medium text-truncate">{{ project }}</div>
       <v-spacer />
-      <v-text-field
-        v-model="searchQuery"
-        :placeholder="t('project.search_note')"
-        prepend-inner-icon="mdi-magnify"
-        density="compact"
-        variant="outlined"
-        hide-details
-        single-line
-        clearable
-        style="max-width: 200px"
-      />
+      <v-btn variant="text" size="small" class="text-on-surface-variant"
+        :title="projectArchived ? undefined : t('archive.project_tooltip')"
+        @click="toggleProjectArchive"
+      >
+        <v-icon start size="16">{{ projectArchived ? 'mdi-archive-arrow-up-outline' : 'mdi-archive-arrow-down-outline' }}</v-icon>
+        {{ projectArchived ? t('archive.unarchive') : t('archive.archive') }}
+      </v-btn>
     </div>
 
-    <!-- Jobs table -->
-    <v-card v-if="displayedJobs.length > 0" class="pa-0">
-      <div class="overflow-x-auto">
-        <table class="data-mono" style="width: 100%">
-          <thead>
-            <tr>
-              <th style="width: 24px"></th>
-              <!-- th keeps its columnheader role (aria-sort lives there);
-                   the inner <button> supplies keyboard access and focus. -->
-              <th :aria-sort="ariaSort('id')">
-                <button type="button" class="th-sort-btn" @click="toggleSort('id')">
-                  ID {{ sortIcon('id') }}
-                </button>
-              </th>
-              <th :aria-sort="ariaSort('note')">
-                <button type="button" class="th-sort-btn" @click="toggleSort('note')">
-                  {{ t('table.note') }} {{ sortIcon('note') }}
-                </button>
-              </th>
-              <th :aria-sort="ariaSort('tasks')">
-                <button type="button" class="th-sort-btn" @click="toggleSort('tasks')">
-                  {{ t('table.tasks') }} {{ sortIcon('tasks') }}
-                </button>
-              </th>
-              <th :aria-sort="ariaSort('created_at')">
-                <button type="button" class="th-sort-btn" @click="toggleSort('created_at')">
-                  {{ t('table.created') }} {{ sortIcon('created_at') }}
-                </button>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="j in displayedJobs"
-              :key="j.id"
-              class="cursor-pointer"
-              tabindex="0"
-              role="link"
-              :aria-label="t('a11y.open_job', { id: j.id.slice(0, 8) })"
-              @click="router.push({ name: 'job-detail', params: { project, jobId: j.id } })"
-              @keydown.enter="router.push({ name: 'job-detail', params: { project, jobId: j.id } })"
-              @keydown.space.prevent="router.push({ name: 'job-detail', params: { project, jobId: j.id } })"
-            >
-              <td><StatusDot :status="j.status" kind="job" :size="14" /></td>
-              <td><code>{{ j.id.slice(0, 8) }}</code></td>
-              <td class="text-on-surface-variant">{{ j.note || '—' }}</td>
-              <td>
-                <div class="d-flex align-center ga-2">
-                  <SegmentedProgress :counts="j.tasks" :height="3" style="width: 40px" />
-                  {{ j.tasks.completed }}/{{ j.tasks.total }}
-                  <span v-if="j.tasks.failed > 0" class="text-error">· {{ t('job.n_failed', { n: j.tasks.failed }) }}</span>
-                </div>
-              </td>
-              <td class="text-on-surface-variant">{{ relativeTime(j.created_at) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </v-card>
+    <v-text-field
+      v-model="searchQuery"
+      :placeholder="t('project.search_note')"
+      prepend-inner-icon="mdi-magnify"
+      variant="solo-filled"
+      flat
+      density="comfortable"
+      hide-details
+      clearable
+      class="mb-4"
+      @keydown.esc="searchQuery = ''"
+    />
 
-    <!-- Empty state -->
-    <v-card v-else-if="!loading" class="pa-8 text-center">
-      <v-icon size="36" color="primary" class="mb-3" style="opacity: 0.4">mdi-briefcase-outline</v-icon>
+    <template v-if="groups.length">
+      <section v-for="g in groups" :key="g.bucket" class="mb-4">
+        <div class="bucket-title">{{ t('overview.bucket_' + g.bucket) }}</div>
+        <JobList :jobs="g.jobs" :common="common" :show-project="false" @open="openJob" />
+      </section>
+    </template>
+    <div v-else-if="projectJobs.length" class="empty text-body-2">{{ t('overview.no_match') }}</div>
+    <v-card v-else-if="!loading" class="pa-8 text-center" variant="flat">
       <div class="text-h6 mb-1">{{ t('project.no_jobs') }}</div>
-      <div class="text-body-2 text-on-surface-variant mb-4">{{ t('project.no_jobs_hint') }}</div>
+      <div class="text-body-2 text-on-surface-variant">{{ t('project.no_jobs_hint') }}</div>
     </v-card>
 
     <!-- Archived jobs of this project (collapsed by default) -->
-    <v-card class="mt-3">
-      <div
-        class="d-flex align-center ga-2 px-4 py-3 cursor-pointer text-on-surface-variant"
-        role="button" tabindex="0" :aria-expanded="archivedOpen"
-        @click="archivedOpen = !archivedOpen"
-        @keydown.enter="archivedOpen = !archivedOpen"
-        @keydown.space.prevent="archivedOpen = !archivedOpen"
-      >
-        <v-icon size="16">mdi-archive-outline</v-icon>
-        <span class="text-subtitle-2">{{ t('archive.jobs_history') }}</span>
-        <v-spacer />
-        <v-icon size="16">{{ archivedOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
-      </div>
-      <div v-if="archivedOpen" class="px-2 pb-2">
+    <div class="mt-6">
+      <button type="button" class="archived-toggle" :aria-expanded="archivedOpen" @click="archivedOpen = !archivedOpen">
+        <v-icon size="14">mdi-archive-outline</v-icon>
+        <span>{{ t('archive.jobs_history') }}</span>
+        <v-icon size="14">{{ archivedOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+      </button>
+      <div v-if="archivedOpen" class="mt-1">
         <div
           v-for="j in archivedJobs" :key="j.id"
-          class="d-flex align-center ga-2 px-2 py-1 rounded recent-row cursor-pointer row-focus"
+          class="d-flex align-center ga-2 px-3 py-1 rounded cursor-pointer archived-row"
           role="link" tabindex="0"
-          :aria-label="t('a11y.open_job', { id: j.id.slice(0, 10) })"
-          @click="router.push({ name: 'job-detail', params: { project: j.project, jobId: j.id } })"
-          @keydown.enter="router.push({ name: 'job-detail', params: { project: j.project, jobId: j.id } })"
-          @keydown.space.prevent="router.push({ name: 'job-detail', params: { project: j.project, jobId: j.id } })"
+          :aria-label="t('a11y.open_job', { id: j.id.slice(0, 8) })"
+          @click="openJob(j)"
+          @keydown.enter="openJob(j)"
         >
-          <code class="text-body-2">{{ j.id.slice(0, 10) }}</code>
-          <span class="text-caption text-on-surface-variant text-truncate flex-grow-1">{{ j.note || '—' }}</span>
-          <v-btn size="x-small" variant="text" @click.stop="unarchiveJob(j.id)">
-            <v-icon start size="12">mdi-archive-arrow-up-outline</v-icon> {{ t('archive.unarchive') }}
-          </v-btn>
+          <code class="archived-id">{{ j.id.slice(0, 8) }}</code>
+          <JobNote class="text-body-2 flex-grow-1" :note="j.note" :description="j.description" />
+          <v-btn size="x-small" variant="text" @click.stop="unarchiveJob(j.id)">{{ t('archive.unarchive') }}</v-btn>
         </div>
+        <v-pagination v-if="(archivedQuery.data.value?.total ?? 0) > 25"
+          v-model="archivedPage" :length="Math.ceil((archivedQuery.data.value?.total ?? 0) / 25)" density="compact" />
       </div>
-      <v-pagination v-if="archivedOpen && (archivedQuery.data.value?.total ?? 0) > 25"
-        v-model="archivedPage" :length="Math.ceil((archivedQuery.data.value?.total ?? 0) / 25)" density="compact" />
-    </v-card>
+    </div>
   </div>
 </template>
 
@@ -156,10 +72,11 @@ import { useI18n } from 'vue-i18n'
 import { useProjectStore } from '@/stores/projects'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { useJobsListQuery, useArchivedJobsQuery, useProjectJobsQuery, useJobActions } from '@/queries/useJobQueries'
-import StatusDot from '@/components/StatusDot.vue'
-import SegmentedProgress from '@/components/SegmentedProgress.vue'
+import JobList from '@/components/JobList.vue'
+import JobNote from '@/components/JobNote.vue'
+import ProjectDot from '@/components/ProjectDot.vue'
 import type { JobSummary } from '@/types/api'
-import { relativeTime } from '@/utils/relativeTime'
+import { commonWordsByProject, filterJobs, groupJobs } from './jobListView'
 
 const props = defineProps<{ project: string }>()
 const { t } = useI18n()
@@ -212,81 +129,29 @@ async function unarchiveJob(id: string) {
   } catch (e: any) { snack.error(e?.message || t('common.error')) }
 }
 
-const statusFilter = ref('')
 const searchQuery = ref('')
-const sortKey = ref('created_at')
-const sortDesc = ref(true)
-
-// Count-carrying filter chips: "x/n done · y/n failed · z/n running".
-// The chip reports MATCH COUNTS instead of pretending to be a job-status
-// taxonomy — so partial/killed jobs need no chip color of their own: the
-// backend folds killed into tasks.failed, hence every not-fully-successful
-// terminal job lands under "failed" naturally. "done" stays strict (job
-// fully succeeded). Overlap across chips (a live job can match running AND
-// failed) is inherent to contains-semantics and intended.
-function matchesFilter(j: JobSummary, f: string): boolean {
-  if (f === 'running') return j.tasks.running > 0
-  if (f === 'pending') return j.tasks.pending > 0
-  if (f === 'failed') return j.tasks.failed > 0
-  if (f === 'done') return j.status === 'done'
-  return true
-}
-
-const statusFilters = computed<{ value: string; label: string; dot: string; kind: 'task' | 'job' }[]>(() => {
-  const n = projectJobs.value.length
-  const count = (f: string) => projectJobs.value.filter(j => matchesFilter(j, f)).length
-  return [
-    { value: '', label: t('common.all'), dot: '', kind: 'task' },
-    { value: 'done', label: t('filter.count', { x: count('done'), n, s: t('status.job.done') }), dot: 'done', kind: 'job' },
-    { value: 'failed', label: t('filter.count', { x: count('failed'), n, s: t('status.task.failed') }), dot: 'failed', kind: 'task' },
-    { value: 'running', label: t('filter.count', { x: count('running'), n, s: t('status.task.running') }), dot: 'running', kind: 'task' },
-    { value: 'pending', label: t('filter.count', { x: count('pending'), n, s: t('status.task.pending') }), dot: 'pending', kind: 'task' },
-  ]
-})
 
 const projectJobs = computed(() =>
   projectArchived.value
     ? scopedJobs.value
     : (listQuery.data.value ?? []).filter(j => j.project === props.project))
 
-const displayedJobs = computed(() => {
-  let list = [...projectJobs.value]
+const common = computed(() => commonWordsByProject(projectJobs.value))
+const groups = computed(() => groupJobs(filterJobs(projectJobs.value, searchQuery.value ?? '', new Set()), new Date()))
 
-  if (statusFilter.value) {
-    // Same predicate the chip counted with — the number IS the promise.
-    list = list.filter(j => matchesFilter(j, statusFilter.value))
-  }
-
-  if (searchQuery.value) {
-    const q = searchQuery.value.toLowerCase()
-    list = list.filter(j => j.note?.toLowerCase().includes(q) || j.id.includes(q))
-  }
-
-  list.sort((a, b) => {
-    let cmp = 0
-    if (sortKey.value === 'created_at') cmp = a.created_at - b.created_at
-    else if (sortKey.value === 'tasks') cmp = a.tasks.total - b.tasks.total
-    else if (sortKey.value === 'note') cmp = (a.note || '').localeCompare(b.note || '')
-    else if (sortKey.value === 'id') cmp = a.id.localeCompare(b.id)
-    return sortDesc.value ? -cmp : cmp
-  })
-
-  return list
-})
-
-function toggleSort(key: string) {
-  if (sortKey.value === key) sortDesc.value = !sortDesc.value
-  else { sortKey.value = key; sortDesc.value = true }
-}
-
-function sortIcon(key: string): string {
-  if (sortKey.value !== key) return ''
-  return sortDesc.value ? '↓' : '↑'
-}
-
-/** aria-sort value for a sortable header (a11y). */
-function ariaSort(key: string): 'ascending' | 'descending' | 'none' {
-  if (sortKey.value !== key) return 'none'
-  return sortDesc.value ? 'descending' : 'ascending'
+function openJob(j: JobSummary) {
+  router.push({ name: 'job-detail', params: { project: j.project || props.project, jobId: j.id } })
 }
 </script>
+
+<style scoped>
+.project-page { max-width: 1040px; margin: 0 auto; }
+.bucket-title { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); padding: 0 14px 4px; }
+.empty { color: rgb(var(--v-theme-on-surface-variant)); padding: 24px 14px; }
+.archived-toggle {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  color: rgb(var(--v-theme-on-surface-variant)); background: none; border: none; cursor: pointer; padding: 4px 14px;
+}
+.archived-row:hover { background: rgb(var(--v-theme-on-surface), 0.04); }
+.archived-id { font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); background: none; }
+</style>

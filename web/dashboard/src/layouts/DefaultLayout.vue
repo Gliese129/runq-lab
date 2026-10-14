@@ -155,7 +155,7 @@
                 <template #prepend>
                   <div class="status-dot mr-2" :style="{ background: projectColor(proj.name) }" />
                 </template>
-                <v-list-item-title class="text-body-2">{{ proj.name }}</v-list-item-title>
+                <v-list-item-title class="text-body-2" :title="proj.name">{{ middleEllipsis(proj.name, 18) }}</v-list-item-title>
                 <template #append>
                   <span class="text-caption text-on-surface-variant">{{ proj.job_count }}</span>
                 </template>
@@ -189,7 +189,7 @@
             <template #prepend>
               <div class="status-dot mr-2" :style="{ background: projectColor(proj.name) }" />
             </template>
-            <v-list-item-title class="text-body-2">{{ proj.name }}</v-list-item-title>
+            <v-list-item-title class="text-body-2" :title="proj.name">{{ middleEllipsis(proj.name, 18) }}</v-list-item-title>
             <template #append>
               <span class="text-caption text-on-surface-variant">{{ proj.job_count }}</span>
             </template>
@@ -369,6 +369,8 @@ import { useProjectStore } from '@/stores/projects'
 import { useConnection } from '@/composables/useConnection'
 import { useProjectGroups } from '@/composables/useProjectGroups'
 import { groupProjects } from '@/composables/projectGroups'
+import { useProjectColors } from '@/composables/useProjectColors'
+import { middleEllipsis } from '@/utils/middleEllipsis'
 import { useGpuQuery } from '@/queries/useGpuQuery'
 import { qk } from '@/queries/keys'
 import RunqLogo from '@/components/RunqLogo.vue'
@@ -505,21 +507,8 @@ const breadcrumbs = computed(() => {
   return items
 })
 
-const PROJECT_COLORS = [
-  '#1E40AF',
-  '#16A34A',
-  '#D97706',
-  '#DC2626',
-  '#7C3AED',
-  '#0891B2',
-  '#DB2777',
-  '#65A30D',
-]
-function projectColor(name: string): string {
-  let hash = 0
-  for (let i = 0; i < name.length; i++) hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0
-  return PROJECT_COLORS[Math.abs(hash) % PROJECT_COLORS.length]
-}
+// One colour per project, shared with every job list.
+const projectColor = useProjectColors()
 
 function refreshShellData() {
   projects.fetch()

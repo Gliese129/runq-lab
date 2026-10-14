@@ -1,25 +1,30 @@
 <template>
   <v-card class="pa-0">
-    <!-- Column visibility + sort controls -->
-    <div class="d-flex align-center ga-2 pa-3 flex-wrap" style="border-bottom: 0.5px solid rgb(var(--v-theme-outline-variant))">
-      <div class="text-caption text-on-surface-variant">{{ t('table.columns') }}:</div>
-      <v-chip
-        v-for="col in availableParamCols" :key="col"
-        size="x-small"
-        :variant="visibleCols.has(col) ? 'flat' : 'outlined'"
-        :color="visibleCols.has(col) ? 'primary' : undefined"
-        @click="toggleCol(col)"
-      >{{ col }}</v-chip>
+    <!-- Column picker: swept params are shown by default; everything else
+         waits behind one button instead of a wall of chips. -->
+    <div class="d-flex align-center px-3 py-1" style="border-bottom: 0.5px solid rgb(var(--v-theme-outline-variant))">
       <v-spacer />
-      <v-chip
-        v-for="col in availableMetricCols" :key="col"
-        size="x-small"
-        :variant="visibleCols.has(col) ? 'flat' : 'outlined'"
-        :color="visibleCols.has(col) ? 'primary' : undefined"
-        @click="toggleCol(col)"
-      >
-        <v-icon start size="10">mdi-chart-line</v-icon>{{ col }}
-      </v-chip>
+      <v-menu :close-on-content-click="false" location="bottom end">
+        <template #activator="{ props: menu }">
+          <v-btn v-bind="menu" size="small" variant="text" class="text-on-surface-variant">
+            <v-icon start size="16">mdi-table-column</v-icon>{{ t('table.columns') }}
+            <span class="ml-1">{{ shownCols.length }}/{{ availableParamCols.length + availableMetricCols.length }}</span>
+          </v-btn>
+        </template>
+        <v-card class="pa-2" max-height="420" style="overflow-y: auto" min-width="220">
+          <v-checkbox
+            v-for="col in [...availableParamCols, ...availableMetricCols]" :key="col"
+            :model-value="visibleCols.has(col)"
+            density="compact" hide-details
+            @update:model-value="toggleCol(col)"
+          >
+            <template #label>
+              <v-icon v-if="availableMetricCols.includes(col)" size="12" class="mr-1">mdi-chart-line</v-icon>
+              <span :class="paramColClass(col)" class="text-body-2">{{ col }}</span>
+            </template>
+          </v-checkbox>
+        </v-card>
+      </v-menu>
     </div>
 
     <div class="overflow-x-auto">

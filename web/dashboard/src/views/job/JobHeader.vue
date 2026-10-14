@@ -1,86 +1,66 @@
 <template>
-  <v-card class="mb-4 pa-4">
-    <!-- flex-wrap: at narrow viewports (375px, or longer ja/zh labels) the
-         action group wraps onto its own line instead of overflowing past
-         the viewport edge with no scroll affordance. -->
-    <div class="d-flex align-center justify-space-between mb-3 flex-wrap ga-2">
-      <div class="d-flex align-center ga-2 flex-wrap">
-        <JobStatusBadge :status="detail.job.status" />
-        <code v-if="detail.job.target" class="text-caption">{{ detail.job.target }}<span v-if="detail.job.target_source"> ({{ detail.job.target_source }})</span></code>
-        <v-chip v-if="detail.job.stale" size="x-small" color="warning">{{ t('job.snapshot_stale') }}</v-chip>
-        <span v-if="detail.job.note" class="text-body-2 text-on-surface-variant">{{ detail.job.note }}</span>
-        <span class="text-caption text-on-surface-variant">{{ relativeTime(detail.job.created_at) }}</span>
-        <!-- Poll-model honesty: state is a snapshot, say when it was taken -->
-        <span class="d-inline-flex align-center ga-1">
-          <v-chip size="x-small" variant="text" class="text-on-surface-variant">
-            <v-icon start size="12">mdi-database-clock-outline</v-icon>
-            {{ t('job.data_as_of', { time: detail.job.refreshed_at ? relativeTime(detail.job.refreshed_at) : '—' }) }}
-          </v-chip>
-          <v-btn
-            v-if="isPoll" size="x-small" variant="text" icon
-            :loading="refreshing"
-            :aria-label="t('job.refresh')" :title="t('job.refresh')"
-            @click="$emit('refresh')"
-          ><v-icon size="14">mdi-refresh</v-icon></v-btn>
-        </span>
-      </div>
-      <div class="d-flex ga-1 flex-wrap">
-        <v-btn v-if="isActive" size="x-small" variant="tonal" color="error"
-          :loading="killing" :disabled="killing"
-          @click="$emit('kill')"
-        >
-          <v-icon start size="14">mdi-stop</v-icon> {{ t('job.kill') }}
-        </v-btn>
-        <v-btn v-if="!isActive" size="x-small" variant="text"
-          :loading="archiving" :disabled="archiving"
-          :title="detail.job.archived ? undefined : t('archive.job_tooltip')"
-          @click="toggleArchive"
-        >
-          <v-icon start size="14">{{ detail.job.archived ? 'mdi-archive-arrow-up-outline' : 'mdi-archive-arrow-down-outline' }}</v-icon>
-          {{ detail.job.archived ? t('archive.unarchive') : t('archive.archive') }}
-        </v-btn>
-      </div>
-    </div>
-
-    <!-- Stats row -->
-    <div class="d-flex flex-wrap ga-4 align-center">
-      <div v-for="s in stats" :key="s.label" class="text-center">
-        <div class="text-h6 font-weight-medium" :style="{ color: s.css }">{{ s.value }}</div>
-        <div class="text-caption text-on-surface-variant">{{ s.label }}</div>
-      </div>
+  <div class="job-head mb-4">
+    <div class="d-flex align-center ga-3">
+      <ProjectDot :project="detail.job.project" :size="12" />
+      <span class="job-title text-truncate" :title="detail.job.note">{{ detail.job.note || detail.job.id }}</span>
+      <JobStatusBadge :status="detail.job.status" />
       <v-spacer />
-      <div v-if="topRuns.length > 0" class="pa-2 rounded" style="background: rgb(var(--v-theme-success), 0.08)">
-        <div class="text-caption text-on-surface-variant mb-1">{{ t('job.top_n', { n: 3 }) }} · {{ metricKey }}</div>
-        <div class="d-flex flex-wrap ga-2">
-          <div v-for="(run, i) in topRuns" :key="run.task_id" class="d-flex align-center ga-1">
-            <v-icon v-if="i === 0" size="12" color="warning">mdi-trophy</v-icon>
-            <span class="text-body-2 font-weight-medium" :class="i === 0 ? 'text-success' : ''">
-              {{ run.best?.toPrecision(4) }}
-            </span>
-          </div>
-        </div>
-      </div>
+      <v-btn
+        v-if="isPoll" size="small" variant="text" icon
+        :loading="refreshing" :aria-label="t('job.refresh')" :title="t('job.refresh')"
+        @click="$emit('refresh')"
+      ><v-icon size="18">mdi-refresh</v-icon></v-btn>
+      <v-btn v-if="isActive" size="small" variant="tonal" color="error"
+        :loading="killing" :disabled="killing" @click="$emit('kill')"
+      >{{ t('job.kill') }}</v-btn>
+      <v-menu location="bottom end">
+        <template #activator="{ props: menu }">
+          <v-btn v-bind="menu" size="small" variant="text" icon :aria-label="t('groups.group_menu')">
+            <v-icon size="18">mdi-dots-horizontal</v-icon>
+          </v-btn>
+        </template>
+        <v-list density="compact">
+          <v-list-item @click="copyId">
+            <v-list-item-title class="text-body-2">{{ t('job.copy_id') }}</v-list-item-title>
+          </v-list-item>
+          <v-list-item v-if="!isActive" :disabled="archiving" @click="toggleArchive">
+            <v-list-item-title class="text-body-2">
+              {{ detail.job.archived ? t('archive.unarchive') : t('archive.archive') }}
+            </v-list-item-title>
+          </v-list-item>
+        </v-list>
+      </v-menu>
     </div>
 
-    <!-- Failed hints -->
-    <div v-if="failedCount > 0" class="mt-2 pa-2 rounded" style="background: rgb(var(--v-theme-error), 0.06)">
-      <div class="text-caption text-error">{{ t('job.n_failed_or_killed', { n: failedCount }) }}</div>
-      <div v-for="ft in failedTasks.slice(0, 3)" :key="ft.id" class="text-caption d-flex align-center ga-1">
-        <code>{{ ft.id.slice(0, 8) }}</code>
-        <span class="text-on-surface-variant">{{ t('job.exit_code', { code: ft.exit_code ?? '?' }) }}</span>
-      </div>
+    <div v-if="detail.job.description" class="job-desc">{{ detail.job.description }}</div>
+
+    <div class="job-meta">
+      <code>{{ detail.job.id }}</code>
+      <span v-if="detail.job.target">· {{ detail.job.target }}</span>
+      <span>· {{ relativeTime(detail.job.created_at) }}</span>
+      <span v-if="isPoll && isActive && detail.job.refreshed_at">· {{ t('job.data_as_of', { time: relativeTime(detail.job.refreshed_at) }) }}</span>
+      <v-chip v-if="detail.job.stale" size="x-small" variant="text" color="warning">{{ t('job.snapshot_stale') }}</v-chip>
     </div>
 
-    <!-- Progress -->
     <SegmentedProgress :counts="counts" :height="4" class="mt-3" />
-  </v-card>
+    <div class="job-counts">
+      <span v-for="c in countParts" :key="c.key" :style="c.css ? { color: c.css } : undefined">{{ c.text }}</span>
+    </div>
+
+    <div v-if="sweepLine || command" class="job-sweep">
+      <span v-if="sweepLine">{{ sweepLine }}</span>
+      <code v-if="command" :title="command">{{ command }}</code>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { JobDetail, CompareRow, TaskView } from '@/types/api'
+import type { JobDetail } from '@/types/api'
 import JobStatusBadge from '@/components/JobStatusBadge.vue'
+import ProjectDot from '@/components/ProjectDot.vue'
+import { useSnackbar } from '@/composables/useSnackbar'
 import SegmentedProgress from '@/components/SegmentedProgress.vue'
 import { statusStyle } from '@/components/statusGrammar'
 import { relativeTime } from '@/utils/relativeTime'
@@ -89,8 +69,8 @@ const { t } = useI18n()
 
 const props = defineProps<{
   detail: JobDetail
-  topRuns: CompareRow[]
-  metricKey: string
+  /** params that vary across tasks, in display order */
+  sweptParams?: string[]
   /** poll state model: render freshness + manual refresh */
   isPoll?: boolean
   refreshing?: boolean
@@ -113,22 +93,56 @@ function toggleArchive() {
 
 const isActive = computed(() => ['running', 'pending', 'paused'].includes(props.detail.job.status))
 
-// Counts come from the backend summary (detail.job.tasks) — the single source
-// of truth. Note the backend folds "killed" into "failed", so we don't recount
-// from the task array here (that's what caused the headline / hint mismatch).
-const counts = computed(() => props.detail.job.tasks)
-const failedCount = computed(() => counts.value.failed)
-// Per-task detail for the hint list still needs the task array; include killed
-// so the listed tasks match the (failed-incl-killed) count above.
-const failedTasks = computed(() =>
-  props.detail.tasks.filter(task => task.status === 'failed' || task.status === 'killed'),
-)
-// Stat colors come from statusGrammar (U3) — no hard-coded text-* classes.
-const stats = computed(() => [
-  { label: t('common.done'), value: counts.value.completed, css: statusStyle('task', 'success').css },
-  { label: t('status.task.running'), value: counts.value.running, css: statusStyle('task', 'running').css },
-  { label: t('job.failed_incl_killed'), value: failedCount.value, css: statusStyle('task', 'failed').css },
-  { label: t('status.task.pending'), value: counts.value.pending, css: statusStyle('task', 'pending').css },
-])
+const snack = useSnackbar()
+async function copyId() {
+  try {
+    await navigator.clipboard.writeText(props.detail.job.id)
+    snack.success(t('common.copied'))
+  } catch { /* clipboard blocked: the id is on screen */ }
+}
 
+// Counts come from the backend summary (detail.job.tasks); it folds
+// "killed" into "failed". Only non-zero counts are spelled out.
+const counts = computed(() => props.detail.job.tasks)
+const countParts = computed(() => {
+  const c = counts.value
+  return [
+    { key: 'done', n: c.completed, text: `${c.completed} ${t('common.done')}`, css: '' },
+    { key: 'running', n: c.running, text: `${c.running} ${t('status.task.running')}`, css: statusStyle('task', 'running').css },
+    { key: 'failed', n: c.failed, text: `${c.failed} ${t('status.task.failed')}`, css: statusStyle('task', 'failed').css },
+    { key: 'pending', n: c.pending, text: `${c.pending} ${t('status.task.pending')}`, css: '' },
+  ].filter((p) => p.n > 0)
+})
+
+// "model(2) × split(4) = 8 tasks": the sweep shape, read from the tasks.
+const sweepLine = computed(() => {
+  const swept = props.sweptParams ?? []
+  if (!swept.length) return ''
+  const parts = swept.map((k) => {
+    const values = new Set(props.detail.tasks.map((task) => JSON.stringify(task.params?.[k])))
+    return `${k}(${values.size})`
+  })
+  const n = props.detail.tasks.length
+  const product = swept.reduce((p, k) => p * new Set(props.detail.tasks.map((task) => JSON.stringify(task.params?.[k]))).size, 1)
+  // A cross product reads as a formula; zipped lists do not multiply out.
+  return product === n
+    ? `${parts.join(' × ')} = ${t('job.n_tasks', n)}`
+    : `${t('job.n_params_vary', { n: swept.length })} (${swept.join(', ')}) · ${t('job.n_tasks', n)}`
+})
+const command = computed(() => props.detail.config?.command ?? '')
 </script>
+
+<style scoped>
+.job-title { font-size: 18px; font-weight: 500; min-width: 0; }
+.job-desc { font-size: 13px; color: rgb(var(--v-theme-on-surface-variant)); margin: 4px 0 0 24px; }
+.job-meta, .job-counts, .job-sweep {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  font-size: 12px; color: rgb(var(--v-theme-on-surface-variant));
+}
+.job-meta { margin: 4px 0 0 24px; }
+.job-meta code, .job-sweep code { font-family: var(--font-mono); background: none; padding: 0; }
+.job-counts { margin-top: 6px; gap: 12px; }
+.job-sweep { margin-top: 4px; gap: 12px; }
+.job-sweep code { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+
