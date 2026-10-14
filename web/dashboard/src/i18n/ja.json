@@ -683,5 +683,6 @@
   "views.anim_loading": "履歴を読み込み中…",
   "views.anim_rendering": "フレーム {i}/{n} を描画中…",
   "views.anim_encoding": "エンコード中…",
-  "views.anim_none": "アニメーションにできる履歴はまだありません。"
+  "views.anim_none": "アニメーションにできる履歴はまだありません。",
+  "views.custom": "カスタムビュー"
 }

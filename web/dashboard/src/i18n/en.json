@@ -683,5 +683,6 @@
   "views.anim_loading": "Loading history…",
   "views.anim_rendering": "Rendering frame {i}/{n}…",
   "views.anim_encoding": "Encoding…",
-  "views.anim_none": "No history to animate yet."
+  "views.anim_none": "No history to animate yet.",
+  "views.custom": "Custom view"
 }

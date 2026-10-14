@@ -32,6 +32,7 @@
         </div>
       </div>
 
+      <slot name="custom" :result="result" />
       <ViewTable :result="result" />
       <div v-if="result.legend" class="view-legend">{{ result.legend }}</div>
 

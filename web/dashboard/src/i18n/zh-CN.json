@@ -683,5 +683,6 @@
   "views.anim_loading": "读取历史…",
   "views.anim_rendering": "渲染第 {i}/{n} 帧…",
   "views.anim_encoding": "编码中…",
-  "views.anim_none": "还没有可以做成动画的历史数据。"
+  "views.anim_none": "还没有可以做成动画的历史数据。",
+  "views.custom": "自定义视图"
 }

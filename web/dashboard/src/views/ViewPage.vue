@@ -13,6 +13,9 @@
       </div>
     </div>
     <ViewPanel :key="name" :project="project" :name="name">
+      <template #custom="{ result }">
+        <CustomView :project="project" :name="name" :result="result" />
+      </template>
       <template #charts="{ result }">
         <ViewCharts :project="project" :name="name" :result="result" />
       </template>
@@ -23,6 +26,7 @@
 <script setup lang="ts">
 import ViewPanel from '@/components/views/ViewPanel.vue'
 import ViewCharts from '@/components/views/ViewCharts.vue'
+import CustomView from '@/components/views/CustomView.vue'
 import { useViewsQuery } from '@/queries/useViewQueries'
 import { useProjectColors } from '@/composables/useProjectColors'
 
