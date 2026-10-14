@@ -52,3 +52,22 @@ export function useViewSeriesQuery(
     staleTime: 60_000,
   })
 }
+
+/** Views of a project that read a given job: those listing it in `jobs`,
+ *  plus those without a job list (they default to the project's latest).
+ *  One list call plus one spec call per view. */
+export function useJobViewsQuery(project: MaybeRefOrGetter<string>, jobId: MaybeRefOrGetter<string>) {
+  return useQuery({
+    queryKey: computed(() => [...qk.views(toValue(project)), 'for-job', toValue(jobId)] as const),
+    queryFn: async () => {
+      const list = await viewsApi.list(toValue(project))
+      const specs = await Promise.all(list.map((v) => viewsApi.get(toValue(project), v.name).catch(() => null)))
+      const id = toValue(jobId)
+      return list.filter((_, i) => {
+        const jobs = specs[i]?.spec.jobs
+        return Array.isArray(jobs) ? jobs.includes(id) : jobs === undefined || jobs === null
+      })
+    },
+    staleTime: 60_000,
+  })
+}

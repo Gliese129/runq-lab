@@ -21,6 +21,7 @@
         {{ t('job.tab_tasks') }} ({{ detail.tasks.length }})
       </v-tab>
       <v-tab value="results" size="small">{{ t('job.tab_results') }}</v-tab>
+      <v-tab v-if="jobViews.length || tab === 'views'" value="views" size="small">{{ t('views.title') }} ({{ jobViews.length }})</v-tab>
       <v-tab value="data" size="small">{{ t('job.tab_data') }}</v-tab>
     </v-tabs>
 
@@ -75,6 +76,22 @@
       :error="resultsQuery.error.value ? String((resultsQuery.error.value as any)?.message ?? resultsQuery.error.value) : ''"
       :project="props.project"
     />
+
+    <div v-else-if="tab === 'views'">
+      <div v-if="jobViews.length > 1" class="d-flex flex-wrap ga-2 mb-3">
+        <button
+          v-for="v in jobViews" :key="v.name" type="button" class="view-pick" :class="{ on: v.name === pickedView }"
+          @click="pickedView = v.name"
+        >{{ v.title || v.name }}</button>
+      </div>
+      <ViewPanel v-if="pickedView" :key="pickedView" :project="props.project" :name="pickedView">
+        <template #custom="{ result }"><CustomView :project="props.project" :name="pickedView" :result="result" /></template>
+        <template #charts="{ result }"><ViewCharts :project="props.project" :name="pickedView" :result="result" /></template>
+      </ViewPanel>
+      <router-link v-if="pickedView" class="text-caption" :to="{ name: 'view', params: { project: props.project, name: pickedView } }">
+        {{ t('views.open_page') }}
+      </router-link>
+    </div>
 
     <JobDataCard
       v-else
@@ -134,6 +151,10 @@ import StatusDot from '@/components/StatusDot.vue'
 import { ApiError } from '@/apis/client'
 import { jobsApi } from '@/apis/jobs'
 import { resolveIdPrefix } from '@/utils/idPrefix'
+import { useJobViewsQuery } from '@/queries/useViewQueries'
+import ViewPanel from '@/components/views/ViewPanel.vue'
+import ViewCharts from '@/components/views/ViewCharts.vue'
+import CustomView from '@/components/views/CustomView.vue'
 
 const props = defineProps<{ project: string; jobId: string }>()
 const router = useRouter()
@@ -192,8 +213,14 @@ watch(() => detail.value?.tasks, (tasks) => { if (tasks) prune(tasks) })
 
 // ── Tabs (RQ2-4 ②): ?tab= is the shareable truth; replace (not push) so
 // tab flips don't pollute back-button history. ──
-const TABS = new Set(['tasks', 'results', 'data'])
+const TABS = new Set(['tasks', 'results', 'views', 'data'])
 const tab = ref(TABS.has(String(route.query.tab)) ? String(route.query.tab) : 'tasks')
+
+// Views that read this job (see useJobViewsQuery); the first is preselected.
+const jobViewsQuery = useJobViewsQuery(() => props.project, () => props.jobId)
+const jobViews = computed(() => jobViewsQuery.data.value ?? [])
+const pickedView = ref('')
+watch(jobViews, (vs) => { if (!vs.some((v) => v.name === pickedView.value)) pickedView.value = vs[0]?.name ?? '' }, { immediate: true })
 watch(tab, (v) => {
   router.replace({ query: { ...route.query, tab: v === 'tasks' ? undefined : v } })
 })
@@ -349,3 +376,11 @@ function onClickTask(id: string) {
   router.push({ name: 'task-detail', params: { project: props.project, jobId: props.jobId, taskId: id } })
 }
 </script>
+
+<style scoped>
+.view-pick {
+  font-size: 13px; padding: 3px 12px; border-radius: 999px; cursor: pointer; background: none;
+  color: rgb(var(--v-theme-on-surface)); border: 0.5px solid rgb(var(--v-theme-outline-variant));
+}
+.view-pick.on { background: rgb(var(--v-theme-on-surface), 0.08); border-color: rgb(var(--v-theme-on-surface), 0.3); }
+</style>

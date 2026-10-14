@@ -684,5 +684,18 @@
   "views.anim_rendering": "Rendering frame {i}/{n}…",
   "views.anim_encoding": "Encoding…",
   "views.anim_none": "No history to animate yet.",
-  "views.custom": "Custom view"
+  "views.custom": "Custom view",
+  "consumer.status.ready": "not started",
+  "consumer.status.running": "running",
+  "consumer.status.stopped": "stopped",
+  "consumer.status.failed": "failed",
+  "consumer.status.killed": "killed",
+  "consumer.status.lost": "lost",
+  "consumer.data_ago": "data {ago}",
+  "consumer.not_started": "run its run.sh on a node",
+  "consumer.copy_start": "start command",
+  "consumer.copy_start_hint": "Copy “bash …/run.sh” to run (or restart) it on a node, e.g. inside iqrsh → tmux",
+  "consumer.kill_title": "Stop consumer {name}?",
+  "consumer.kill_body": "Its process group gets SIGTERM, then SIGKILL after 30 s. Results recorded so far stay.",
+  "views.open_page": "Open as its own page"
 }

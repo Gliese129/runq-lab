@@ -46,6 +46,10 @@
       <span v-for="c in countParts" :key="c.key" :style="c.css ? { color: c.css } : undefined">{{ c.text }}</span>
     </div>
 
+    <div v-if="detail.consumers?.length" class="job-consumers">
+      <ConsumerLine v-for="c in detail.consumers" :key="c.id" :c="c" />
+    </div>
+
     <div v-if="sweepLine || command" class="job-sweep">
       <span v-if="sweepLine">{{ sweepLine }}</span>
       <code v-if="command" :title="command">{{ command }}</code>
@@ -59,6 +63,7 @@ import { useI18n } from 'vue-i18n'
 import type { JobDetail } from '@/types/api'
 import JobStatusBadge from '@/components/JobStatusBadge.vue'
 import { useProjectColors } from '@/composables/useProjectColors'
+import ConsumerLine from '@/components/ConsumerLine.vue'
 import { useSnackbar } from '@/composables/useSnackbar'
 import SegmentedProgress from '@/components/SegmentedProgress.vue'
 import { statusStyle } from '@/components/statusGrammar'
@@ -147,6 +152,7 @@ const command = computed(() => props.detail.config?.command ?? '')
 .job-meta { margin-top: 4px; }
 .job-meta code, .job-sweep code { font-family: var(--font-mono); background: none; padding: 0; }
 .job-counts { margin-top: 6px; gap: 12px; }
+.job-consumers { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
 .job-sweep { margin-top: 4px; gap: 12px; }
 .job-sweep code { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

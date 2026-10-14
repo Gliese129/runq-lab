@@ -684,5 +684,18 @@
   "views.anim_rendering": "渲染第 {i}/{n} 帧…",
   "views.anim_encoding": "编码中…",
   "views.anim_none": "还没有可以做成动画的历史数据。",
-  "views.custom": "自定义视图"
+  "views.custom": "自定义视图",
+  "consumer.status.ready": "未启动",
+  "consumer.status.running": "运行中",
+  "consumer.status.stopped": "已结束",
+  "consumer.status.failed": "失败",
+  "consumer.status.killed": "已停止",
+  "consumer.status.lost": "失联",
+  "consumer.data_ago": "数据 {ago}",
+  "consumer.not_started": "在节点上执行它的 run.sh",
+  "consumer.copy_start": "启动命令",
+  "consumer.copy_start_hint": "复制“bash …/run.sh”，在节点上（如 iqrsh → tmux 里）启动或重启它",
+  "consumer.kill_title": "停止 consumer {name}？",
+  "consumer.kill_body": "先向进程组发 SIGTERM，30 秒后 SIGKILL。已写入的结果会保留。",
+  "views.open_page": "在单独页面打开"
 }
