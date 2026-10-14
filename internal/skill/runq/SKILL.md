@@ -188,6 +188,11 @@ Each file you add is one more thing the researcher reads or cleans up later. Goo
   `ctx.params`) over copying it into a `-v2` / `-fixed` variant; git keeps the history.
 - Make a smoke test a job: the same command with small `fixed_params`
   (`max_steps: 2`) and `note: smoke`.
+- Give each job a short `note` that tells it apart from its neighbours — 2–4 words,
+  leading with what differs (`c0-dev-eval`, `kl-sweep`, `ar9094-resume`). The note is
+  the job's name in `runq ps`, the dashboard, the job directory and the W&B group, and
+  the researcher scans a list of them. Put the full sentence (what, why, which
+  checkpoint) in `description:`; the dashboard shows it under the note.
 - Let runq be the run record — note, params, logs, results, links, plus the git
   commit. Write a separate handoff or status document when the researcher asks for one.
 - Write outputs to `ctx.output_dir` and scratch files inside the task directory, so
