@@ -4,13 +4,13 @@
       v-for="j in jobs"
       :key="j.id"
       class="job-row"
+      :style="{ '--project': color(j.project) }"
       role="listitem"
       tabindex="0"
       :aria-label="t('a11y.open_job', { id: j.id.slice(0, 8) })"
       @click="emit('open', j)"
       @keydown.enter="emit('open', j)"
     >
-      <ProjectDot :project="j.project" :size="9" />
       <code class="job-id">{{ j.id.slice(0, 8) }}</code>
       <div class="job-text">
         <JobNote class="job-note" :note="j.note" :description="j.description" :common="common.get(j.project)" />
@@ -33,7 +33,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import type { JobSummary } from '@/types/api'
-import ProjectDot from './ProjectDot.vue'
+import { useProjectColors } from '@/composables/useProjectColors'
 import JobNote from './JobNote.vue'
 import StatusDot from './StatusDot.vue'
 import SegmentedProgress from './SegmentedProgress.vue'
@@ -47,20 +47,35 @@ withDefaults(defineProps<{
 }>(), { common: () => new Map(), showProject: true })
 const emit = defineEmits<{ open: [job: JobSummary] }>()
 const { t } = useI18n()
+const color = useProjectColors()
 </script>
 
 <style scoped>
 .job-row {
+  position: relative;
   display: grid;
-  grid-template-columns: 9px 72px minmax(0, 1fr) 12px 92px 64px;
+  grid-template-columns: 72px minmax(0, 1fr) 12px 92px 64px;
   align-items: center;
   column-gap: 12px;
-  padding: 9px 14px;
+  padding: 10px 14px 10px 18px;
+  margin-bottom: 6px;
   cursor: pointer;
   border-radius: 8px;
+  overflow: hidden;
+  background: rgb(var(--v-theme-surface));
+  border: 0.5px solid rgb(var(--v-theme-outline-variant), 0.6);
+}
+/* Project colour as a bar on the row's left edge — read before the text,
+   and kept apart from the status dot on the right. */
+.job-row::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: var(--project);
 }
 .job-row:hover,
-.job-row:focus-visible { background: rgb(var(--v-theme-on-surface), 0.04); outline: none; }
+.job-row:focus-visible { border-color: rgb(var(--v-theme-on-surface), 0.25); outline: none; }
 .job-id { font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); background: none; padding: 0; }
 .job-text { min-width: 0; }
 .job-note { font-size: 14px; }
@@ -73,7 +88,7 @@ const { t } = useI18n()
 .job-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
 .job-time { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); text-align: right; }
 @media (max-width: 640px) {
-  .job-row { grid-template-columns: 9px minmax(0, 1fr) 12px 52px; }
+  .job-row { grid-template-columns: minmax(0, 1fr) 12px 52px; }
   .job-id, .job-progress { display: none; }
 }
 </style>

@@ -1,7 +1,6 @@
 <template>
-  <div class="job-head mb-4">
+  <div class="job-head mb-4" :style="{ '--project': projectColor(detail.job.project) }">
     <div class="d-flex align-center ga-3">
-      <ProjectDot :project="detail.job.project" :size="12" />
       <span class="job-title text-truncate" :title="detail.job.note">{{ detail.job.note || detail.job.id }}</span>
       <JobStatusBadge :status="detail.job.status" />
       <v-spacer />
@@ -59,7 +58,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { JobDetail } from '@/types/api'
 import JobStatusBadge from '@/components/JobStatusBadge.vue'
-import ProjectDot from '@/components/ProjectDot.vue'
+import { useProjectColors } from '@/composables/useProjectColors'
 import { useSnackbar } from '@/composables/useSnackbar'
 import SegmentedProgress from '@/components/SegmentedProgress.vue'
 import { statusStyle } from '@/components/statusGrammar'
@@ -94,6 +93,7 @@ function toggleArchive() {
 const isActive = computed(() => ['running', 'pending', 'paused'].includes(props.detail.job.status))
 
 const snack = useSnackbar()
+const projectColor = useProjectColors()
 async function copyId() {
   try {
     await navigator.clipboard.writeText(props.detail.job.id)
@@ -133,13 +133,18 @@ const command = computed(() => props.detail.config?.command ?? '')
 </script>
 
 <style scoped>
+.job-head { position: relative; padding-left: 16px; }
+.job-head::before {
+  content: ''; position: absolute; left: 0; top: 2px; bottom: 2px;
+  width: 4px; border-radius: 2px; background: var(--project);
+}
 .job-title { font-size: 18px; font-weight: 500; min-width: 0; }
-.job-desc { font-size: 13px; color: rgb(var(--v-theme-on-surface-variant)); margin: 4px 0 0 24px; }
+.job-desc { font-size: 13px; color: rgb(var(--v-theme-on-surface-variant)); margin-top: 4px; }
 .job-meta, .job-counts, .job-sweep {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
   font-size: 12px; color: rgb(var(--v-theme-on-surface-variant));
 }
-.job-meta { margin: 4px 0 0 24px; }
+.job-meta { margin-top: 4px; }
 .job-meta code, .job-sweep code { font-family: var(--font-mono); background: none; padding: 0; }
 .job-counts { margin-top: 6px; gap: 12px; }
 .job-sweep { margin-top: 4px; gap: 12px; }
