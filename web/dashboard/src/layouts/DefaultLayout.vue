@@ -40,8 +40,6 @@
 
       <v-divider />
 
-      <v-divider />
-
       <div class="pa-2 flex-grow-1 overflow-y-auto">
         <div
           v-if="!collapsed"
@@ -155,7 +153,7 @@
                 <template #prepend>
                   <div class="status-dot mr-2" :style="{ background: projectColor(proj.name) }" />
                 </template>
-                <v-list-item-title class="text-body-2" :title="proj.name">{{ middleEllipsis(proj.name, 18) }}</v-list-item-title>
+                <v-list-item-title class="text-body-2" :title="proj.name">{{ middleEllipsis(memberLabels.get(proj.name) ?? proj.name, 18) }}</v-list-item-title>
                 <template #append>
                   <span class="text-caption text-on-surface-variant">{{ proj.job_count }}</span>
                 </template>
@@ -189,7 +187,7 @@
             <template #prepend>
               <div class="status-dot mr-2" :style="{ background: projectColor(proj.name) }" />
             </template>
-            <v-list-item-title class="text-body-2" :title="proj.name">{{ middleEllipsis(proj.name, 18) }}</v-list-item-title>
+            <v-list-item-title class="text-body-2" :title="proj.name">{{ middleEllipsis(proj.name, 20) }}</v-list-item-title>
             <template #append>
               <span class="text-caption text-on-surface-variant">{{ proj.job_count }}</span>
             </template>
@@ -371,6 +369,7 @@ import { useProjectGroups } from '@/composables/useProjectGroups'
 import { groupProjects } from '@/composables/projectGroups'
 import { useProjectColors } from '@/composables/useProjectColors'
 import { middleEllipsis } from '@/utils/middleEllipsis'
+import { groupLabels } from '@/utils/groupLabels'
 import { useGpuQuery } from '@/queries/useGpuQuery'
 import { qk } from '@/queries/keys'
 import RunqLogo from '@/components/RunqLogo.vue'
@@ -509,6 +508,15 @@ const breadcrumbs = computed(() => {
 
 // One colour per project, shared with every job list.
 const projectColor = useProjectColors()
+
+// Inside a group, drop the part of the names the group already implies.
+const memberLabels = computed(() => {
+  const out = new Map<string, string>()
+  for (const g of groupedProjects.value.groups) {
+    for (const [name, label] of groupLabels(g.members.map((m) => m.name))) out.set(name, label)
+  }
+  return out
+})
 
 function refreshShellData() {
   projects.fetch()
