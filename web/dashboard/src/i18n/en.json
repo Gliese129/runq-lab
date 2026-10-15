@@ -708,5 +708,11 @@
   "views.jobs": "Jobs",
   "views.add_job": "Add job",
   "views.no_more_jobs": "Every job of this project is added",
-  "views.pick_jobs_hint": "Add the jobs to compare. Only the columns every chosen job records are shown."
+  "views.pick_jobs_hint": "Add the jobs to compare. Only the columns every chosen job records are shown.",
+  "results.none_title": "No results for this job yet",
+  "results.none_body": "Results come from runq.record(…) calls in the job’s code. Each record lands in a section; the project’s views turn sections into tables and figures and show up here once this job has data for them.",
+  "results.views_waiting": "Views of this project — none has data from this job yet:",
+  "results.reads_section": "reads section",
+  "results.example": "A record call:",
+  "results.example_for": "Record like this for “{name}” to appear here:"
 }

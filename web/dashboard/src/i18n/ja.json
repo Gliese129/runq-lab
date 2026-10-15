@@ -708,5 +708,11 @@
   "views.jobs": "Job",
   "views.add_job": "job を追加",
   "views.no_more_jobs": "この project の job はすべて追加済みです",
-  "views.pick_jobs_hint": "比較する job を追加してください。選んだすべての job が記録している列だけを表示します。"
+  "views.pick_jobs_hint": "比較する job を追加してください。選んだすべての job が記録している列だけを表示します。",
+  "results.none_title": "この job の結果はまだありません",
+  "results.none_body": "結果は job のコード内の runq.record(…) から来ます。各レコードは section に入り、project のビューが section を表や図にします。この job に対応するデータが入るとここに表示されます。",
+  "results.views_waiting": "この project のビュー（まだこの job のデータがありません）：",
+  "results.reads_section": "読む section",
+  "results.example": "記録の例：",
+  "results.example_for": "この形で記録すると「{name}」がここに表示されます："
 }

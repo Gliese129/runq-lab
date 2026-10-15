@@ -88,6 +88,7 @@
           {{ t('views.open_across_jobs') }}
         </router-link>
       </template>
+      <ResultsEmpty v-else-if="!jobViews.length && resultsQuery.data.value?.n === 0" :project="props.project" />
       <JobResultsCard
         v-else
         :res="resultsQuery.data.value ?? null"
@@ -159,6 +160,7 @@ import { useJobViewsQuery } from '@/queries/useViewQueries'
 import ViewPanel from '@/components/views/ViewPanel.vue'
 import ViewCharts from '@/components/views/ViewCharts.vue'
 import CustomView from '@/components/views/CustomView.vue'
+import ResultsEmpty from './ResultsEmpty.vue'
 
 const props = defineProps<{ project: string; jobId: string }>()
 const router = useRouter()

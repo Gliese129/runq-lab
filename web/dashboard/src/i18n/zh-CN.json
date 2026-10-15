@@ -708,5 +708,11 @@
   "views.jobs": "Job",
   "views.add_job": "添加 job",
   "views.no_more_jobs": "这个 project 的 job 都已添加",
-  "views.pick_jobs_hint": "添加要对比的 job。只显示所选 job 都有记录的列。"
+  "views.pick_jobs_hint": "添加要对比的 job。只显示所选 job 都有记录的列。",
+  "results.none_title": "这个 job 还没有结果",
+  "results.none_body": "结果来自 job 代码里的 runq.record(…)。每条记录属于一个 section；project 的视图把 section 变成表格和图，这个 job 有了对应数据后就会出现在这里。",
+  "results.views_waiting": "这个 project 的视图（目前都没有这个 job 的数据）：",
+  "results.reads_section": "读取 section",
+  "results.example": "记录示例：",
+  "results.example_for": "按这个格式记录，“{name}”就会出现在这里："
 }

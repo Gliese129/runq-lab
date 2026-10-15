@@ -85,3 +85,17 @@ export function useJobViewsQuery(
     staleTime: 30_000,
   })
 }
+
+/** Every view of a project with its saved spec (list + one spec call each). */
+export function useProjectViewSpecsQuery(project: MaybeRefOrGetter<string>) {
+  return useQuery({
+    queryKey: computed(() => [...qk.views(toValue(project)), 'specs'] as const),
+    queryFn: async () => {
+      const p = toValue(project)
+      const list = await viewsApi.list(p)
+      const specs = await Promise.all(list.map((v) => viewsApi.get(p, v.name).catch(() => null)))
+      return list.map((v, i) => ({ ...v, spec: specs[i]?.spec ?? null }))
+    },
+    staleTime: 60_000,
+  })
+}
