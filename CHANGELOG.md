@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.6.0rc5 — unreleased (not tagged)
+## v0.6.0rc5 — 2026-10-15
 
 ### Breaking
 
