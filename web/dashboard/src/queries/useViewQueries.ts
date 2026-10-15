@@ -1,5 +1,5 @@
 import { computed, toValue, type MaybeRefOrGetter } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
+import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { viewsApi } from '@/apis/views'
 import { qk } from './keys'
 
@@ -53,21 +53,35 @@ export function useViewSeriesQuery(
   })
 }
 
-/** Views of a project that read a given job: those listing it in `jobs`,
- *  plus those without a job list (they default to the project's latest).
- *  One list call plus one spec call per view. */
-export function useJobViewsQuery(project: MaybeRefOrGetter<string>, jobId: MaybeRefOrGetter<string>) {
+/** The views that make up a job's Results: every project view rendered
+ *  against this job alone, kept when it has real rows — or, for a view of
+ *  curves only, when the job logs one of the curve metrics. Renders are put
+ *  in the cache under the keys ViewPanel uses, so opening one is instant. */
+export function useJobViewsQuery(
+  project: MaybeRefOrGetter<string>,
+  jobId: MaybeRefOrGetter<string>,
+  metricKeys: MaybeRefOrGetter<string[]>,
+) {
+  const qc = useQueryClient()
   return useQuery({
-    queryKey: computed(() => [...qk.views(toValue(project)), 'for-job', toValue(jobId)] as const),
+    queryKey: computed(() => [...qk.views(toValue(project)), 'for-job', toValue(jobId), ...toValue(metricKeys)] as const),
     queryFn: async () => {
-      const list = await viewsApi.list(toValue(project))
-      const specs = await Promise.all(list.map((v) => viewsApi.get(toValue(project), v.name).catch(() => null)))
-      const id = toValue(jobId)
-      return list.filter((_, i) => {
-        const jobs = specs[i]?.spec.jobs
-        return Array.isArray(jobs) ? jobs.includes(id) : jobs === undefined || jobs === null
-      })
+      const p = toValue(project)
+      const jobs = [toValue(jobId)]
+      const metrics = new Set(toValue(metricKeys))
+      const list = await viewsApi.list(p)
+      const kept = await Promise.all(list.map(async (v) => {
+        try {
+          const r = await qc.fetchQuery({ queryKey: qk.viewRender(p, v.name, jobs), queryFn: () => viewsApi.render(p, v.name, jobs), staleTime: 30_000 })
+          const hasRows = r.rows.some((row) => !row.empty)
+          const hasCurves = (r.charts ?? []).some((c) => c.template === 'curves' && metrics.has(String(c.metric)))
+          return hasRows || hasCurves ? v : null
+        } catch {
+          return null // a view that cannot render for this job is not part of it
+        }
+      }))
+      return kept.filter((v): v is NonNullable<typeof v> => v !== null)
     },
-    staleTime: 60_000,
+    staleTime: 30_000,
   })
 }

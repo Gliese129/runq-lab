@@ -697,5 +697,7 @@
   "consumer.copy_start_hint": "「bash …/run.sh」をコピーして、ノード上（例: iqrsh → tmux）で起動・再起動します",
   "consumer.kill_title": "consumer {name} を停止しますか？",
   "consumer.kill_body": "プロセスグループに SIGTERM、30 秒後に SIGKILL を送ります。記録済みの結果は残ります。",
-  "views.open_page": "単独のページで開く"
+  "views.open_page": "単独のページで開く",
+  "views.raw_records": "生レコード",
+  "views.open_across_jobs": "job をまたいで比較"
 }

@@ -24,12 +24,12 @@ import { frameGeom } from './frame'
 import { useViewSeriesQuery } from '@/queries/useViewQueries'
 import { formatKey, keyLabel } from '../viewFormat'
 
-const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; project: string; view: string; index: number }>()
+const props = withDefaults(defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; project: string; view: string; index: number; jobs?: string[] }>(), { jobs: () => [] })
 const { t } = useI18n()
 const frame = ref<{ svg: SVGSVGElement | null } | null>(null)
 defineExpose({ get svg() { return frame.value?.svg ?? null } })
 
-const seriesQuery = useViewSeriesQuery(() => props.project, () => props.view, () => props.index, true)
+const seriesQuery = useViewSeriesQuery(() => props.project, () => props.view, () => props.index, true, () => props.jobs)
 const metric = computed(() => String(props.spec.metric))
 const raw = computed(() => seriesQuery.data.value?.series ?? [])
 const g = computed(() => frameGeom(props.width, { legend: raw.value.length > 1 }))
@@ -47,7 +47,7 @@ const y = computed(() => {
 /** Aligned groups: mean line + ±std band (only where n ≥ 2). Unaligned:
  *  each task's own points, no band — nothing interpolated (R8). */
 const lines = computed(() => raw.value.map((s, ci) => {
-  const label = Object.entries(s.key).map(([k, v]) => `${keyLabel(k)} = ${formatKey(v)}`).join(', ') || metric.value
+  const label = Object.entries(s.key).map(([k, v]) => `${keyLabel(k)} = ${formatKey(v, props.result.key_formats?.[k])}`).join(', ') || metric.value
   if (s.aligned && s.step && s.mean) {
     const pts = s.step.map((st, i) => ({ px: x.value(st), m: s.mean![i], sd: s.std?.[i] ?? 0, n: s.n?.[i] ?? 1 })).filter((p) => Number.isFinite(p.m))
     const d = pts.map((p, i) => `${i ? 'L' : 'M'}${p.px},${y.value(p.m)}`).join('')

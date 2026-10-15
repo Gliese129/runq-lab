@@ -697,5 +697,7 @@
   "consumer.copy_start_hint": "复制“bash …/run.sh”，在节点上（如 iqrsh → tmux 里）启动或重启它",
   "consumer.kill_title": "停止 consumer {name}？",
   "consumer.kill_body": "先向进程组发 SIGTERM，30 秒后 SIGKILL。已写入的结果会保留。",
-  "views.open_page": "在单独页面打开"
+  "views.open_page": "在单独页面打开",
+  "views.raw_records": "原始记录",
+  "views.open_across_jobs": "跨 job 对比"
 }

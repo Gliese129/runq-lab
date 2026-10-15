@@ -25,7 +25,7 @@
     </div>
     <div v-if="animating" class="chart-anim">{{ animating }}</div>
     <div class="chart-paper" :class="{ wide: width === 'double' }">
-      <component :is="comp" v-if="comp" ref="chart" :result="shown" :domain="frameResult ? result : undefined" :spec="spec" :width="width" :project="project" :view="view" :index="index" />
+      <component :is="comp" v-if="comp" ref="chart" :result="shown" :domain="frameResult ? result : undefined" :spec="spec" :width="width" :project="project" :view="view" :index="index" :jobs="jobs" />
       <div v-else class="text-caption pa-4">{{ t('views.unknown_template', { name: spec.template }) }}</div>
     </div>
   </div>
@@ -47,7 +47,7 @@ import ChartTradeoff from './ChartTradeoff.vue'
 import ChartProgress from './ChartProgress.vue'
 import ChartCurves from './ChartCurves.vue'
 
-const props = defineProps<{ result: ViewResult; spec: ChartSpec; project: string; view: string; index: number }>()
+const props = withDefaults(defineProps<{ result: ViewResult; spec: ChartSpec; project: string; view: string; index: number; jobs?: string[] }>(), { jobs: () => [] })
 const { t } = useI18n()
 const snack = useSnackbar()
 
@@ -81,7 +81,7 @@ const FRAMES = 40
 async function animate(kind: 'gif' | 'webm') {
   try {
     animating.value = t('views.anim_loading')
-    const { frames, by } = await viewsApi.frames(props.project, props.view, props.index, FRAMES, 'time')
+    const { frames, by } = await viewsApi.frames(props.project, props.view, props.index, FRAMES, 'time', props.jobs)
     if (!frames.length) { snack.info(t('views.anim_none')); return }
     const canvases: HTMLCanvasElement[] = []
     for (const [i, f] of frames.entries()) {

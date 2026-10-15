@@ -697,5 +697,7 @@
   "consumer.copy_start_hint": "Copy “bash …/run.sh” to run (or restart) it on a node, e.g. inside iqrsh → tmux",
   "consumer.kill_title": "Stop consumer {name}?",
   "consumer.kill_body": "Its process group gets SIGTERM, then SIGKILL after 30 s. Results recorded so far stay.",
-  "views.open_page": "Open as its own page"
+  "views.open_page": "Open as its own page",
+  "views.raw_records": "Raw records",
+  "views.open_across_jobs": "Compare across jobs"
 }
