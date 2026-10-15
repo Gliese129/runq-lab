@@ -1,6 +1,10 @@
 # Configuration reference — project.yaml & job.yaml
 
-One codebase has one project; each experiment has its own job file.
+A project is a codebase and how it runs; each experiment has its own job file.
+One directory may hold several projects (say, training and evaluation with different
+environments): give each its own file (`train.project.yaml`, `eval.project.yaml`) and
+register it with `runq project add -f <file>`. Only a file named exactly
+`project.yaml` in the working_dir is re-read automatically, into the project it names.
 
 - **project.yaml** holds the code directory, source/default target and stable execution defaults.
 - **job.yaml** holds the experiment's command, optional target/preflight overrides and parameters.

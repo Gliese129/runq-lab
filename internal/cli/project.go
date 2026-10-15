@@ -13,7 +13,7 @@ import (
 
 var projectCmd = &cobra.Command{
 	Use:   "project",
-	Short: "Register and inspect projects (one project per code base)",
+	Short: "Register and inspect projects (a code base and how it runs; one directory may hold several)",
 }
 
 var projectAddCmd = &cobra.Command{

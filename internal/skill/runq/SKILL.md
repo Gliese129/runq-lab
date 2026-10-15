@@ -85,6 +85,15 @@ reservation — as job files under the existing project; a job can carry its own
 or its environment genuinely differs. When `project add` says `project "x" already
 exists`, update it with `--project-file` and keep the name.
 
+One directory can hold several projects — e.g. training and evaluation with
+different `python_env`, `defaults` or `wandb` — all with the same `working_dir`.
+Give each its own file (`train.project.yaml`, `eval.project.yaml`), register it
+with `runq project add -f <file>`, and name it in each job's `project:`. Only a
+file called exactly `project.yaml` in the working_dir is re-read automatically,
+and only into the project it names; pass `--project-file <file>` on submit to
+refresh the others. Their jobs live side by side under `<working_dir>/.runq/`, and
+the dashboard groups them under the directory.
+
 ### Parameters
 1. Put values in `fixed_params` / `sweep`; each lands in `params.json`, and code reads
    it with `ctx.params.get("kl", 0.0)`. Keep defaults in code, where they also apply
