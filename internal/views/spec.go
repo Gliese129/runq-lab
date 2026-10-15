@@ -9,26 +9,29 @@ import (
 )
 
 type Spec struct {
-	Name      string                `json:"view" yaml:"view"`
-	Project   string                `json:"project" yaml:"project"`
-	Title     string                `json:"title,omitempty" yaml:"title,omitempty"`
-	Jobs      any                   `json:"jobs,omitempty" yaml:"jobs,omitempty"`
-	Section   string                `json:"section,omitempty" yaml:"section,omitempty"`
-	Group     []string              `json:"group,omitempty" yaml:"group,omitempty"`
-	Rows      []string              `json:"rows,omitempty" yaml:"rows,omitempty"`
-	Expect    map[string][]any      `json:"expect,omitempty" yaml:"expect,omitempty"`
-	Filter    map[string][]any      `json:"filter,omitempty" yaml:"filter,omitempty"`
-	Columns   []Column              `json:"columns,omitempty" yaml:"columns,omitempty"`
-	State     []State               `json:"state,omitempty" yaml:"state,omitempty"`
-	Extra     []Extra               `json:"extra,omitempty" yaml:"extra,omitempty"`
-	Legend    string                `json:"legend,omitempty" yaml:"legend,omitempty"`
-	Charts    []map[string]any      `json:"charts,omitempty" yaml:"charts,omitempty"`
-	Aggregate *Aggregate            `json:"aggregate,omitempty" yaml:"aggregate,omitempty"`
-	Pivot     *Pivot                `json:"pivot,omitempty" yaml:"pivot,omitempty"`
-	Highlight map[string]string     `json:"highlight,omitempty" yaml:"highlight,omitempty"`
-	Baseline  map[string]any        `json:"baseline,omitempty" yaml:"baseline,omitempty"`
-	Sources   map[string]DataSource `json:"sources,omitempty" yaml:"sources,omitempty"`
-	Custom    map[string]string     `json:"custom,omitempty" yaml:"custom,omitempty"`
+	Name      string            `json:"view" yaml:"view"`
+	Project   string            `json:"project" yaml:"project"`
+	Title     string            `json:"title,omitempty" yaml:"title,omitempty"`
+	Jobs      any               `json:"jobs,omitempty" yaml:"jobs,omitempty"`
+	Section   string            `json:"section,omitempty" yaml:"section,omitempty"`
+	Group     []string          `json:"group,omitempty" yaml:"group,omitempty"`
+	Rows      []string          `json:"rows,omitempty" yaml:"rows,omitempty"`
+	Expect    map[string][]any  `json:"expect,omitempty" yaml:"expect,omitempty"`
+	Filter    map[string][]any  `json:"filter,omitempty" yaml:"filter,omitempty"`
+	Columns   []Column          `json:"columns,omitempty" yaml:"columns,omitempty"`
+	State     []State           `json:"state,omitempty" yaml:"state,omitempty"`
+	Extra     []Extra           `json:"extra,omitempty" yaml:"extra,omitempty"`
+	Legend    string            `json:"legend,omitempty" yaml:"legend,omitempty"`
+	Charts    []map[string]any  `json:"charts,omitempty" yaml:"charts,omitempty"`
+	Aggregate *Aggregate        `json:"aggregate,omitempty" yaml:"aggregate,omitempty"`
+	Pivot     *Pivot            `json:"pivot,omitempty" yaml:"pivot,omitempty"`
+	Highlight map[string]string `json:"highlight,omitempty" yaml:"highlight,omitempty"`
+	// KeyFormats formats row-key values (e.g. {"param.lr": "sci0"}); keys
+	// without one print in full.
+	KeyFormats map[string]string     `json:"key_formats,omitempty" yaml:"key_formats,omitempty"`
+	Baseline   map[string]any        `json:"baseline,omitempty" yaml:"baseline,omitempty"`
+	Sources    map[string]DataSource `json:"sources,omitempty" yaml:"sources,omitempty"`
+	Custom     map[string]string     `json:"custom,omitempty" yaml:"custom,omitempty"`
 }
 type Column struct {
 	Name   string `json:"name" yaml:"name"`
@@ -185,6 +188,11 @@ func (s Spec) Validate() error {
 			add("unknown aggregate stat %q", a.Stat)
 		}
 	}
+	for k, f := range s.KeyFormats {
+		if f == "" || !validFormat(f) {
+			add("key_formats.%s: unknown format %q", k, f)
+		}
+	}
 	if s.Pivot != nil && s.Pivot.Axis == "" {
 		add("pivot.axis is required")
 	}
@@ -230,5 +238,5 @@ func (s Spec) Validate() error {
 }
 func sorted(s []string) []string { out := append([]string{}, s...); sort.Strings(out); return out }
 func validFormat(s string) bool {
-	return contains([]string{"", "int", "float1", "float2", "float3", "float4", "pct0", "pct1", "pct2", "duration", "ago"}, s)
+	return contains([]string{"", "int", "float1", "float2", "float3", "float4", "pct0", "pct1", "pct2", "sci0", "sci1", "sci2", "sci3", "duration", "ago"}, s)
 }

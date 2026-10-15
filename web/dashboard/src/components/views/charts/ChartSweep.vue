@@ -63,10 +63,10 @@ const series = computed(() => colors.value.map((c) => {
   const line = at.map((p, i) => `${i ? 'L' : 'M'}${p.px},${p.py}`).join('')
   const hasErr = ps.some((p) => p.err)
   const band = hasErr ? at.map((p, i) => `${i ? 'L' : 'M'}${p.px},${p.hi}`).join('') + at.slice().reverse().map((p) => `L${p.px},${p.lo}`).join('') + 'Z' : ''
-  return { label: colorKey.value ? `${keyLabel(colorKey.value)} = ${formatKey(c)}` : yName.value, pts: at, line, band }
+  return { label: colorKey.value ? `${keyLabel(colorKey.value)} = ${formatKey(c, props.result.key_formats?.[colorKey.value])}` : yName.value, pts: at, line, band }
 }))
 
-const xTicks = computed(() => x.value.ticks.map((t) => ({ pos: x.value(t), label: tickLabel(t) })))
+const xTicks = computed(() => x.value.ticks.map((t) => ({ pos: x.value(t), label: tickLabel(t, false, props.result.key_formats?.[xKey.value]) })))
 const yTicks = computed(() => y.value.ticks.map((t) => ({ pos: y.value(t), label: tickLabel(t, pct.value) })))
 const xTitle = computed(() => keyLabel(xKey.value) + (logX.value ? ' (log)' : ''))
 const yTitle = computed(() => `${yName.value}${pct.value ? ' (%)' : ''}`)

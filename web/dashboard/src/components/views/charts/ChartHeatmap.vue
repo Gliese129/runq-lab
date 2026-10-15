@@ -10,9 +10,9 @@
               :font-weight="c.rank === 1 ? 700 : 400" :fill="norm(c.v) > 0.55 ? '#fff' : INK">{{ c.text }}</text>
           </template>
         </g>
-        <text x="-5" :y="yi * ch + ch / 2 + 3" text-anchor="end" font-size="9.5" :fill="INK">{{ formatKey(yv) }}</text>
+        <text x="-5" :y="yi * ch + ch / 2 + 3" text-anchor="end" font-size="9.5" :fill="INK">{{ formatKey(yv, result.key_formats?.[yKey]) }}</text>
       </g>
-      <text v-for="(xv, xi) in xs" :key="'xl' + xi" :x="xi * cw + cw / 2" :y="ys.length * ch + 12" text-anchor="middle" font-size="9.5" :fill="INK">{{ formatKey(xv) }}</text>
+      <text v-for="(xv, xi) in xs" :key="'xl' + xi" :x="xi * cw + cw / 2" :y="ys.length * ch + 12" text-anchor="middle" font-size="9.5" :fill="INK">{{ formatKey(xv, result.key_formats?.[xKey]) }}</text>
       <!-- colour key -->
       <g :transform="`translate(${xs.length * cw + 10},0)`">
         <rect v-for="i in 20" :key="'k' + i" x="0" :y="(20 - i) * (plotH / 20)" width="7" :height="plotH / 20 + 0.5" :fill="sequential((i - 1) / 19)" />
@@ -50,11 +50,12 @@ const xs = computed(() => sortVals(distinct(fullRows.value.map((r) => r.key[xKey
 const ys = computed(() => sortVals(distinct(fullRows.value.map((r) => r.key[yKey.value]))))
 
 const W = computed(() => WIDTHS[props.width])
-const M = { l: 48, r: 44, t: 8, b: 30 }
-const cw = computed(() => Math.min(70, (W.value - M.l - M.r) / Math.max(1, xs.value.length)))
+// Left margin fits the longest y label plus the rotated axis title.
+const M = computed(() => ({ l: 22 + Math.max(...ys.value.map((v) => formatKey(v, props.result.key_formats?.[yKey.value]).length), 2) * 5.6, r: 44, t: 8, b: 30 }))
+const cw = computed(() => Math.min(70, (W.value - M.value.l - M.value.r) / Math.max(1, xs.value.length)))
 const ch = computed(() => Math.min(34, cw.value * 0.7))
 const plotH = computed(() => ys.value.length * ch.value)
-const H = computed(() => M.t + plotH.value + M.b)
+const H = computed(() => M.value.t + plotH.value + M.value.b)
 
 const values = computed(() => fullRows.value.map((r) => cellNumber(r.cells[vi.value])).filter((v): v is number => v !== null))
 const lo = computed(() => Math.min(...values.value))

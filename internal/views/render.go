@@ -86,6 +86,7 @@ type Result struct {
 	Data        map[string]Data   `json:"data,omitempty"`
 	RowKeys     []string          `json:"row_keys"`
 	Highlight   map[string]string `json:"highlight,omitempty"`
+	KeyFormats  map[string]string `json:"key_formats,omitempty"`
 }
 type Input struct {
 	Records []Record
@@ -93,12 +94,40 @@ type Input struct {
 	Extras  map[string]map[string]any
 }
 
+// Plain prints a value with no format: numbers in full decimal (an 8-digit
+// seed stays 12345678, 1e-6 prints 0.000001). Scientific notation is only
+// ever chosen explicitly (sci0..sci3).
+func Plain(v any) string {
+	switch n := v.(type) {
+	case nil:
+		return ""
+	case float64:
+		if n == math.Trunc(n) && math.Abs(n) < 1e15 {
+			return strconv.FormatInt(int64(n), 10)
+		}
+		return strconv.FormatFloat(n, 'f', -1, 64)
+	case float32:
+		return Plain(float64(n))
+	}
+	return fmt.Sprint(v)
+}
+
+// KeyText prints a row-key value with its key_formats entry, else in full.
+func (r *Result) KeyText(key string, v any) string {
+	if f := r.KeyFormats[key]; f != "" && v != nil {
+		if s, err := Format(v, f, r.GeneratedAt); err == nil {
+			return s
+		}
+	}
+	return Plain(v)
+}
+
 func Format(v any, f string, now int64) (string, error) {
 	if v == nil {
 		return "--", nil
 	}
 	if f == "" {
-		return fmt.Sprint(v), nil
+		return Plain(v), nil
 	}
 	n, ok := number(v)
 	if !ok {
@@ -110,6 +139,12 @@ func Format(v any, f string, now int64) (string, error) {
 	case strings.HasPrefix(f, "float"):
 		d, _ := strconv.Atoi(strings.TrimPrefix(f, "float"))
 		return fmt.Sprintf("%.*f", d, n), nil
+	case strings.HasPrefix(f, "sci"):
+		d, _ := strconv.Atoi(strings.TrimPrefix(f, "sci"))
+		// 1.2e-06 → 1.2e-6: the exponent without padding or '+'.
+		mant, exp, _ := strings.Cut(fmt.Sprintf("%.*e", d, n), "e")
+		e, _ := strconv.Atoi(exp)
+		return fmt.Sprintf("%se%d", mant, e), nil
 	case strings.HasPrefix(f, "pct"):
 		d, _ := strconv.Atoi(strings.TrimPrefix(f, "pct"))
 		return fmt.Sprintf("%.*f%%", d, n*100), nil
@@ -142,7 +177,7 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
-	out := &Result{Name: s.Name, Title: s.Title, GeneratedAt: now, Sources: in.Sources, Extra: []ExtraCell{}, Columns: append([]Column{}, s.Columns...), Rows: []Row{}, Legend: s.Legend, Charts: s.Charts, Highlight: s.Highlight}
+	out := &Result{Name: s.Name, Title: s.Title, GeneratedAt: now, Sources: in.Sources, Extra: []ExtraCell{}, Columns: append([]Column{}, s.Columns...), Rows: []Row{}, Legend: s.Legend, Charts: s.Charts, Highlight: s.Highlight, KeyFormats: s.KeyFormats}
 	if out.Title == "" {
 		out.Title = s.Name
 	}

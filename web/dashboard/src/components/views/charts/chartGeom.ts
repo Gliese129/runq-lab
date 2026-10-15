@@ -54,13 +54,16 @@ export function logScale(d: [number, number], r: [number, number]): Scale {
   return f
 }
 
-/** Tick label: 0.25, 1e-5, 12k — short enough for a 3.3in figure. */
-export function tickLabel(v: number, pct = false): string {
+/** Tick label in full decimal (scientific only when the axis key asks
+ *  for it via key_formats). Ticks are nice numbers, so this stays short. */
+export function tickLabel(v: number, pct = false, format?: string): string {
   if (pct) return `${Number((v * 100).toPrecision(3))}`
-  const a = Math.abs(v)
-  if (a !== 0 && (a < 1e-3 || a >= 1e5)) return v.toExponential(0).replace('e+', 'e')
-  if (a >= 1e3) return `${Number((v / 1e3).toPrecision(3))}k`
-  return String(Number(v.toPrecision(4)))
+  const sci = /^sci(\d)$/.exec(format ?? '')
+  if (sci) {
+    const [m, e] = v.toExponential(Number(sci[1])).split('e')
+    return `${m}e${Number(e)}`
+  }
+  return Number(v.toPrecision(6)).toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 20 })
 }
 
 /** SVG path for a marker centred at (x, y). */

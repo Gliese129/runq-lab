@@ -340,7 +340,7 @@ func evalValue(s string, m map[string]any) (any, error) {
 			if v == nil {
 				return nil, nil
 			}
-			s = strings.ReplaceAll(s, "{"+k+"}", fmt.Sprint(v))
+			s = strings.ReplaceAll(s, "{"+k+"}", Plain(v))
 		}
 		return s, nil
 	}

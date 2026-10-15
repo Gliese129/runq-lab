@@ -101,6 +101,10 @@ exports each chart as SVG / 300 dpi PNG / vector PDF and history as GIF/WebM —
 point the researcher there (`runq view paper --open`) instead of writing a
 plotting script; the table's Copy LaTeX matches `--format latex`.
 
+Numbers print in full by default (seeds, step counts and learning rates are never
+turned scientific on their own). Use `format: sci1` on a column or
+`key_formats: { param.lr: sci0 }` for row keys when scientific notation reads better.
+
 ## Custom presentation
 
 ```yaml

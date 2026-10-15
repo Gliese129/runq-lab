@@ -34,14 +34,14 @@ function rowPoints(res: ViewResult) {
   return res.rows.filter((r) => !r.empty).map((r) => ({
     x: cellNumber(r.cells[xi]), y: cellNumber(r.cells[yi]),
     color: colorKey.value ? r.key[colorKey.value] : undefined,
-    label: res.row_keys.filter((k) => k !== colorKey.value).map((k) => formatKey(r.key[k])).join(' · '),
+    label: res.row_keys.filter((k) => k !== colorKey.value).map((k) => formatKey(r.key[k], res.key_formats?.[k])).join(' · '),
   })).filter((p) => p.x !== null && p.y !== null) as { x: number; y: number; color: unknown; label: string }[]
 }
 const pts = computed(() => rowPoints(props.result))
 // Axes and series from the full data, so animation frames do not rescale.
 const fullPts = computed(() => (props.domain ? rowPoints(props.domain) : pts.value))
 const colors = computed(() => distinct(fullPts.value.map((p) => p.color)))
-const legend = computed(() => (colorKey.value ? colors.value.map((c) => `${keyLabel(colorKey.value!)} = ${formatKey(c)}`) : []))
+const legend = computed(() => (colorKey.value ? colors.value.map((c) => `${keyLabel(colorKey.value!)} = ${formatKey(c, props.result.key_formats?.[colorKey.value!])}`) : []))
 const g = computed(() => frameGeom(props.width, { legend: legend.value.length > 1 }))
 const xPct = computed(() => isPct(column(props.result, xName.value)))
 const yPct = computed(() => isPct(column(props.result, yName.value)))

@@ -99,6 +99,8 @@ export interface ViewResult {
   data?: Record<string, ViewData>
   row_keys: string[]
   highlight?: Record<string, string>
+  /** row-key display formats, e.g. { 'param.lr': 'sci0' } */
+  key_formats?: Record<string, string>
 }
 
 export interface SavedView {

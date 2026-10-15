@@ -32,12 +32,13 @@ const BOOT = String.raw`
 const fmt = (v, f) => {
   if (v === null || v === undefined || Number.isNaN(v)) return '--'
   if (typeof v !== 'number') return String(v)
-  const m = /^(pct|float)(\d)$/.exec(f || '')
+  const m = /^(pct|float|sci)(\d)$/.exec(f || '')
+  if (m && m[1] === 'sci') { const [a, e] = v.toExponential(+m[2]).split('e'); return a + 'e' + Number(e) }
   if (m) return m[1] === 'pct' ? (v * 100).toFixed(+m[2]) + '%' : v.toFixed(+m[2])
   if (f === 'int') return Math.round(v).toLocaleString()
   if (f === 'ago') { const s = Math.max(0, Date.now() / 1000 - v); return s < 90 ? Math.round(s) + 's ago' : s < 5400 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago' }
   if (f === 'duration') { const s = Math.round(v); return s < 120 ? s + 's' : s < 7200 ? Math.round(s / 60) + 'm' : (s / 3600).toFixed(1) + 'h' }
-  return String(Number(v.toPrecision(6)))
+  return v.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 20 })
 }
 const state = Vue.reactive({ data: {}, rows: [], columns: [], row_keys: [], sources: [], extra: [], now: Date.now() / 1000 })
 let options = {}

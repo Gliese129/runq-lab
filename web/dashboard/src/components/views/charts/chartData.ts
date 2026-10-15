@@ -46,7 +46,7 @@ export function points(r: ViewResult, slots: { x?: string; y: string; color?: st
         return undefined
       }
       const cell = row.cells[i]
-      const label = r.row_keys.filter((k) => k !== slots.color && k !== slots.facet && k !== slots.x).map((k) => formatKey(row.key[k])).join(' · ')
+      const label = r.row_keys.filter((k) => k !== slots.color && k !== slots.facet && k !== slots.x).map((k) => formatKey(row.key[k], r.key_formats?.[k])).join(' · ')
       out.push({
         x: read(slots.x), y: cellNumber(cell), err: typeof cell?.std === 'number' ? cell.std : null, n: cell?.n ?? null,
         color: read(slots.color), facet: read(slots.facet), rank: cell?.rank, label,

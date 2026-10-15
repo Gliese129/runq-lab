@@ -44,14 +44,14 @@ const bars = computed(() => {
   const rows = (facet ? order.flatMap((fv) => src.filter((r) => r.key[facet] === fv)) : src).map(valueRow)
   for (const r of rows) {
     const f = facet ? r.key[facet] : undefined
-    const heading = facet && f !== last ? formatKey(f) : ''
+    const heading = facet && f !== last ? formatKey(f, props.result.key_formats?.[facet]) : ''
     if (heading && out.length) y += GROUP_GAP - ROW + 6
     last = f
     const done = r.empty ? 0 : cellNumber(r.cells[di]) ?? 0
     const total = r.empty ? 0 : cellNumber(r.cells[ti]) ?? 0
     out.push({
       y, heading,
-      label: props.result.row_keys.filter((k) => k !== facet).map((k) => formatKey(r.key[k])).join(' · '),
+      label: props.result.row_keys.filter((k) => k !== facet).map((k) => formatKey(r.key[k], props.result.key_formats?.[k])).join(' · '),
       frac: total > 0 ? Math.min(1, done / total) : 0,
       text: r.empty ? '—' : `${Math.round(done)}/${Math.round(total)}`,
     })

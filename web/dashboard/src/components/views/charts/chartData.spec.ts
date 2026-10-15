@@ -28,8 +28,12 @@ describe('chart points', () => {
 describe('view formatting', () => {
   it('labels params without their namespace and keeps small numbers short', () => {
     expect(keyLabel('param.lr')).toBe('lr')
-    expect(formatKey(1e-6)).toBe('1e-6')
-    expect(formatKey(3e-6)).toBe('3e-6')
+    // Full decimal by default — an 8-digit seed must not turn scientific.
+    expect(formatKey(12345678)).toBe('12345678')
+    expect(formatKey(1e-6)).toBe('0.000001')
     expect(formatKey(0.01)).toBe('0.01')
+    // Scientific only when asked for (key_formats).
+    expect(formatKey(1e-6, 'sci0')).toBe('1e-6')
+    expect(formatKey(3e-6, 'sci1')).toBe('3.0e-6')
   })
 })

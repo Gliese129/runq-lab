@@ -1,9 +1,9 @@
 <template>
   <svg ref="svg" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${W} ${H}`" :width="W" :height="H" :font-family="FONT">
     <rect :width="W" :height="H" fill="#fff" />
-    <ChartLegend v-if="colors.length > 1" :labels="colors.map(formatKey)" :x="M.l" :y="12" />
+    <ChartLegend v-if="colors.length > 1" :labels="colors.map((c) => formatKey(c, kf(slots.color)))" :x="M.l" :y="12" />
     <g v-for="(f, fi) in facets" :key="fi" :transform="`translate(${M.l + fi * (panelW + GAP)},${M.t})`">
-      <text v-if="facets.length > 1" :x="panelW / 2" y="-4" text-anchor="middle" font-size="10" :fill="INK">{{ formatKey(f) }}</text>
+      <text v-if="facets.length > 1" :x="panelW / 2" y="-4" text-anchor="middle" font-size="10" :fill="INK">{{ formatKey(f, kf(slots.facet)) }}</text>
       <line v-for="tk in y.ticks" :key="'g' + tk" x1="0" :x2="panelW" :y1="y(tk)" :y2="y(tk)" :stroke="GRID" stroke-width="0.6" />
       <g v-for="(xv, xi) in xs" :key="'x' + xi">
         <template v-for="(cv, ci) in colors" :key="'b' + ci">
@@ -19,7 +19,7 @@
             </g>
           </template>
         </template>
-        <text :x="groupX(xi) + groupW / 2" :y="plotH + 12" text-anchor="middle" font-size="9.5" :fill="INK">{{ formatKey(xv) }}</text>
+        <text :x="groupX(xi) + groupW / 2" :y="plotH + 12" text-anchor="middle" font-size="9.5" :fill="INK">{{ formatKey(xv, kf(slots.x)) }}</text>
       </g>
       <line x1="0" :x2="panelW" :y1="y(yLo)" :y2="y(yLo)" :stroke="INK" stroke-width="0.8" />
       <g v-if="fi === 0" font-size="9.5" :fill="INK" text-anchor="end">
@@ -85,6 +85,7 @@ const y = computed(() => {
 })
 const base = (_p: Point) => yLo.value
 
+const kf = (k?: string) => (k ? props.result.key_formats?.[k] : undefined)
 function find(f: unknown, x: unknown, c: unknown): Point | undefined {
   return pts.value.find((p) => p.facet === f && p.x === x && p.color === c)
 }

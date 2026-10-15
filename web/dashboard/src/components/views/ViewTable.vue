@@ -20,7 +20,7 @@
       <tbody>
         <tr v-for="(row, ri) in result.rows" :key="ri" :class="{ 'vt-empty': row.empty, 'vt-last': ri === result.rows.length - 1 }">
           <td v-for="(k, ki) in rowKeys" :key="k" class="vt-key">
-            <span v-if="!repeated(ri, ki)">{{ formatKey(row.key[k]) }}</span>
+            <span v-if="!repeated(ri, ki)">{{ formatKey(row.key[k], result.key_formats?.[k]) }}</span>
           </td>
           <template v-if="row.empty">
             <td :colspan="result.columns.length + (hasState ? 1 : 0)" class="vt-nodata">{{ t('views.no_data') }}</td>

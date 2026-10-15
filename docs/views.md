@@ -79,7 +79,12 @@ scalar literals. Column values also accept `{field}` templates. Division by zero
 or missing values produces null (`--`). False/unknown `when` hides the cell.
 State rules use the first true match. Unknown fields are errors when data exists;
 a view can be saved before its data arrives. Formats: int, float1–4, pct0–2,
-duration, ago. Values used with pct formats are fractions.
+sci0–3, duration, ago. Values used with pct formats are fractions.
+
+Numbers print in full unless a format says otherwise — a seed of 12345678 stays
+12345678 and a learning rate of 1e-6 prints 0.000001. To show row keys in
+scientific notation, ask for it: `key_formats: { param.lr: sci0 }` (tables, the
+LaTeX/Markdown exports and chart labels; CSV keeps raw values).
 
 `extra: [{name: Generated, job: jb123, value: 'metric:generated:sum', format: int}]`
 uses each source's latest metric, then the explicit sum. Without `:sum`/`:min`/

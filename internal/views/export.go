@@ -25,7 +25,7 @@ func Export(r *Result, format string, wide, color bool) (string, error) {
 		for _, c := range r.Columns {
 			label := c.Name
 			if c.Group != nil {
-				label = fmt.Sprint(c.Group) + "/" + label
+				label = Plain(c.Group) + "/" + label
 			}
 			header = append(header, label, label+".mean", label+".std", label+".n")
 		}
@@ -66,7 +66,7 @@ func Export(r *Result, format string, wide, color bool) (string, error) {
 				for j < len(r.Columns) && canonical(r.Columns[j].Group) == canonical(r.Columns[i].Group) {
 					j++
 				}
-				groups = append(groups, fmt.Sprintf("\\multicolumn{%d}{c}{%s}", j-i, latexEscape(fmt.Sprint(r.Columns[i].Group))))
+				groups = append(groups, fmt.Sprintf("\\multicolumn{%d}{c}{%s}", j-i, latexEscape(Plain(r.Columns[i].Group))))
 				rules = append(rules, fmt.Sprintf("\\cmidrule(lr){%d-%d}", len(r.RowKeys)+i+1, len(r.RowKeys)+j))
 				i = j
 			}
@@ -89,7 +89,7 @@ func Export(r *Result, format string, wide, color bool) (string, error) {
 		for ri, row := range r.Rows {
 			vals := []string{}
 			for ki, k := range r.RowKeys {
-				text := latexEscape(plain(row.Key[k]))
+				text := latexEscape(r.KeyText(k, row.Key[k]))
 				if ki < len(r.RowKeys)-1 {
 					samePrefix := func(other Row) bool {
 						for _, pk := range r.RowKeys[:ki+1] {
@@ -148,7 +148,7 @@ func Export(r *Result, format string, wide, color bool) (string, error) {
 		for _, c := range r.Columns {
 			label := c.Name
 			if c.Group != nil {
-				label = fmt.Sprint(c.Group) + " / " + label
+				label = Plain(c.Group) + " / " + label
 			}
 			header = append(header, label)
 		}
@@ -156,7 +156,7 @@ func Export(r *Result, format string, wide, color bool) (string, error) {
 		for _, row := range r.Rows {
 			v := []string{}
 			for _, k := range r.RowKeys {
-				v = append(v, mdEscape(plain(row.Key[k])))
+				v = append(v, mdEscape(r.KeyText(k, row.Key[k])))
 			}
 			for _, c := range row.Cells {
 				text := mdEscape(c.Text)
@@ -216,7 +216,7 @@ func Export(r *Result, format string, wide, color bool) (string, error) {
 	for _, c := range r.Columns {
 		label := c.Name
 		if c.Group != nil {
-			label = fmt.Sprint(c.Group) + "/" + label
+			label = Plain(c.Group) + "/" + label
 		}
 		h = append(h, label)
 	}
@@ -228,7 +228,7 @@ func Export(r *Result, format string, wide, color bool) (string, error) {
 	for _, row := range r.Rows {
 		v := []string{}
 		for _, k := range r.RowKeys {
-			v = append(v, plain(row.Key[k]))
+			v = append(v, r.KeyText(k, row.Key[k]))
 		}
 		for _, c := range row.Cells {
 			v = append(v, c.Text)
@@ -279,17 +279,12 @@ func attentionLine(a map[string]any) string {
 	return line
 }
 
-func plain(v any) string {
-	if v == nil {
-		return ""
-	}
-	return fmt.Sprint(v)
-}
+func plain(v any) string { return Plain(v) }
 func ptrFloat(p *float64) string {
 	if p == nil {
 		return ""
 	}
-	return fmt.Sprint(*p)
+	return Plain(*p)
 }
 func ptrInt(p *int) string {
 	if p == nil {
