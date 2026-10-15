@@ -82,7 +82,7 @@
       <template v-if="pickedView && pickedView !== RAW">
         <ViewPanel :key="pickedView" :project="props.project" :name="pickedView" :jobs="[props.jobId]" :show-title="false">
           <template #custom="{ result }"><CustomView :project="props.project" :name="pickedView" :result="result" /></template>
-          <template #charts="{ result }"><ViewCharts :project="props.project" :name="pickedView" :result="result" :jobs="[props.jobId]" /></template>
+          <template #charts="{ result, hidden }"><ViewCharts :project="props.project" :name="pickedView" :result="result" :jobs="[props.jobId]" :hidden="hidden" /></template>
         </ViewPanel>
         <router-link class="text-caption" :to="{ name: 'view', params: { project: props.project, name: pickedView } }">
           {{ t('views.open_across_jobs') }}

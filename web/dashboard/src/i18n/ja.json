@@ -699,5 +699,14 @@
   "consumer.kill_body": "プロセスグループに SIGTERM、30 秒後に SIGKILL を送ります。記録済みの結果は残ります。",
   "views.open_page": "単独のページで開く",
   "views.raw_records": "生レコード",
-  "views.open_across_jobs": "job をまたいで比較"
+  "views.open_across_jobs": "job をまたいで比較",
+  "views.show": "表示",
+  "views.part_table": "表",
+  "views.dropped_columns": "非表示（全 job にない列）：{cols}",
+  "views.jobs_without_data": "このビューのデータがない job：{jobs}",
+  "views.no_common_columns": "選んだ job にはこのビューで共通の列がありません。同じフィールドを記録した job を選んでください。",
+  "views.jobs": "Job",
+  "views.add_job": "job を追加",
+  "views.no_more_jobs": "この project の job はすべて追加済みです",
+  "views.pick_jobs_hint": "比較する job を追加してください。選んだすべての job が記録している列だけを表示します。"
 }

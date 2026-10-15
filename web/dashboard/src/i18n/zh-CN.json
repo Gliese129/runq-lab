@@ -699,5 +699,14 @@
   "consumer.kill_body": "先向进程组发 SIGTERM，30 秒后 SIGKILL。已写入的结果会保留。",
   "views.open_page": "在单独页面打开",
   "views.raw_records": "原始记录",
-  "views.open_across_jobs": "跨 job 对比"
+  "views.open_across_jobs": "跨 job 对比",
+  "views.show": "显示",
+  "views.part_table": "表格",
+  "views.dropped_columns": "已隐藏（不是每个 job 都有）：{cols}",
+  "views.jobs_without_data": "这些 job 在此视图没有数据：{jobs}",
+  "views.no_common_columns": "这些 job 在此视图里没有共同的列——请选记录了相同字段的 job。",
+  "views.jobs": "Job",
+  "views.add_job": "添加 job",
+  "views.no_more_jobs": "这个 project 的 job 都已添加",
+  "views.pick_jobs_hint": "添加要对比的 job。只显示所选 job 都有记录的列。"
 }

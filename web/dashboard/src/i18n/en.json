@@ -699,5 +699,14 @@
   "consumer.kill_body": "Its process group gets SIGTERM, then SIGKILL after 30 s. Results recorded so far stay.",
   "views.open_page": "Open as its own page",
   "views.raw_records": "Raw records",
-  "views.open_across_jobs": "Compare across jobs"
+  "views.open_across_jobs": "Compare across jobs",
+  "views.show": "Show",
+  "views.part_table": "Table",
+  "views.dropped_columns": "Hidden (not in every job): {cols}",
+  "views.jobs_without_data": "No data for this view: {jobs}",
+  "views.no_common_columns": "These jobs share no columns in this view — pick jobs that record the same fields.",
+  "views.jobs": "Jobs",
+  "views.add_job": "Add job",
+  "views.no_more_jobs": "Every job of this project is added",
+  "views.pick_jobs_hint": "Add the jobs to compare. Only the columns every chosen job records are shown."
 }

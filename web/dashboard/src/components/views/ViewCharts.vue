@@ -1,6 +1,8 @@
 <template>
   <div v-if="result.charts?.length" class="view-charts">
-    <ChartCard v-for="(c, i) in result.charts" :key="i" :result="result" :spec="c" :project="project" :view="name" :index="i" :jobs="jobs" />
+    <template v-for="(c, i) in result.charts" :key="i">
+      <ChartCard v-if="!hidden?.has(i)" :result="result" :spec="c" :project="project" :view="name" :index="i" :jobs="jobs" />
+    </template>
   </div>
 </template>
 
@@ -8,7 +10,7 @@
 import type { ViewResult } from '@/types/views'
 import ChartCard from './charts/ChartCard.vue'
 
-withDefaults(defineProps<{ project: string; name: string; result: ViewResult; jobs?: string[] }>(), { jobs: () => [] })
+withDefaults(defineProps<{ project: string; name: string; result: ViewResult; jobs?: string[]; hidden?: Set<number> }>(), { jobs: () => [], hidden: undefined })
 </script>
 
 <style scoped>
