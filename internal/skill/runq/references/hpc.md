@@ -67,11 +67,11 @@ Secrets belong in `<working_dir>/.env`, not `environment:`.
 Reservations are not a runq concept — model one as its own target:
 
 1. In `~/.runq/config.yaml`, copy the base target to a new name
-   (e.g. `tsubame-ar9055`), keep host/user/status/kill templates, and add
+   (e.g. `tsubame-reservation`), keep host/user/status/kill templates, and add
    `-ar <id>` plus the reservation's resource shape to `submit_template`
    (check the shape with `qrstat -ar <id>` or a job already in the reservation).
-2. `runq target check tsubame-ar9055`.
-3. `runq submit job.yaml -t tsubame-ar9055 --dry` and confirm `-ar <id>` is in
+2. `runq target check tsubame-reservation`.
+3. `runq submit job.yaml -t tsubame-reservation --dry` and confirm `-ar <id>` is in
    the rendered submit line. Then submit with the same `-t`.
 4. Confirm placement with `qstat -j <ext_id>` (runq only shows what it sent).
 

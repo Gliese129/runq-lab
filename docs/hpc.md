@@ -82,12 +82,12 @@ runq kill <job_id|task_id>       # cancels via your kill_template
 A reservation is modelled as its own target, not as a runq feature:
 
 1. In `~/.runq/config.yaml`, copy the base target under a new name (e.g.
-   `tsubame-ar9094`), keep host/user/status/kill templates, and add
+   `tsubame-reservation`), keep host/user/status/kill templates, and add
    `-ar <id>` plus the reservation's resource shape to `submit_template`
    (check it with `qrstat -ar <id>`).
-2. `runq target check tsubame-ar9094`, and list it in the project's `targets:`.
-3. Point the job at it — `target: tsubame-ar9094` in job.yaml or
-   `-t tsubame-ar9094` — and confirm `-ar <id>` appears in the `--dry` submit line.
+2. `runq target check tsubame-reservation`, and list it in the project's `targets:`.
+3. Point the job at it — `target: tsubame-reservation` in job.yaml or
+   `-t tsubame-reservation` — and confirm `-ar <id>` appears in the `--dry` submit line.
 
 Code is mirrored automatically when a job runs on a target other than the
 project's source target (`targets:` + `<working_dir>/.rsync`, see
