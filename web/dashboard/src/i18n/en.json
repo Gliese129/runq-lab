@@ -714,5 +714,6 @@
   "results.views_waiting": "Views of this project — none has data from this job yet:",
   "results.reads_section": "reads section",
   "results.example": "A record call:",
-  "results.example_for": "Record like this for “{name}” to appear here:"
+  "results.example_for": "Record like this for “{name}” to appear here:",
+  "job.wandb_no_entity": "No run has reported its URL yet and the project has no wandb.entity, so this link may open the wrong entity — set wandb.entity in project.yaml."
 }

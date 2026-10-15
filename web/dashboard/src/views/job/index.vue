@@ -59,8 +59,9 @@
     />
 
     <!-- W&B external link -->
-    <div v-if="detail.wandb" class="mt-4">
-      <v-btn size="small" variant="tonal" :href="detail.wandb.base_url" target="_blank">
+    <div v-if="wandbProject" class="mt-4">
+      <v-btn size="small" variant="tonal" :href="wandbProject.url" target="_blank"
+        :title="wandbProject.exact ? wandbProject.url : t('job.wandb_no_entity')">
         <v-icon start size="16">mdi-chart-scatter-plot</v-icon>
         W&B
         <v-icon end size="14">mdi-open-in-new</v-icon>
@@ -161,6 +162,7 @@ import ViewPanel from '@/components/views/ViewPanel.vue'
 import ViewCharts from '@/components/views/ViewCharts.vue'
 import CustomView from '@/components/views/CustomView.vue'
 import ResultsEmpty from './ResultsEmpty.vue'
+import { wandbProjectUrl } from '@/utils/wandbUrl'
 
 const props = defineProps<{ project: string; jobId: string }>()
 const router = useRouter()
@@ -177,6 +179,10 @@ const { confirm: confirmDialog } = useConfirm()
 // never overwrite job B, and navigation cancels in-flight fetches.
 const detailQuery = useJobDetailQuery(() => props.jobId)
 const detail = computed(() => detailQuery.data.value ?? null)
+// W&B project page from a run's real URL (host + entity), else base_url.
+const wandbProject = computed(() => detail.value
+  ? wandbProjectUrl(detail.value.tasks.map((task) => task.links?.wandb), detail.value.wandb?.base_url)
+  : null)
 
 // Tables show 8-char ids; a pasted short id 404s. Resolve it against the
 // job list (one request, only on 404): a unique match replaces the URL,

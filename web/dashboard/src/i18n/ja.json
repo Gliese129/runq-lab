@@ -714,5 +714,6 @@
   "results.views_waiting": "この project のビュー（まだこの job のデータがありません）：",
   "results.reads_section": "読む section",
   "results.example": "記録の例：",
-  "results.example_for": "この形で記録すると「{name}」がここに表示されます："
+  "results.example_for": "この形で記録すると「{name}」がここに表示されます：",
+  "job.wandb_no_entity": "まだ run が URL を報告しておらず、project に wandb.entity もないため、このリンクは別の entity を開く可能性があります。project.yaml に wandb.entity を設定してください。"
 }

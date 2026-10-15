@@ -714,5 +714,6 @@
   "results.views_waiting": "这个 project 的视图（目前都没有这个 job 的数据）：",
   "results.reads_section": "读取 section",
   "results.example": "记录示例：",
-  "results.example_for": "按这个格式记录，“{name}”就会出现在这里："
+  "results.example_for": "按这个格式记录，“{name}”就会出现在这里：",
+  "job.wandb_no_entity": "还没有 run 上报自己的 URL，project 也没有设置 wandb.entity，这个链接可能指向错误的 entity——请在 project.yaml 里设置 wandb.entity。"
 }
