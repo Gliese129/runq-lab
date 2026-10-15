@@ -58,9 +58,13 @@ charts:
 ```
 
 `runq view progress.yaml` saves/renders; `runq view progress --json` returns the
-same API data. Default job = latest unarchived job in this project. Set
-`jobs: [jb123, jb456]` or `jobs: {note: 'eval-*', last: 3}`; repeated `--job` overrides
-only the current render. `--project` disambiguates names. `--wide` adds provenance.
+same API data. A view describes how to show a section; it is not tied to jobs:
+the dashboard's job page renders every view against that job (its Results tab),
+and the project view page compares jobs the researcher adds by hand, showing the
+columns they all have. So leave `jobs` out (the CLI then uses the latest job) and
+pass `--job <id>` (repeatable) to render for specific jobs; list ids in `jobs:`
+when a view is meant to compare a fixed set. `--project` disambiguates names.
+`--wide` adds provenance.
 
 Rows must cover every identity axis. `expect` must cover exactly every row axis;
 empty expected cells remain `no data yet`. Null or division by zero displays `--`.

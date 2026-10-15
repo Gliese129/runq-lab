@@ -63,8 +63,12 @@ runq view rm eval-progress --project example
 
 A file invocation saves before rendering. `--project` overrides a missing project;
 otherwise use project.yaml or an unambiguous saved name. Jobs default to the latest
-unarchived project job. Specify `jobs: [jb123, jb456]` or
-`jobs: {note: 'eval-*', last: 3}`. Repeat `--job` for a render-only override.
+unarchived project job; repeat `--job` to render for other jobs. In the dashboard
+a view is rendered per job on that job's Results tab, and the project view page
+compares jobs you add by hand (only the columns every one of them has are shown),
+so most views need no `jobs:` at all. An explicit list, `jobs: [jb123, jb456]`,
+fixes the comparison set; the pattern form `jobs: {note: 'eval-*', last: 3}` still
+works for the CLI but depends on how notes are written, so prefer ids.
 Every selected job must belong to the same project.
 
 Rows must contain every section identity axis; `param.seed` can add task metadata.
