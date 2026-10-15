@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (next rc)
+## v0.6.0rc4 — 2026-10-15
 
 ### Breaking
 
@@ -20,12 +20,31 @@
 
 ### Changes
 
-- Add project views: fixed-schema latest records, typed expressions/expected cells,
-  source freshness and attention, seed statistics, pivot/baseline/rank, text/JSON/
-  LaTeX/Markdown/CSV exports, exact curves/frames and cached custom sources.
-- Add manually started job consumers with SDK task snapshots, independent
-  lifecycle, PID/start identity, heartbeat, logs and cancellation. Users/agents
-  own iqrsh/tmux and the script's exit decision.
+- Add project views (`runq view`): records grouped by `section` with the schema
+  frozen at the first record (`runq.record(..., section=…)`; unnamed sections are
+  a sorted-key hash), latest-per-identity storage with step as order, typed
+  expressions and expected cells, source freshness and attention, seed statistics,
+  pivot/baseline/rank, text/JSON/LaTeX/Markdown/CSV exports, exact curves and
+  history frames, script/record/report sources and custom templates.
+- Add job consumers (`consumers:` in job.yaml or `runq consumer add`): light CPU
+  processes attached to a job, started by hand (iqrsh → tmux → `bash run.sh`),
+  restartable in place, with `ctx.job_tasks()` progress snapshots, heartbeat, logs
+  and kill. They do not affect the job's status.
+- Dashboard views: a page per view with the booktabs table (copy LaTeX/Markdown,
+  CSV), six chart templates (compare, sweep, heatmap, tradeoff, progress, curves)
+  on a white paper at single/double column width, exported as SVG, 300 dpi PNG or
+  vector PDF, history as GIF/WebM, and custom HTML templates in a sandboxed frame.
+  Job pages list their consumers and the views that read them.
+- Dashboard redesign: the overview is a search box plus jobs grouped by
+  running/today/yesterday/this week; every project has a stable colour shown on its
+  jobs; words most sibling notes share are muted; job headers show the note,
+  description, sweep shape and command; a Targets page; short ids resolve; 404s no
+  longer report a lost connection.
+- `runq serve restart` no longer fails at random (the stop wait ended on any
+  signal), `serve -d` reports started only once the service accepts, and the
+  service finishes its shutdown before exiting.
+- Jobs settled before this release no longer show `observation never`; view text
+  output prints dates and readable attention lines; job lists carry descriptions.
 
 - Help leads with what runq is for and the agent loop; `submit --help` shows
   the job shape (command/target/fixed_params/sweep, ctx.params, target
@@ -36,8 +55,10 @@
   command or flag that doesn't exist or is hidden.
 - Built-in skill rewritten, including a "no wrapper scripts" mapping from what
   agents put in `.sh` files to what runq declares (env, `.env`, target
-  `env_setup`, `python_env`, `setup_command`, task dirs, preflight, resume, sync).
+  `env_setup`, `python_env`, `setup_command`, task dirs, preflight, sync). It
+  advises short, distinctive job notes with details in `description:`.
 - Removed ~1.6k lines of code left unreachable by the v0.6 cuts.
+- Python SDK: `0.6.0rc4`.
 
 ## v0.6.0rc3 — 2026-10-12
 

@@ -557,7 +557,7 @@ wheels = [
 
 [[package]]
 name = "runq-sdk"
-version = "0.6.0rc3"
+version = "0.6.0rc4"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
