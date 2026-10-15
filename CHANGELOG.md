@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.6.0rc5 — unreleased (not tagged)
 
 ### Breaking
 
