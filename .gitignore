@@ -57,3 +57,6 @@ logs/
 progress/
 .cache
 /docs/design_philosophy.md
+
+# Local design notes, verification evidence, migrations, and audit exports
+/artifacts/
