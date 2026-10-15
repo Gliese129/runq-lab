@@ -62,7 +62,13 @@ describe('IncrementalLogPipeline ≡ processLog', () => {
   // The one correctness contract: ANY batch split must produce the same
   // lines/structures as a single-shot run — including splits that land
   // inside tqdm runs, tracebacks and tables.
-  it('random batch splits match the one-shot result', () => {
+  //
+  // The splits are already deterministic (seeded LCG), so this test can only
+  // flake on time: it is the heaviest unit test in the suite (~1-2.5s alone)
+  // and ran into vitest's 5s default under a loaded full run. Hence one
+  // aggregate count assertion instead of ~9000 per-line expect() calls, and
+  // explicit headroom.
+  it('random batch splits match the one-shot result', { timeout: 20_000 }, () => {
     const raw = makeLog(3000)
     const oneShot = processLog(raw, TOGGLES, DEFAULT_PRE_DRAIN_RULES)
 
@@ -77,11 +83,10 @@ describe('IncrementalLogPipeline ≡ processLog', () => {
       }
       inc.recomputeMotifs()
       const got = inc.result()
-      expect(normalize(got)).toEqual(normalize(oneShot))
+      expect(normalize(got), `seed ${seed}`).toEqual(normalize(oneShot))
       // Drain counts must be exact after all the subtract/re-add cycles.
-      for (const l of got.lines) {
-        if (l.clusterId >= 0) expect(got.drain.count(l.clusterId)).toBeGreaterThan(0)
-      }
+      const dead = got.lines.filter(l => l.clusterId >= 0 && got.drain.count(l.clusterId) <= 0)
+      expect(dead.map(l => l.lineIdx), `seed ${seed}`).toEqual([])
     }
   })
 
