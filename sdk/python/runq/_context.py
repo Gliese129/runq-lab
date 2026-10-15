@@ -25,13 +25,30 @@ from typing import Any
 _ctx: Context | None = None
 
 
-class ParamDict(dict):
-    """Dict subclass with helpful KeyError messages for parameter access.
+_NO_DEFAULT = object()
 
-    When a key is missing, shows all available keys and suggests close
-    matches via fuzzy matching — catches the common "sweep YAML says
-    ``learning_rate``, code says ``lr``" mismatch immediately.
+
+class ParamDict(dict):
+    """Dict subclass for parameter access.
+
+    ``params["kl"]`` means the param is required: a missing key raises with
+    the available keys and close matches (catches "sweep says
+    ``learning_rate``, code says ``lr``").
+
+    ``params.get("kl", 0.0)`` must name its default. The default is what the
+    task runs with whenever a job does not set the param, so it belongs in
+    the code, in plain sight; a bare ``get("kl")`` would silently yield None
+    and change behaviour without anyone deciding it.
     """
+
+    def get(self, key, default=_NO_DEFAULT):
+        if default is _NO_DEFAULT:
+            raise TypeError(
+                f"runq: ctx.params.get({key!r}) needs an explicit default, e.g. "
+                f"ctx.params.get({key!r}, 0.0) — it is what this task uses when the job "
+                f"does not set {key!r}. Use ctx.params[{key!r}] if the param is required."
+            )
+        return super().get(key, default)
 
     def __getitem__(self, key):
         try:
@@ -114,13 +131,13 @@ class Context:
             raise ValueError("invalid job task snapshot")
         return snapshot
 
-    def get(self, name: str, default: Any = None) -> Any:
-        """Look up a param with a fallback default.
+    def get(self, name: str, default: Any = _NO_DEFAULT) -> Any:
+        """Look up a param; the default must be given (see ParamDict.get).
 
-        Equivalent to ``ctx.params.get(name, default)`` — common enough to
-        deserve a shorthand.
+        Equivalent to ``ctx.params.get(name, default)``.
         """
-        return self.params.get(name, default)
+        params = self.params if isinstance(self.params, ParamDict) else ParamDict(self.params)
+        return params.get(name, default)
 
     # ---- wandb-like shape helpers (F9) ----
     #

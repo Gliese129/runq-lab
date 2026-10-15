@@ -100,7 +100,9 @@ Dry-run lists them once as an informational hint. Missing explicit placeholders 
 `{{param.*}}` belongs to scheduler templates, not the command renderer.
 
 `choices` is always a constraint when nonempty, including in legacy files with `strict: false`.
-Defaults belong in code (`ctx.params.get("lr", 1e-3)`); params.json contains only supplied values.
+Defaults belong in code and are always written out: `ctx.params.get("lr", 1e-3)`
+(a bare `ctx.params.get("lr")` raises), or `ctx.params["lr"]` for a required param.
+params.json contains only supplied values.
 Legacy parameter `default/min/max/include/glob/strict` fields are ignored and no longer written.
 Project command is optional if the job provides one. Legacy project `command_template` remains
 readable; specifying both names is an error, and serialization writes only `command`.

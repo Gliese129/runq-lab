@@ -96,8 +96,11 @@ the dashboard groups them under the directory.
 
 ### Parameters
 1. Put values in `fixed_params` / `sweep`; each lands in `params.json`, and code reads
-   it with `ctx.params.get("kl", 0.0)`. Keep defaults in code, where they also apply
-   when the script runs by hand.
+   it with `ctx.params.get("kl", 0.0)` — always with the default written out: it is
+   what every job that leaves the param out runs with, and when the script runs by
+   hand. A bare `ctx.params.get("kl")` raises, so the behaviour never silently
+   depends on `None`. For a param the code cannot run without, use
+   `ctx.params["kl"]` (raises with the available names when it is missing).
 2. Reference a param in the command (`{{x}}`, or `{{args}}` for all) when the script
    expects it as a flag. Give every referenced `{{x}}` a value in the job — otherwise
    submit reports `template references unknown parameter(s)`.

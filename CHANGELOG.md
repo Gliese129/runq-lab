@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+- SDK: `ctx.params.get(name)` and `ctx.get(name)` need an explicit default
+  (`ctx.params.get("kl", 0.0)`); without one they raise. The default is what a task
+  runs with whenever its job leaves the param out, so it is written in the code.
+  `ctx.params["name"]` stays the way to read a required param.
+
+### Changes
+
+- Integer params such as an 8-digit seed render and validate as integers (they
+  printed as `2.0261009e+07`); view numbers print in full, scientific only via
+  `sci0`–`sci3` / `key_formats`.
+- Dashboard: a job's Results are its views; the project view page compares jobs
+  you add by hand (columns shared by all of them); table and charts can be
+  hidden; an informative empty Results tab; the W&B button uses the run's entity.
+- Docs/skill: one directory may hold several projects; views are not tied to jobs.
+
 ## v0.6.0rc4 — 2026-10-15
 
 ### Breaking

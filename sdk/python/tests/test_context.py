@@ -78,7 +78,7 @@ def test_params_loaded_from_env_path(clean_env, tmp_path, monkeypatch):
 
     ctx = runq.context()
     assert ctx.params == {"lr": 1e-4, "bs": 32}
-    assert ctx.get("lr") == 1e-4
+    assert ctx.get("lr", 0.0) == 1e-4
     assert ctx.get("missing", 99) == 99
 
 
@@ -161,3 +161,28 @@ def test_checkpoint_dir_auto_created(clean_env, tmp_path, monkeypatch):
     monkeypatch.setenv("RUNQ_CHECKPOINT_DIR", str(ckpt))
     runq.context()
     assert ckpt.is_dir()
+
+
+def test_params_get_requires_an_explicit_default():
+    import pytest
+    from runq import ParamDict
+
+    p = ParamDict({"lr": 1e-4})
+    assert p.get("lr", 0.0) == 1e-4
+    assert p.get("missing", None) is None  # an explicit None is a decision
+    with pytest.raises(TypeError, match=r"needs an explicit default"):
+        p.get("missing")
+    with pytest.raises(TypeError, match=r"needs an explicit default"):
+        p.get("lr")  # even when present: the default must be in the code
+    with pytest.raises(KeyError, match=r"Did you mean"):
+        p["lrr"]
+
+
+def test_ctx_get_requires_an_explicit_default(clean_env):
+    import pytest
+    import runq
+
+    ctx = runq.context()
+    assert ctx.get("x", 3) == 3
+    with pytest.raises(TypeError, match=r"needs an explicit default"):
+        ctx.get("x")
