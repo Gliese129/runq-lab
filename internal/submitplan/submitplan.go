@@ -113,7 +113,7 @@ func validateChoices(proj *project.Config, tasks []job.TaskParams) error {
 			if !present {
 				continue
 			}
-			s := fmt.Sprintf("%v", v)
+			s := job.FormatValue(v)
 			if !allowed[s] {
 				return fmt.Errorf(
 					"param %q: value %q is not among its choices (%s)",
@@ -139,7 +139,7 @@ func validateParamTypes(proj *project.Config, tasks []job.TaskParams) error {
 			if !present {
 				continue
 			}
-			s := strings.TrimSpace(fmt.Sprintf("%v", v))
+			s := strings.TrimSpace(job.FormatValue(v))
 			var ok bool
 			switch def.Type {
 			case "int":

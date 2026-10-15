@@ -2,8 +2,10 @@ package job
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -37,7 +39,7 @@ func RenderExcluding(template string, params TaskParams, exclude map[string]bool
 // TruthyFlag reports whether a flag-style param value means "the switch
 // is on". Anything else — false/0/no/None/empty — means off.
 func TruthyFlag(v any) bool {
-	switch strings.ToLower(fmt.Sprintf("%v", v)) {
+	switch strings.ToLower(FormatValue(v)) {
 	case "true", "1", "yes", "y", "on":
 		return true
 	}
@@ -112,21 +114,31 @@ func RenderWithFlags(template string, params TaskParams, exclude, flagParams map
 	return result, nil
 }
 
-// formatValue converts a parameter value to its string representation.
+// FormatValue is how a parameter value is written into commands, names and
+// checks. Params cross JSON on the way from the CLI to the service, so an
+// int arrives as float64 — and %v prints float64(20261009) as
+// "2.0261009e+07", which argparse rejects. Integral floats print as
+// integers and other floats in full decimal:
 //
-// Uses %v which handles common types naturally:
-//
-//	int(32)          → "32"
-//	float64(0.001)   → "0.001"
-//	string("adam")   → "adam"
-//	bool(true)       → "true"
-//
-// Note: YAML scientific notation like 1e-4 is parsed as float64(0.0001),
-// so the original literal form is lost. This is acceptable for v1 since
-// most ML frameworks accept both forms via argparse.
-func formatValue(v any) string {
+//	float64(20261009) → "20261009"
+//	float64(0.001)    → "0.001"
+//	float64(1e-6)     → "0.000001"
+//	string("adam")    → "adam"
+//	bool(true)        → "true"
+func FormatValue(v any) string {
+	switch n := v.(type) {
+	case float64:
+		if n == math.Trunc(n) && math.Abs(n) < 1e15 {
+			return strconv.FormatInt(int64(n), 10)
+		}
+		return strconv.FormatFloat(n, 'f', -1, 64)
+	case float32:
+		return FormatValue(float64(n))
+	}
 	return fmt.Sprintf("%v", v)
 }
+
+func formatValue(v any) string { return FormatValue(v) }
 
 // sortedKeys returns the keys of a TaskParams map in sorted order.
 func sortedKeys(params TaskParams) []string {
