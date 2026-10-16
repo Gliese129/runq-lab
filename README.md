@@ -45,7 +45,7 @@ web dashboard, verifies checksums, and replaces only the `runq` binary.
 | `RUNQ_WITH_UI=0\|1` | Skip the dashboard prompt |
 | `RUNQ_START_DAEMON=1` | Start (or restart) the runq service after install |
 | `RUNQ_INSTALL_DIR=…` | Custom install path |
-| `RUNQ_VERSION=v…` | Pin a release, e.g. `v0.6.0rc5` |
+| `RUNQ_VERSION=v…` | Pin a release, e.g. `v0.6.0` |
 
 Python SDK: `pip install runq-sdk`.
 

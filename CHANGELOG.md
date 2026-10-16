@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.6.0 — 2026-10-16
+
+First stable 0.6 release: everything from rc1–rc5, plus:
+
+### Fixes
+
+- SSH: the key file (`IdentityFile` / target `key`) is tried even when
+  ssh-agent is running but empty or holds other keys. Before, the daemon failed
+  with "attempted methods [none publickey]" while plain `ssh` logged in.
+
+### Changes
+
+- `runq target rm <name>` and a remove button on the dashboard's Targets page.
+  Refused while a project still uses the target; tasks already there finish;
+  old jobs stay readable.
+- Dashboard task page: metric names like `eval/V150/EN-plain/accuracy` are picked
+  by path level (benchmark × split × metric) in a folded picker; latest metrics
+  are grouped by path; parameters sit in a folded panel, swept ones first.
+
 ## v0.6.0rc5 — 2026-10-15
 
 ### Breaking
