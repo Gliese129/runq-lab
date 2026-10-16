@@ -1,16 +1,49 @@
 <template>
   <div>
-    <div v-if="metricKeys.length > 1" class="d-flex flex-wrap ga-1 mb-2">
-      <v-chip
-        v-for="key in metricKeys" :key="key"
-        size="x-small"
-        role="button"
-        :aria-pressed="visibleKeys.has(key)"
-        :variant="visibleKeys.has(key) ? 'flat' : 'outlined'"
-        :color="visibleKeys.has(key) ? 'primary' : undefined"
-        @click="toggleKey(key)"
-      >{{ key }}</v-chip>
-    </div>
+    <!-- Names are paths ("eval/V150/EN-plain/accuracy"): one chip row per
+         path level that varies, the metric itself last. A level with
+         nothing picked means "all"; the metric row picks the lines.
+         Folded by default: the header says what is drawn. -->
+    <v-expansion-panels v-if="metricKeys.length > 1" v-model="pickerOpen" variant="accordion" flat class="picker mb-2">
+      <v-expansion-panel value="open">
+        <v-expansion-panel-title class="picker-title">
+          <span class="text-caption font-mono picker-summary">{{ selectionSummary }}</span>
+        </v-expansion-panel-title>
+        <v-expansion-panel-text>
+          <div class="facets">
+            <div v-for="f in facetModel.facets" :key="f.level" class="facet-row">
+              <span class="facet-label text-caption text-on-surface-variant">
+                {{ f.level < 0 ? t('task.metric_facet') : (f.level === firstLevel && facetModel.shared ? facetModel.shared : '') }}
+              </span>
+              <div class="facet-chips" :class="{ 'facet-scroll': f.level < 0 && f.values.length > LEAF_FILTER_AT }">
+                <v-text-field
+                  v-if="f.level < 0 && f.values.length > LEAF_FILTER_AT"
+                  v-model="leafFilter"
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  clearable
+                  :placeholder="t('task.metric_filter')"
+                  class="leaf-filter"
+                />
+                <v-chip
+                  v-for="v in shownValues(f)" :key="v"
+                  size="x-small"
+                  role="button"
+                  :aria-pressed="isPicked(f.level, v)"
+                  :variant="isPicked(f.level, v) ? 'flat' : 'outlined'"
+                  :color="isPicked(f.level, v) ? 'primary' : undefined"
+                  @click="toggle(f.level, v)"
+                >{{ v }}</v-chip>
+              </div>
+            </div>
+            <div v-if="matchedKeys.length > MAX_LINES" class="text-caption text-on-surface-variant">
+              {{ t('task.metric_capped', { shown: MAX_LINES, total: matchedKeys.length }) }}
+            </div>
+          </div>
+        </v-expansion-panel-text>
+      </v-expansion-panel>
+    </v-expansion-panels>
     <!-- One fixed-height frame hosts BOTH the canvas and the empty text:
          the two states share the same box, so neither data arrival nor an
          emptied selection can shift the layout. The canvas stays in flow
@@ -37,6 +70,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from 'vuetify'
+import { buildFacets, initialSelection, selectNames, seriesLabels, type Facet, type FacetSelection } from '@/utils/metricFacets'
 import { Chart, LineController, LineElement, PointElement, LinearScale, CategoryScale, Legend, Tooltip, Filler } from 'chart.js'
 
 Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Legend, Tooltip, Filler)
@@ -64,26 +98,62 @@ const metricKeys = computed(() => {
   return [...keys].sort()
 })
 
-const visibleKeys = ref(new Set<string>())
-// Sticks once the user empties the selection: without it, the next poll
-// (new metricKeys array reference) re-ticked the first 3 keys and
-// overrode an explicit "show nothing" choice.
-let userCleared = false
+const facetModel = computed(() => buildFacets(metricKeys.value))
+const firstLevel = computed(() => facetModel.value.facets[0]?.level)
 
-// Auto-show first 3 keys (initial state only — never after a user clear)
+// Lines past this get unreadable; the rest are listed as a count.
+const MAX_LINES = 12
+// Above this many metrics the metric row gets a filter box.
+const LEAF_FILTER_AT = 16
+
+const selection = ref<FacetSelection>(new Map())
+const leafFilter = ref<string | null>('')
+// Sticks once the user touches the picker: without it, the next poll
+// (new metricKeys array reference) re-picked the defaults and overrode
+// an explicit "show nothing" choice.
+let userTouched = false
+
 watch(metricKeys, (keys) => {
-  if (!userCleared && visibleKeys.value.size === 0 && keys.length > 0) {
-    for (const k of keys.slice(0, 3)) visibleKeys.value.add(k)
+  if (!userTouched && !selection.value.get(-1)?.size && keys.length > 0) {
+    selection.value = initialSelection(keys)
   }
 }, { immediate: true })
 
-function toggleKey(key: string) {
-  const s = new Set(visibleKeys.value)
-  if (s.has(key)) s.delete(key)
-  else s.add(key)
-  userCleared = s.size === 0
-  visibleKeys.value = s
+function isPicked(level: number, v: string) {
+  return selection.value.get(level)?.has(v) ?? false
 }
+
+function toggle(level: number, v: string) {
+  const next: FacetSelection = new Map([...selection.value].map(([k, s]) => [k, new Set(s)]))
+  const s = next.get(level) ?? new Set<string>()
+  if (s.has(v)) s.delete(v)
+  else s.add(v)
+  next.set(level, s)
+  userTouched = true
+  selection.value = next
+}
+
+function shownValues(f: Facet) {
+  const q = (leafFilter.value ?? '').trim().toLowerCase()
+  if (f.level >= 0 || !q) return f.values
+  // Picked metrics stay visible while filtering so they can be unpicked.
+  return f.values.filter((v) => v.toLowerCase().includes(q) || isPicked(-1, v))
+}
+
+const matchedKeys = computed(() => selectNames(metricKeys.value, selection.value))
+const visibleKeys = computed(() => new Set(matchedKeys.value.slice(0, MAX_LINES)))
+const labels = computed(() => seriesLabels([...visibleKeys.value]))
+
+const pickerOpen = ref<string | undefined>(undefined)
+// "accuracy · V150 · 4 lines" — the picked values per row, metric first.
+const selectionSummary = computed(() => {
+  const leaf = [...(selection.value.get(-1) ?? [])].sort()
+  const narrowed = facetModel.value.facets
+    .filter((f) => f.level >= 0 && selection.value.get(f.level)?.size)
+    .map((f) => [...selection.value.get(f.level)!].sort().join(', '))
+  const parts = [leaf.length ? leaf.join(', ') : t('task.metric_none'), ...narrowed]
+  return `${parts.join(' · ')} — ${t('task.metric_lines', visibleKeys.value.size)}`
+})
 
 const hasData = computed(() => props.points.length > 0)
 // A chart exists only when there is data AND at least one visible series —
@@ -94,7 +164,7 @@ const hasChart = computed(() => hasData.value && visibleKeys.value.size > 0)
 // screen-reader users know what the picture claims to show; it tracks the
 // chip toggles automatically.
 const chartLabel = computed(() =>
-  t('task.metrics_chart', { keys: metricKeys.value.filter(k => visibleKeys.value.has(k)).join(', ') }))
+  t('task.metrics_chart', { keys: [...visibleKeys.value].join(', ') }))
 
 // Mid-range hues that read on BOTH light and dark surfaces (the old
 // palette reused the light theme's 800-level tones — near-invisible on
@@ -106,7 +176,7 @@ function buildDatasets() {
   return [...visibleKeys.value].map((key, i) => {
     const keyPoints = props.points.filter(p => p.key === key)
     return {
-      label: key,
+      label: labels.value.get(key) ?? key,
       // idx from map, NOT keyPoints.indexOf(p): that was O(k²) per rebuild
       data: keyPoints.map((p, idx) => ({ x: p.step ?? idx, y: p.value })),
       borderColor: COLORS[i % COLORS.length],
@@ -143,7 +213,12 @@ function buildChart() {
       },
       plugins: {
         legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
-        tooltip: { mode: 'index', intersect: false },
+        // Legend labels are shortened; the tooltip names the full metric.
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          callbacks: { label: (c) => `${[...visibleKeys.value][c.datasetIndex] ?? c.dataset.label}: ${c.formattedValue}` },
+        },
       },
       interaction: { mode: 'nearest', axis: 'x', intersect: false },
     },
@@ -183,6 +258,63 @@ onUnmounted(() => { if (chart) chart.destroy() })
 </script>
 
 <style scoped>
+.picker {
+  border: 1px solid rgb(var(--v-theme-outline-variant));
+  border-radius: 6px;
+}
+.picker :deep(.v-expansion-panel-title) {
+  min-height: 32px;
+  padding: 4px 10px;
+}
+.picker :deep(.v-expansion-panel-title--active) {
+  min-height: 32px;
+}
+.picker :deep(.v-expansion-panel-text__wrapper) {
+  padding: 4px 10px 10px;
+}
+.picker-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.facets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.facet-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.facet-label {
+  flex: 0 0 56px;
+  padding-top: 2px;
+  font-family: var(--font-mono, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.facet-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.facet-scroll {
+  max-height: 96px;
+  overflow-y: auto;
+}
+.leaf-filter {
+  flex: 0 0 160px;
+}
+.leaf-filter :deep(.v-field__input) {
+  min-height: 24px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 12px;
+}
 .chart-frame {
   position: relative;
   height: 300px;

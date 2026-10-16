@@ -83,16 +83,17 @@
           </div>
         </div>
       </details>
-      <!-- Params ARE the identity of a task — above the fold on both tabs;
-           swept ones (the job's axes) carry the accent. -->
-      <div class="d-flex ga-1 flex-wrap mt-3">
+      <!-- The swept params ARE the identity of a task — above the fold on
+           both tabs. Fixed ones are the same for every task of the job;
+           they live in the folded Parameters panel. -->
+      <div v-if="sweptParams.size" class="d-flex ga-1 flex-wrap mt-3">
         <v-chip
-          v-for="(val, key) in task.params" :key="key"
+          v-for="key in sweptParams" :key="key"
           size="x-small"
-          :variant="sweptParams.has(String(key)) ? 'tonal' : 'outlined'"
-          :color="sweptParams.has(String(key)) ? 'secondary' : undefined"
+          variant="tonal"
+          color="secondary"
           class="font-mono"
-        >{{ key }} = {{ val }}</v-chip>
+        >{{ key }} = {{ task.params?.[key] }}</v-chip>
       </div>
       <!-- HPC-specific stats (poll-model only) -->
       <v-row v-if="task.external_id" dense class="mt-1">
@@ -165,33 +166,14 @@
       <v-card class="pa-4">
         <!-- Parameters: swept vs fixed is a property of the JOB — a param
              is an axis only if sibling tasks disagree about it. -->
-        <div class="text-subtitle-2 mb-2">{{ t('submit.parameters') }}</div>
-        <div class="param-list mb-2">
-          <div
-            v-for="(val, key) in task.params" :key="key"
-            class="param-row font-mono"
-            :class="{ 'param-swept': sweptParams.has(String(key)) }"
-          >
-            <span class="param-key">{{ key }}</span>
-            <span class="param-val" :class="{ 'text-secondary font-weight-bold': sweptParams.has(String(key)) }">{{ val }}</span>
-          </div>
-        </div>
-        <div class="d-flex align-center ga-3 text-caption text-on-surface-variant mb-4">
-          <span class="d-inline-flex align-center ga-1"><span class="legend-box legend-swept" />{{ t('task.swept') }}</span>
-          <span class="d-inline-flex align-center ga-1"><span class="legend-box legend-fixed" />{{ t('task.fixed_for_job') }}</span>
-        </div>
+        <TaskParams :params="task.params ?? {}" :swept="sweptParams" class="mb-3" />
 
         <template v-if="latestMetrics.length">
           <div class="text-subtitle-2 mb-2">
             {{ t('task.latest_metrics') }}
             <span class="text-caption text-on-surface-variant ml-1">{{ t('job.step') }} {{ task.current_step ?? '—' }}</span>
           </div>
-          <div class="param-list mb-4">
-            <div v-for="[k, v] in latestMetrics" :key="k" class="param-row font-mono">
-              <span class="param-key">{{ k }}</span>
-              <span class="param-val">{{ v }}</span>
-            </div>
-          </div>
+          <LatestMetrics :metrics="task.metrics ?? {}" class="mb-4" />
         </template>
 
         <div class="text-subtitle-2 mb-2">{{ t('task.execution') }}</div>
@@ -361,6 +343,8 @@ import GenerationRerunDialog from '@/components/GenerationRerunDialog.vue'
 import { useConfigStore } from '@/stores/config'
 import { useLogSurfaceStore } from '@/stores/logSurface'
 import MetricsChart from '@/components/MetricsChart.vue'
+import LatestMetrics from '@/components/LatestMetrics.vue'
+import TaskParams from '@/components/TaskParams.vue'
 import TaskActivityCurve from './TaskActivityCurve.vue'
 import type { ActivityCell } from './activityMath'
 import TaskStatusBadge from '@/components/TaskStatusBadge.vue'
@@ -507,7 +491,7 @@ const sweptParams = computed(() => {
   return s
 })
 
-const latestMetrics = computed(() => Object.entries(task.value?.metrics ?? {}))
+const latestMetrics = computed(() => Object.keys(task.value?.metrics ?? {}))
 
 // External links are the actual URLs reported by initialized tools.
 const taskLinks = computed(() => {
@@ -1139,22 +1123,6 @@ onUnmounted(() => {
 @media (max-width: 959px) {
   .run-grid { grid-template-columns: 1fr; }
 }
-
-.param-list { display: grid; gap: 2px; }
-.param-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 6px;
-  border-radius: 4px;
-  font-size: 13px;
-}
-.param-swept { background: rgb(var(--v-theme-secondary), 0.1); }
-.param-key { flex: 1; color: rgb(var(--v-theme-on-surface-variant)); }
-.param-val { word-break: break-all; }
-.legend-box { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-.legend-swept { background: rgb(var(--v-theme-secondary), 0.4); }
-.legend-fixed { border: 1px solid rgb(var(--v-theme-outline-variant)); }
 
 .kv-row {
   display: flex;

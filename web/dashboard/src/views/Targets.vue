@@ -33,6 +33,16 @@
         >
           <v-icon start size="16">mdi-lan-connect</v-icon>{{ t('targets.connect') }}
         </v-btn>
+        <v-btn
+          size="small" variant="text" icon
+          :loading="busy === `remove:${r.name}`"
+          :aria-label="t('targets.remove')"
+          :title="t('targets.remove')"
+          class="remove-btn"
+          @click="remove(r)"
+        >
+          <v-icon size="18">mdi-delete-outline</v-icon>
+        </v-btn>
       </div>
 
       <v-row dense class="px-4 pb-3">
@@ -80,12 +90,14 @@ import { useHealthQuery } from '@/queries/useHealthQuery'
 import { useJobsListQuery } from '@/queries/useJobQueries'
 import { useConfigStore } from '@/stores/config'
 import { useSnackbar } from '@/composables/useSnackbar'
+import { useConfirm } from '@/composables/useConfirm'
 import StatusDot from '@/components/StatusDot.vue'
 import { relativeTime } from '@/utils/relativeTime'
 import { targetRows, type Connection, type TargetRow } from './targetsView'
 
 const { t } = useI18n()
 const snack = useSnackbar()
+const { confirm } = useConfirm()
 const qc = useQueryClient()
 const config = useConfigStore()
 
@@ -126,9 +138,26 @@ async function connect(name: string) {
     await qc.invalidateQueries({ queryKey: qk.health })
   } catch { /* client.ts already reported it */ } finally { busy.value = '' }
 }
+async function remove(r: TargetRow) {
+  const ok = await confirm({
+    title: t('targets.remove_title', { name: r.name }),
+    body: t('targets.remove_body') + (r.running || r.pending ? ' ' + t('targets.remove_active', { n: r.running + r.pending }) : ''),
+    confirmText: t('targets.remove'),
+    danger: true,
+  })
+  if (!ok) return
+  busy.value = `remove:${r.name}`
+  try {
+    const res = await targetsApi.remove(r.name)
+    snack.success(res.was_default ? t('targets.removed_default', { name: r.name }) : t('targets.removed', { name: r.name }))
+    await Promise.all([qc.invalidateQueries({ queryKey: qk.targets }), qc.invalidateQueries({ queryKey: qk.health }), config.fetchConfig()])
+  } catch { /* client.ts already reported it (e.g. still used by a project) */ } finally { busy.value = '' }
+}
 </script>
 
 <style scoped>
+.remove-btn { color: rgb(var(--v-theme-on-surface-variant)); }
+.remove-btn:hover { color: rgb(var(--v-theme-error)); }
 .template,
 .last-error {
   display: block;
