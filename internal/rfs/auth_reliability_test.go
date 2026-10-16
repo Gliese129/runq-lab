@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -124,5 +126,59 @@ func TestAgentRestartAndExplicitSocketBinding(t *testing.T) {
 	}
 	if f.execRequests.Load() != 0 {
 		t.Fatal("authentication failure/cancel executed a command")
+	}
+}
+
+// An agent that holds only other keys must not hide the configured key
+// file: x/crypto/ssh tries the "publickey" method name once, so the file
+// and the agent identities have to be offered together.
+func TestKeyFileUsedWhenAgentHoldsOtherKeys(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "rq-agent-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	_, fileKey, _ := ed25519.GenerateKey(rand.Reader)
+	_, otherKey, _ := ed25519.GenerateKey(rand.Reader)
+	filePub, _ := ssh.NewPublicKey(fileKey.Public())
+	block, err := ssh.MarshalPrivateKey(fileKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(dir, "id_ed25519")
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := newFaultSSH(t, func(cfg *ssh.ServerConfig) {
+		cfg.NoClientAuth = false
+		cfg.PublicKeyCallback = func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			if string(key.Marshal()) != string(filePub.Marshal()) {
+				return nil, errors.New("not the authorized key")
+			}
+			return nil, nil
+		}
+	})
+	for _, tc := range []struct {
+		name  string
+		agent func(sock string)
+	}{
+		{"agent with another key", func(sock string) { startTestAgent(t, sock, otherKey) }},
+		{"agent socket gone", func(string) {}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sock := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "-")+".sock")
+			tc.agent(sock)
+			methods, err := ResolveAuthMethods(keyPath, sock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := f.cfg
+			cfg.AuthMethods = methods
+			fs := NewSSHFS(cfg)
+			defer fs.Close()
+			if _, err := fs.Home(); err != nil {
+				t.Fatalf("key file not offered: %v", err)
+			}
+		})
 	}
 }

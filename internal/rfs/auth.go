@@ -13,41 +13,21 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 )
 
-// ResolveAuthMethods builds the ordered auth chain (RQ-45): ssh-agent
-// first when SSH_AUTH_SOCK is present — signing stays in the agent, the
-// daemon never reads key plaintext — then the configured key file. An
-// encrypted key file without an agent is a clear, actionable error, not
-// a parse failure.
+// ResolveAuthMethods builds the auth chain (RQ-45): the configured key
+// file and the ssh-agent's identities, offered through ONE publickey
+// method — golang.org/x/crypto/ssh tries each method name once, so a
+// second PublicKeys method after an agent that holds no matching key was
+// never attempted ("attempted methods [none publickey]") even though
+// plain ssh logged in with the same file. Signing via the agent stays in
+// the agent; an encrypted key file without an agent is a clear,
+// actionable error, not a parse failure.
 func ResolveAuthMethods(keyPath string, agentSocket ...string) ([]ssh.AuthMethod, error) {
-	var methods []ssh.AuthMethod
-
 	sock := os.Getenv("SSH_AUTH_SOCK")
 	if len(agentSocket) > 0 {
 		sock = agentSocket[0]
 	}
-	if sock != "" {
-		methods = append(methods, ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
-			conn, err := dialAgent(sock)
-			if err != nil {
-				return nil, err
-			}
-			defer conn.Close()
-			keys, err := agent.NewClient(conn).List()
-			if err != nil {
-				return nil, err
-			}
-			var signers []ssh.Signer
-			for _, key := range keys {
-				pub, err := ssh.ParsePublicKey(key.Blob)
-				if err != nil {
-					return nil, err
-				}
-				signers = append(signers, &reconnectingAgentSigner{sock: sock, pub: pub})
-			}
-			return signers, nil
-		}))
-	}
 
+	var fileSigner ssh.Signer
 	if keyPath != "" {
 		if fi, err := os.Stat(keyPath); err == nil && fi.Mode().Perm()&0o077 != 0 {
 			slog.Warn("ssh key file permissions too open (ssh convention is 0600)", "key", keyPath, "mode", fi.Mode().Perm().String())
@@ -57,25 +37,70 @@ func ResolveAuthMethods(keyPath string, agentSocket ...string) ([]ssh.AuthMethod
 			return nil, fmt.Errorf("read key %q: %w", keyPath, err)
 		}
 		signer, err := ssh.ParsePrivateKey(keyBytes)
-		if err != nil {
-			var passErr *ssh.PassphraseMissingError
-			if errors.As(err, &passErr) {
-				if len(methods) > 0 {
-					// Agent is available — the encrypted file is fine to skip.
-					slog.Debug("key file is passphrase-protected; relying on ssh-agent", "key", keyPath)
-					return methods, nil
-				}
-				return nil, fmt.Errorf("key %q is passphrase-protected — add it to ssh-agent (`ssh-add %s`); the daemon does not prompt for passphrases", keyPath, keyPath)
-			}
+		var passErr *ssh.PassphraseMissingError
+		switch {
+		case err == nil:
+			fileSigner = signer
+		case errors.As(err, &passErr) && sock != "":
+			// Agent is available — the encrypted file is fine to skip.
+			slog.Debug("key file is passphrase-protected; relying on ssh-agent", "key", keyPath)
+		case errors.As(err, &passErr):
+			return nil, fmt.Errorf("key %q is passphrase-protected — add it to ssh-agent (`ssh-add %s`); the daemon does not prompt for passphrases", keyPath, keyPath)
+		default:
 			return nil, fmt.Errorf("parse key %q: %w", keyPath, err)
 		}
-		methods = append(methods, ssh.PublicKeys(signer))
 	}
 
-	if len(methods) == 0 {
+	if sock == "" && fileSigner == nil {
 		return nil, fmt.Errorf("no usable ssh auth: SSH_AUTH_SOCK not set and no key file configured")
 	}
-	return methods, nil
+	if sock == "" {
+		return []ssh.AuthMethod{ssh.PublicKeys(fileSigner)}, nil
+	}
+	return []ssh.AuthMethod{ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
+		// The configured file first (what IdentityFile names), then the
+		// agent's other identities. An unreachable or empty agent is not
+		// fatal while the file can still sign.
+		var signers []ssh.Signer
+		if fileSigner != nil {
+			signers = append(signers, fileSigner)
+		}
+		agentSigners, err := listAgent(sock)
+		if err != nil {
+			if fileSigner == nil {
+				return nil, err
+			}
+			slog.Debug("ssh-agent unavailable; using key file", "sock", sock, "error", err)
+		}
+		for _, sg := range agentSigners {
+			if fileSigner != nil && string(sg.PublicKey().Marshal()) == string(fileSigner.PublicKey().Marshal()) {
+				continue
+			}
+			signers = append(signers, sg)
+		}
+		return signers, nil
+	})}, nil
+}
+
+func listAgent(sock string) ([]ssh.Signer, error) {
+	conn, err := dialAgent(sock)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	keys, err := agent.NewClient(conn).List()
+	if err != nil {
+		return nil, err
+	}
+	var signers []ssh.Signer
+	for _, key := range keys {
+		pub, err := ssh.ParsePublicKey(key.Blob)
+		if err != nil {
+			return nil, err
+		}
+		signers = append(signers, &reconnectingAgentSigner{sock: sock, pub: pub})
+	}
+	return signers, nil
 }
 
 func dialAgent(sock string) (net.Conn, error) {
