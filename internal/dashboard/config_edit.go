@@ -2,13 +2,17 @@ package dashboard
 
 import (
 	"context"
-
+	"errors"
+	"fmt"
 	"net/http"
-
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/gliese129/runq-lab/internal/backend"
 	"github.com/gliese129/runq-lab/internal/config"
+	"github.com/gliese129/runq-lab/internal/genfile"
+	"github.com/gliese129/runq-lab/internal/store"
 
 	"github.com/gliese129/runq-lab/internal/rfs"
 )
@@ -134,4 +138,84 @@ func (s *Server) handleRefreshTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, receipt)
+}
+
+type targetDeleteResponse struct {
+	OK bool `json:"ok"`
+	// WasDefault: default_target was this target and is now unset.
+	WasDefault bool `json:"was_default"`
+	// ActiveTasks keep running to completion on the retiring lane; no new
+	// work can be submitted to the target.
+	ActiveTasks int `json:"active_tasks"`
+}
+
+// handleDeleteTarget — DELETE /targets/{name}: remove the target from
+// config.yaml. Refused while a visible project still names it (its home
+// target or a member of targets:) — the project would stop working.
+// Already accepted tasks keep running under the retiring lane (config
+// reconciler), and old jobs stay readable through historical lanes.
+func (s *Server) handleDeleteTarget(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	cfg, err := config.Load()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if t, ferr := cfg.FindTarget(name); ferr != nil || t == nil {
+		writeErr(w, http.StatusNotFound, backend.CodeNotFound, fmt.Sprintf("target %q not found", name))
+		return
+	}
+	users, err := s.projectsUsingTarget(r.Context(), name)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if len(users) > 0 {
+		writeErr(w, http.StatusConflict, backend.CodeInvalidState, fmt.Sprintf(
+			"target %q is still used by project(s) %s — point them at another target (or archive them) first",
+			name, strings.Join(users, ", ")))
+		return
+	}
+	active := 0
+	for _, st := range store.ActiveStatuses {
+		_, n, lerr := s.backend.ListTasks(r.Context(), backend.TaskListOptions{Target: name, Status: st, Limit: 1})
+		if lerr == nil {
+			active += n
+		}
+	}
+	wasDefault, err := config.RemoveTarget(name)
+	if err != nil {
+		var conflict *genfile.ConflictError
+		if errors.As(err, &conflict) {
+			writeErr(w, http.StatusConflict, backend.CodeGenerationConflict, "config.yaml changed while deleting; reload and try again")
+			return
+		}
+		writeError(w, err)
+		return
+	}
+	if s.configChanged != nil {
+		s.configChanged()
+	}
+	writeJSON(w, http.StatusOK, targetDeleteResponse{OK: true, WasDefault: wasDefault, ActiveTasks: active})
+}
+
+func (s *Server) projectsUsingTarget(ctx context.Context, name string) ([]string, error) {
+	projects, err := s.backend.ListProjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var users []string
+	for _, p := range projects {
+		if p.Archived {
+			continue
+		}
+		pc, perr := s.backend.GetProject(ctx, p.Name)
+		if perr != nil || pc == nil {
+			continue
+		}
+		if pc.Target == name || slices.Contains(pc.Targets, name) {
+			users = append(users, p.Name)
+		}
+	}
+	return users, nil
 }

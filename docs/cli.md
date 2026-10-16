@@ -49,6 +49,7 @@ a job may carry its own `command`, `target` and `preflight`.
 | `runq target check [<name>]` | Validate templates: placeholders, id regex, sample render — free, local |
 | `runq target connect <name>` | Verify SSH + host key, install the remote CLI, start the socket forward |
 | `runq target disconnect <name>` | Stop the forward |
+| `runq target rm <name>` | Remove a target (refused while a project uses it; running tasks finish, old jobs stay readable) |
 | `runq target show [<name>]` | Current definition (alias `ls`) |
 | `runq target use <name> [-p]` | Scope *queries* to a target (`-p` persists); never changes where a submit goes |
 

@@ -658,3 +658,33 @@ func ensureSymlink(link, target string) error {
 			"then remove the directory so runq can create the symlink",
 		link, target)
 }
+
+// RemoveTarget deletes one target from config.yaml. The write is
+// conditional on the generation just read, so a concurrent edit makes it
+// fail instead of being overwritten. Removing the default target clears
+// default_target (the next default is chosen explicitly with
+// `runq target default`). Callers check that nothing still uses the target.
+func RemoveTarget(name string) (wasDefault bool, err error) {
+	cfg, err := Load()
+	if err != nil {
+		return false, err
+	}
+	kept := cfg.Targets[:0:0]
+	found := false
+	for _, t := range cfg.Targets {
+		if t.Name == name {
+			found = true
+			continue
+		}
+		kept = append(kept, t)
+	}
+	if !found {
+		return false, fmt.Errorf("target %q not found", name)
+	}
+	cfg.Targets = kept
+	if cfg.DefaultTarget == name {
+		cfg.DefaultTarget = ""
+		wasDefault = true
+	}
+	return wasDefault, saveGlobalWith(cfg, cfg.Generation)
+}

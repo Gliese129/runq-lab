@@ -175,6 +175,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/targets", s.handleListTargets)
 	s.mux.HandleFunc("POST /api/v1/targets/{name}/connect", s.handleConnectTarget)
 	s.mux.HandleFunc("POST /api/v1/targets/{name}/disconnect", s.handleDisconnectTarget)
+	s.mux.HandleFunc("DELETE /api/v1/targets/{name}", s.handleDeleteTarget)
 	s.mux.HandleFunc("POST /api/v1/targets/{name}/refresh", s.handleRefreshTarget)
 	s.mux.HandleFunc("GET /api/v1/targets/{name}/gpus", s.handleTargetGPUs)
 	s.mux.HandleFunc("GET /api/v1/targets/{name}/fs/list", s.handleFSList)
