@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- Dashboard links from the CLI: `submit`, `ps` and `task show` JSON carry a
+  `url` for each job/task page, and text output prints a `dashboard:` line.
+  The URL comes from the runq service (`/api/v1/health` `dashboard_url`), so a
+  remote CLI on a login node prints the link on your own machine. Task JSON
+  also gains `job_id` and `project`.
+- `runq open [job_id | task_id]` prints that page's URL and opens it in the
+  browser. `runq view --open` uses the same service URL.
+- Skill: agents include the job/task dashboard link when reporting.
+
 ## v0.6.0 — 2026-10-16
 
 First stable 0.6 release: everything from rc1–rc5, plus:

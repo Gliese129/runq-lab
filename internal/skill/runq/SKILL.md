@@ -216,17 +216,22 @@ Each file you add is one more thing the researcher reads or cleans up later. Goo
 1. **Preview with `--dry`; submit for real when the preview matches the plan** — a
    submit queues real cluster jobs.
 2. **Check state when there is a reason** — one `runq ps <job> --json`; the researcher
-   follows progress on the dashboard (`http://127.0.0.1:8077/`).
-3. **Use runq's built-ins for sync, status and setup** (§3) so there is one
+   follows progress on the dashboard.
+3. **Put the dashboard link in your reports.** `submit --json`, `ps --json` and
+   `task show` carry a `url` per job/task page. When you tell the researcher a job
+   was submitted, finished or failed, give that link — the job's for a sweep, the
+   task's for one cell — next to the id, so one click shows them what you saw.
+   No `url` field means the service serves no UI; the id alone is fine then.
+4. **Use runq's built-ins for sync, status and setup** (§3) so there is one
    source of truth.
-4. **Let runq and the scheduler place work**: declare `gpus_per_task`, read the
+5. **Let runq and the scheduler place work**: declare `gpus_per_task`, read the
    visible GPUs at runtime, bind ports dynamically (port 0).
-5. **Change a queued task by kill + resubmit**, leaving runq's files (status.json,
+6. **Change a queued task by kill + resubmit**, leaving runq's files (status.json,
    run.sh, the DB) to runq; mention that queue time restarts.
-6. **Look things up in this order**: `runq <cmd> --help`, `runq skill show
+7. **Look things up in this order**: `runq <cmd> --help`, `runq skill show
    references/<file>`, then runq's source.
-7. **Keep secrets in `<working_dir>/.env`.**
-8. **Preview `runq clean` with `--show`** and confirm with the researcher; deletion is irreversible.
+8. **Keep secrets in `<working_dir>/.env`.**
+9. **Preview `runq clean` with `--show`** and confirm with the researcher; deletion is irreversible.
 
 ## 9. Code freshness
 

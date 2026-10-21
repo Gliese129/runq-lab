@@ -2,8 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/gliese129/runq-lab/internal/backend"
+	"github.com/gliese129/runq-lab/internal/dashboard"
 	"github.com/gliese129/runq-lab/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -38,11 +40,22 @@ func runPs(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return err
 			}
+			base := dashboardBase(cmd.Context(), be)
+			for i := range tasks {
+				t := &tasks[i]
+				t.URL = dashboard.TaskURL(base, t.Project, t.JobID, t.ID)
+			}
 			if jsonOut {
 				printJSON(tasks)
 				return nil
 			}
-			return printDashboardTasks(tasks)
+			if err := printDashboardTasks(tasks); err != nil {
+				return err
+			}
+			if len(tasks) > 0 {
+				printDashboardLink(os.Stdout, dashboard.JobURL(base, tasks[0].Project, tasks[0].JobID))
+			}
+			return nil
 		}
 
 		// Job view.
@@ -54,11 +67,19 @@ func runPs(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		base := dashboardBase(cmd.Context(), be)
+		for i := range jobs {
+			jobs[i].URL = dashboard.JobURL(base, jobs[i].Project, jobs[i].ID)
+		}
 		if jsonOut {
 			printJSON(jobs)
 			return nil
 		}
-		return printDashboardJobs(jobs)
+		if err := printDashboardJobs(jobs); err != nil {
+			return err
+		}
+		printDashboardLink(os.Stdout, base)
+		return nil
 	})
 }
 

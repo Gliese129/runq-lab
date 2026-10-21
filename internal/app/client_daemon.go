@@ -175,6 +175,7 @@ func newClientDaemon(dataDir string, paths utils.DataDirPaths, logger *slog.Logg
 			listen = dashCfg.Listen
 		}
 		d.dashboardListen = listen
+		d.Dashboard.SetDashboardURL(dashboard.BaseURL(listen))
 		logger.Info("dashboard enabled", "listen", listen)
 		if h, _, err := net.SplitHostPort(listen); err == nil && h != "127.0.0.1" && h != "localhost" && h != "::1" {
 			logger.Warn("dashboard bound to a non-loopback address — the API has NO authentication; prefer 127.0.0.1 + ssh -L tunneling", "listen", listen)

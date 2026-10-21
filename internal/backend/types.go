@@ -51,6 +51,9 @@ type JobSummary struct {
 	// RefreshedAt: last reconcile from external sources (poll-model backends
 	// only). Omitted in daemon mode — push state is always current.
 	RefreshedAt *int64 `json:"refreshed_at,omitempty"`
+	// URL is the job's dashboard page. Filled by the CLI from the service's
+	// advertised dashboard URL; omitted when no UI is served.
+	URL string `json:"url,omitempty"`
 }
 
 type TaskCountGroup struct {
@@ -96,6 +99,8 @@ type TaskView struct {
 	Stale        bool          `json:"stale"`
 
 	ID             string                        `json:"id"`
+	JobID          string                        `json:"job_id,omitempty"`
+	Project        string                        `json:"project,omitempty"`
 	Status         string                        `json:"status"`
 	Params         map[string]any                `json:"params"`
 	Metrics        map[string]float64            `json:"metrics,omitempty"`
@@ -130,6 +135,8 @@ type TaskView struct {
 	// LogPath is the filesystem path to the task's log file. Omitted from
 	// JSON list responses; populated by GetTask for log-streaming endpoints.
 	LogPath string `json:"log_path,omitempty"`
+	// URL is the task's dashboard page. Filled by the CLI (see JobSummary.URL).
+	URL string `json:"url,omitempty"`
 	// RQ2-1 §G: execution facts for the task page's Execution KV —
 	// detail-only (populated by GetTask, never in list responses; row-level
 	// consumers don't need them and lists stay lean). Straight DTO

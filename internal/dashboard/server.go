@@ -37,6 +37,10 @@ type Server struct {
 	accessLog    io.Writer // nil = no access log (see access_log.go)
 
 	controllerID string
+	// dashboardURL is the UI's base URL (e.g. "http://127.0.0.1:8077"),
+	// advertised in /health so the CLI can print page links. Empty when
+	// the dashboard is not served over TCP.
+	dashboardURL string
 
 	version   string    // /health; stamped via internal/version (ldflags)
 	startedAt time.Time // /health uptime_seconds
@@ -137,6 +141,10 @@ func recoverMiddleware(next http.Handler) http.Handler {
 // Background observations are owned by lane sensor loops.
 func (s *Server) Close()                    {}
 func (s *Server) SetControllerID(id string) { s.controllerID = id }
+
+// SetDashboardURL records the base URL the dashboard is served at; /health
+// advertises it only when the UI assets are installed.
+func (s *Server) SetDashboardURL(u string) { s.dashboardURL = u }
 
 func (s *Server) StaticAssetsUnavailable() bool {
 	return s.static == nil
@@ -345,6 +353,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"version":        s.version,
 		"uptime_seconds": int64(time.Since(s.startedAt).Seconds()),
 		"targets":        targets,
+	}
+	if s.dashboardURL != "" && s.static != nil {
+		body["dashboard_url"] = s.dashboardURL
 	}
 	cfg := s.cfg
 	if fresh, err := config.Load(); err == nil {

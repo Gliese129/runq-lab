@@ -2,6 +2,7 @@ package cli
 
 import (
 	"github.com/gliese129/runq-lab/internal/backend"
+	"github.com/gliese129/runq-lab/internal/dashboard"
 	"github.com/spf13/cobra"
 )
 
@@ -23,6 +24,7 @@ func runTaskShow(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		view.URL = dashboard.TaskURL(dashboardBase(cmd.Context(), b), view.Project, view.JobID, view.ID)
 		printJSON(view)
 		return nil
 	})

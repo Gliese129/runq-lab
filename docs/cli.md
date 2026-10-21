@@ -5,13 +5,15 @@ Conventions: job ids look like `jb…`, task ids like `tk…` — take them from
 `--fresh` (global) forces one scheduler probe before the read (rate-limited
 server-side). Errors say what is wrong and how to fix it, and exit non-zero.
 `runq <command> --help` is always the authoritative, current form.
+When the service serves the dashboard, `submit`, `ps` and `task show` JSON carry a
+`url` for each job/task page (text output prints a `dashboard:` line).
 
 ## Run an experiment
 
 | Command | What it does |
 |---|---|
 | `runq submit <job.yaml \| .> --dry` | Preview: expanded tasks, chosen target, rendered command (HPC: run.sh + submit line), params that reach the code only via `ctx.params`. Submits nothing |
-| `runq submit <job.yaml \| .> --json` | Submit → `{"job_id", "total_tasks"}`. `-t <target>` overrides the target (`-t` > `job.target` > `project.target`) · `-n/--note` label · `--project-file project.yaml` registers/updates the project first (also on `--dry`) · `--no-preflight` skips submit-time checks |
+| `runq submit <job.yaml \| .> --json` | Submit → `{"job_id", "total_tasks", "url"}`. `-t <target>` overrides the target (`-t` > `job.target` > `project.target`) · `-n/--note` label · `--project-file project.yaml` registers/updates the project first (also on `--dry`) · `--no-preflight` skips submit-time checks |
 | `runq kill <task_id \| job_id>` | Cancel a task, or every task of a job |
 
 ## Watch it
@@ -26,6 +28,7 @@ server-side). Errors say what is wrong and how to fix it, and exit non-zero.
 | `runq logs <task_id> --grep '<regex>' -n 20` | Last 20 lines matching an extended regex, grepped on the target |
 | `runq logs <task_id>` | Tail **and follow** (blocks — interactive use only) |
 | `runq results <job_id> --json` | Result rows written by `runq.record(...)` |
+| `runq open [job_id \| task_id]` | Print the dashboard page URL and open it in the browser (no id → dashboard home) |
 
 ## Projects (one per code base)
 
@@ -88,6 +91,7 @@ walks project → job → confirmation.
 - `runq submit` without `--dry` queues real cluster jobs — never use it to explore.
 - `runq logs` follows by default and blocks; pass `--no-follow` or `--grep`.
 - Check progress with one `runq ps <job_id> --json`; don't loop.
+- When reporting to the researcher, include the `url` of the job or task.
 - `runq clean` is irreversible; preview with `--show`.
 
 ## Reusable views and consumers

@@ -3,16 +3,13 @@ package cli
 import (
 	"bytes"
 	"fmt"
-	"github.com/gliese129/runq-lab/internal/config"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/gliese129/runq-lab/internal/api"
 	"github.com/gliese129/runq-lab/internal/backend"
+	"github.com/gliese129/runq-lab/internal/dashboard"
 	"github.com/gliese129/runq-lab/internal/store"
 	"github.com/gliese129/runq-lab/internal/views"
 	"github.com/spf13/cobra"
@@ -121,21 +118,12 @@ var viewCmd = &cobra.Command{Use: "view <file.yaml | name>", Short: "Render a sa
 		}
 		openView, _ := cmd.Flags().GetBool("open")
 		if openView {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
+			address := dashboard.ViewURL(dashboardBase(cmd.Context(), p), project, name)
+			if address == "" {
+				return fmt.Errorf("the runq service is not serving the dashboard UI (check `runq serve status`, or reinstall with the dashboard)")
 			}
-			listen := "127.0.0.1:8077"
-			if cfg.Dashboard != nil && cfg.Dashboard.Listen != "" {
-				listen = cfg.Dashboard.Listen
-			}
-			address := "http://" + listen + "/projects/" + url.PathEscape(project) + "/views/" + url.PathEscape(name)
 			fmt.Fprintln(cmd.OutOrStdout(), address)
-			program := "xdg-open"
-			if runtime.GOOS == "darwin" {
-				program = "open"
-			}
-			return exec.CommandContext(cmd.Context(), program, address).Run()
+			return openBrowser(cmd.Context(), cmd.ErrOrStderr(), address)
 		}
 		jobs, _ := cmd.Flags().GetStringArray("job")
 		refresh, _ := cmd.Flags().GetBool("refresh")

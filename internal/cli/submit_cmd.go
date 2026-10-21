@@ -11,6 +11,7 @@ import (
 
 	"github.com/gliese129/runq-lab/internal/backend"
 	"github.com/gliese129/runq-lab/internal/consumer"
+	"github.com/gliese129/runq-lab/internal/dashboard"
 	job2 "github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/project"
 	"github.com/gliese129/runq-lab/internal/utils"
@@ -100,12 +101,16 @@ the command line. Target precedence: -t > job.target > project.target.
 			if err != nil {
 				return err
 			}
-			target, source := "", ""
+			target, source, project := "", "", jobCfg.Project
 			var consumers []consumer.Consumer
 			if detail, err := be.GetJob(ctx, jobID); err == nil && detail != nil {
 				target, source = detail.Job.Target, detail.Job.TargetSource
 				consumers = detail.Consumers
+				if detail.Job.Project != "" {
+					project = detail.Job.Project
+				}
 			}
+			jobURL := dashboard.JobURL(dashboardBase(ctx, be), project, jobID)
 			if jsonOut {
 				printJSON(struct {
 					Consumers    []consumer.Consumer `json:"consumers"`
@@ -113,13 +118,15 @@ the command line. Target precedence: -t > job.target > project.target.
 					TotalTasks   int                 `json:"total_tasks"`
 					Target       string              `json:"target,omitempty"`
 					TargetSource string              `json:"target_source,omitempty"`
-				}{JobID: jobID, TotalTasks: n, Target: target, TargetSource: source, Consumers: consumers})
+					URL          string              `json:"url,omitempty"`
+				}{JobID: jobID, TotalTasks: n, Target: target, TargetSource: source, Consumers: consumers, URL: jobURL})
 				return nil
 			}
 			fmt.Printf("submitted job %s (%d tasks)\n", utils.IDColor(jobID), n)
 			if target != "" {
 				fmt.Printf("target: %s (%s)\n", target, source)
 			}
+			printDashboardLink(os.Stdout, jobURL)
 			if len(jobCfg.Consumers) > 0 {
 				list, err := be.(backend.Consumers).ListConsumers(ctx, jobID)
 				if err != nil {
