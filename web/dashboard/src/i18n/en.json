@@ -560,7 +560,7 @@
   "results.base_step": "Base record",
   "results.base_chip": "base",
   "results.run_col": "run",
-  "results.flip_dir": "Flip better-direction",
+  "results.flip_dir": "Click to set the better direction: none → higher → lower",
   "results.behind_at": "This run only reached x={x} — showing its latest record",
   "results.no_points": "No plottable points for this metric / x-axis",
   "results.chart_label": "{metric} over {x}, one line per run",

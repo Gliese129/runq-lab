@@ -4,6 +4,16 @@
 
 ### Changes
 
+- Dashboard charts draw straight segments between recorded points (no spline
+  overshoot), and every series chart uses the same Okabe–Ito order as the view
+  figures.
+- Δ is blue ▲ when better and orange ▼ when worse, never the status green/red.
+  The legacy Results table no longer guesses a column's direction from its
+  name: click the header to declare it (none → higher → lower).
+- Numbers on the task's latest metrics and the legacy Results table print in
+  full decimal (1e-6 was shown as 0.0000, 12345.678 as 12350).
+- Project colours avoid the status hues (green, red, amber, cyan, gray); the
+  colour edge on job rows shows only where projects mix.
 - TSUBAME preset: new targets charge `qsub -g {{param.group}}` instead of the
   login shell's `$TSUBAME_GROUP`. Set `fixed_params.group` in each job (declared
   as a `scope: scheduler` param in project.yaml). Existing targets are unchanged.

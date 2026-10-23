@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PROJECT_PALETTE, fallbackProjectColor, projectColors } from './projectColor'
+import { PROJECT_PALETTE, STATUS_HUE_BANDS, fallbackProjectColor, projectColors } from './projectColor'
 
 const names = [
   'aime2025-language-control', 'math500-language-control', 'think-in-japanese-qwen3-8b',
@@ -16,10 +16,16 @@ describe('projectColors', () => {
     const hues = colors.map((c) => PROJECT_PALETTE.find((p) => p.css === c)!.hue)
     for (let i = 0; i < hues.length; i++) {
       for (let j = i + 1; j < hues.length; j++) {
-        if (hues[i] < 0 || hues[j] < 0) continue
         const d = Math.abs(hues[i] - hues[j]) % 360
-        expect(Math.min(d, 360 - d)).toBeGreaterThanOrEqual(50)
+        expect(Math.min(d, 360 - d)).toBeGreaterThanOrEqual(20)
       }
+    }
+  })
+  it('never uses a status hue (green, red, amber, cyan) or gray', () => {
+    const inBand = (h: number, [lo, hi]: [number, number]) => (lo <= hi ? h >= lo && h <= hi : h >= lo || h <= hi)
+    for (const p of PROJECT_PALETTE) {
+      expect(p.hue).toBeGreaterThanOrEqual(0)
+      for (const band of STATUS_HUE_BANDS) expect(inBand(p.hue, band)).toBe(false)
     }
   })
   it('does not repaint older projects when a newer one appears', () => {

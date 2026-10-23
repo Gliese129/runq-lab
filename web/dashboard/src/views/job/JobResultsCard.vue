@@ -87,8 +87,8 @@
                   <button
                     type="button" class="th-sort-btn"
                     :title="t('results.flip_dir')"
-                    @click="flipDir(c)"
-                  >{{ c }} {{ dirOf(c) === 'min' ? '↓' : '↑' }}</button>
+                    @click="cycleDir(c)"
+                  >{{ c }}{{ dirOf(c) === 'min' ? ' ↓' : dirOf(c) === 'max' ? ' ↑' : '' }}</button>
                   <span class="resize-h" @pointerdown="startResize(c, $event)" />
                 </th>
               </tr>
@@ -163,7 +163,7 @@
 // JobResultsCard (RQ2-4 ②, kit ScreensC JobResultsCard) — the ablation
 // table over the columnar results wire. Rows are identity groups at their
 // latest slice (lagging rows annotated "@x", never silently compared);
-// per-column best direction is guessed from the name and flippable; Δ
+// per-column best direction is declared by a header click (never guessed); Δ
 // compares against a picked (group × step) RECORD. All slice logic lives
 // in resultsView.ts — this file is rendering and interaction state.
 import { ref, computed, watch } from 'vue'
@@ -173,7 +173,7 @@ import { useSnackbar } from '@/composables/useSnackbar'
 import type { JobResultsResponse } from '@/types/api'
 import ResultsChart from './ResultsChart.vue'
 import {
-  tableRows, renderLabel, labelKeys, guessDir, colDecimals, fmtNum,
+  tableRows, renderLabel, labelKeys, colDecimals, fmtNum,
   bestIndex, groupXOptions, metricsAt, resultsMarkdown, groupSeries, primaryX,
   resolveBaseIdx,
   type ResultRow,
@@ -226,17 +226,15 @@ function appendKey(k: string) {
   labelTemplate.value = cur ? `${cur} {${k}}` : `{${k}}`
 }
 
-// ── Per-column direction (guess + flip) and decimals ──
-const flipped = ref<Set<string>>(new Set())
-function dirOf(c: string): 'min' | 'max' {
-  const g = guessDir(c)
-  return flipped.value.has(c) ? (g === 'min' ? 'max' : 'min') : g
-}
-function flipDir(c: string) {
-  const s = new Set(flipped.value)
-  if (s.has(c)) s.delete(c)
-  else s.add(c)
-  flipped.value = s
+// ── Per-column direction (declared by the reader) and decimals ──
+// Undeclared columns get no best mark and no Δ colour: a name like
+// "train_time" says nothing reliable about which way is better.
+const dirs = ref<Record<string, 'min' | 'max' | undefined>>({})
+function dirOf(c: string): 'min' | 'max' | undefined { return dirs.value[c] }
+/** Header click cycles: undeclared → higher is better → lower is better. */
+function cycleDir(c: string) {
+  const next = { undefined: 'max', max: 'min', min: undefined } as const
+  dirs.value = { ...dirs.value, [c]: next[String(dirs.value[c]) as keyof typeof next] }
 }
 
 const decimals = computed<Record<string, number>>(() => {
@@ -251,7 +249,10 @@ const decimals = computed<Record<string, number>>(() => {
 const bests = computed<Record<string, number>>(() => {
   const out: Record<string, number> = {}
   if (!res.value) return out
-  for (const c of res.value.schema.metrics) out[c] = bestIndex(rows.value, c, dirOf(c))
+  for (const c of res.value.schema.metrics) {
+    const dir = dirOf(c)
+    out[c] = dir ? bestIndex(rows.value, c, dir) : -1
+  }
   return out
 })
 
@@ -301,6 +302,12 @@ const baseIdx = computed(() =>
 const baseMetrics = computed(() =>
   res.value && baseIdx.value != null ? metricsAt(res.value, baseIdx.value) : null)
 
+/** Better/worse only for a declared direction (blue/orange, not status colours). */
+function deltaVerdict(v: number, b: number, dir: 'min' | 'max' | undefined): 'better' | 'worse' | '' {
+  if (!dir || v === b) return ''
+  return (dir === 'min' ? v < b : v > b) ? 'better' : 'worse'
+}
+
 function cellText(row: ResultRow, c: string): string {
   const dec = decimals.value[c] ?? 0
   const v = row.metrics[c]
@@ -308,7 +315,9 @@ function cellText(row: ResultRow, c: string): string {
   const b = baseMetrics.value[c]
   if (v === null || b === null) return '—'
   const d = v - b
-  return `${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(dec)}`
+  const verdict = deltaVerdict(v, b, dirOf(c))
+  const mark = verdict === 'better' ? '▲ ' : verdict === 'worse' ? '▼ ' : ''
+  return `${mark}${d >= 0 ? '+' : '−'}${Math.abs(d).toFixed(dec)}`
 }
 
 function cellClass(row: ResultRow, ri: number, c: string): string {
@@ -316,8 +325,8 @@ function cellClass(row: ResultRow, ri: number, c: string): string {
     const v = row.metrics[c]
     const b = baseMetrics.value[c]
     if (v === null || b === null || v === b) return 'text-on-surface-variant'
-    const better = dirOf(c) === 'min' ? v < b : v > b
-    return better ? 'text-success' : 'text-error'
+    const verdict = deltaVerdict(v, b, dirOf(c))
+    return verdict ? `delta-${verdict}` : ''
   }
   return bests.value[c] === ri ? 'best-cell' : ''
 }
@@ -347,9 +356,7 @@ function startResize(c: string, e: PointerEvent) {
 // ── Copy actions ──
 async function copyMarkdown() {
   if (!res.value) return
-  const dirs: Record<string, 'min' | 'max'> = {}
-  for (const c of res.value.schema.metrics) dirs[c] = dirOf(c)
-  const md = resultsMarkdown(rows.value, res.value.schema.metrics, labelTemplate.value ?? '', decimals.value, dirs)
+  const md = resultsMarkdown(rows.value, res.value.schema.metrics, labelTemplate.value ?? '', decimals.value, dirs.value)
   try {
     await navigator.clipboard.writeText(md)
     snack.success(t('common.copied'))

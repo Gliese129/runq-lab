@@ -70,6 +70,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from 'vuetify'
+import { seriesColor, seriesDash } from '@/components/views/charts/chartGeom'
 import { buildFacets, initialSelection, selectNames, seriesLabels, type Facet, type FacetSelection } from '@/utils/metricFacets'
 import { Chart, LineController, LineElement, PointElement, LinearScale, CategoryScale, Legend, Tooltip, Filler } from 'chart.js'
 
@@ -166,12 +167,6 @@ const hasChart = computed(() => hasData.value && visibleKeys.value.size > 0)
 const chartLabel = computed(() =>
   t('task.metrics_chart', { keys: [...visibleKeys.value].join(', ') }))
 
-// Mid-range hues that read on BOTH light and dark surfaces (the old
-// palette reused the light theme's 800-level tones — near-invisible on
-// dark). From the 7th series on, colors repeat with a dash pattern so
-// same-hue lines stay distinguishable.
-const COLORS = ['#3B82F6', '#22C55E', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4']
-
 function buildDatasets() {
   return [...visibleKeys.value].map((key, i) => {
     const keyPoints = props.points.filter(p => p.key === key)
@@ -179,12 +174,13 @@ function buildDatasets() {
       label: labels.value.get(key) ?? key,
       // idx from map, NOT keyPoints.indexOf(p): that was O(k²) per rebuild
       data: keyPoints.map((p, idx) => ({ x: p.step ?? idx, y: p.value })),
-      borderColor: COLORS[i % COLORS.length],
-      backgroundColor: COLORS[i % COLORS.length] + '20',
-      borderDash: i >= COLORS.length ? [6, 3] : undefined,
+      borderColor: seriesColor(i, theme.global.current.value.dark),
+      backgroundColor: seriesColor(i, theme.global.current.value.dark) + '20',
+      borderDash: seriesDash(i),
       borderWidth: 1.5,
       pointRadius: 0,
-      tension: 0.3,
+      // Straight segments: a spline overshoots and draws values never recorded.
+      tension: 0,
       fill: false,
     }
   })

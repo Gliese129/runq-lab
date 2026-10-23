@@ -30,7 +30,7 @@
         <div v-for="r in g.rows" :key="r.name" class="metric-row font-mono" :class="{ nested: g.path }">
           <span class="metric-leaf" :title="r.name">{{ r.leaf }}</span>
           <span class="metric-val" :class="{ 'text-on-surface-variant': metrics[r.name] == null }" :title="fullValue(metrics[r.name])">
-            {{ compactNumber(metrics[r.name]) }}
+            {{ metricNumber(metrics[r.name]) }}
           </span>
         </div>
       </template>
@@ -41,7 +41,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { compactNumber, groupByParent } from '@/utils/metricFacets'
+import { metricNumber, groupByParent } from '@/utils/metricFacets'
 
 const props = defineProps<{ metrics: Record<string, number | null> }>()
 const { t } = useI18n()

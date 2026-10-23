@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFacets, compactNumber, groupByParent, initialSelection, selectNames, seriesLabels, type FacetSelection } from './metricFacets'
+import { buildFacets, metricNumber, groupByParent, initialSelection, selectNames, seriesLabels, type FacetSelection } from './metricFacets'
 
 const evalNames = ['V150', 'V_hard'].flatMap((v) =>
   ['EN-plain', 'JA-en', 'JA-q'].flatMap((s) => ['accuracy', 'pass@1', 'loop_rate'].map((m) => `eval/${v}/${s}/${m}`)))
@@ -77,11 +77,12 @@ describe('groupByParent', () => {
   })
 })
 
-describe('compactNumber', () => {
-  it('shortens long decimals without an exponent', () => {
-    expect(compactNumber(0.3816666666)).toBe('0.3817')
-    expect(compactNumber(0.00833333333)).toBe('0.008333')
-    expect(compactNumber(20261009)).toBe('20261009')
-    expect(compactNumber(null)).toBe('—')
+describe('metricNumber', () => {
+  it('prints full decimal: never rounded, never scientific', () => {
+    expect(metricNumber(0.3816666666)).toBe('0.3816666666')
+    expect(metricNumber(12345.678)).toBe('12345.678')
+    expect(metricNumber(1e-6)).toBe('0.000001')
+    expect(metricNumber(20261009)).toBe('20261009')
+    expect(metricNumber(null)).toBe('—')
   })
 })

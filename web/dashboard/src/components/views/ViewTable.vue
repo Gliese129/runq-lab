@@ -28,7 +28,7 @@
           <template v-else>
             <td v-for="(cell, ci) in row.cells" :key="ci" class="vt-num" :title="cellTitle(cell)">
               <span :class="rankClass(cell)">{{ cell.text }}</span>
-              <span v-if="cell.delta_text" class="vt-delta" :class="deltaClass(cell, result.columns[ci])">({{ cell.delta_text }})</span>
+              <span v-if="cell.delta_text" class="vt-delta" :class="deltaClass(cell, result.columns[ci])">({{ deltaMark(cell, result.columns[ci]) }}{{ cell.delta_text }})</span>
             </td>
             <td v-if="hasState" class="vt-state">{{ row.state ?? '' }}</td>
           </template>
@@ -85,11 +85,19 @@ function rankClass(cell: ViewCell): string {
   return ''
 }
 
-/** Δ is good or bad by the column's direction; undeclared stays neutral. */
-function deltaClass(cell: ViewCell, col?: ViewColumn): string {
+/** Δ is better or worse by the column's direction; undeclared stays neutral.
+ *  Colour plus ▲/▼, never the status green/red (U3: red means a failure). */
+function deltaVerdict(cell: ViewCell, col?: ViewColumn): 'better' | 'worse' | '' {
   if (!col?.better || !cell.delta) return ''
-  const better = col.better === 'higher' ? cell.delta > 0 : cell.delta < 0
-  return better ? 'vt-good' : 'vt-bad'
+  return (col.better === 'higher' ? cell.delta > 0 : cell.delta < 0) ? 'better' : 'worse'
+}
+function deltaClass(cell: ViewCell, col?: ViewColumn): string {
+  const v = deltaVerdict(cell, col)
+  return v ? `delta-${v}` : ''
+}
+function deltaMark(cell: ViewCell, col?: ViewColumn): string {
+  const v = deltaVerdict(cell, col)
+  return v === 'better' ? '▲ ' : v === 'worse' ? '▼ ' : ''
 }
 
 function cellTitle(cell: ViewCell): string {
@@ -122,8 +130,6 @@ function cellTitle(cell: ViewCell): string {
 .vt-bold { font-weight: 700; }
 .vt-under { text-decoration: underline; text-underline-offset: 3px; }
 .vt-delta { font-size: 11.5px; margin-left: 4px; color: rgb(var(--v-theme-on-surface-variant)); }
-.vt-good { color: rgb(var(--v-theme-success)); }
-.vt-bad { color: rgb(var(--v-theme-error)); }
 .vt-state { font-family: var(--font-mono); font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
 .vt-empty td { color: rgb(var(--v-theme-on-surface-variant)); }
 .vt-nodata { font-style: italic; }

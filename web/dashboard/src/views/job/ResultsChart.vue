@@ -17,11 +17,12 @@
 // GROUP (identity key), true-x linear axis. Differs from MetricsChart
 // (per-metric series of one task): comparing runs is the point here, so
 // the group is the series and the metric is fixed. Kit owns the series
-// palette (--project-N); Chart.js stays the app's chart medium.
+// palette is the views' Okabe–Ito order; Chart.js stays the app's chart medium.
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from 'vuetify'
 import { Chart, LineController, LineElement, PointElement, LinearScale, Legend, Tooltip } from 'chart.js'
+import { seriesColor, seriesDash } from '@/components/views/charts/chartGeom'
 
 Chart.register(LineController, LineElement, PointElement, LinearScale, Legend, Tooltip)
 
@@ -41,26 +42,17 @@ const hasChart = computed(() => props.series.some(s => s.points.length > 0))
 const ariaLabel = computed(() =>
   t('results.chart_label', { metric: props.metric, x: props.xTitle }))
 
-// Kit's project palette. oklch() reaches canvas fine on our targets, but
-// resolve through getComputedStyle with a hex fallback so a var rename
-// degrades to visible lines, not invisible ones.
-const FALLBACK = ['#3B82F6', '#22C55E', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4', '#EC4899', '#84CC16']
-function seriesColor(i: number): string {
-  const v = getComputedStyle(document.documentElement)
-    .getPropertyValue(`--project-${(i % 8) + 1}`).trim()
-  return v || FALLBACK[i % FALLBACK.length]
-}
-
 function buildDatasets() {
   return props.series.map((s, i) => ({
     label: s.label,
     data: s.points,
-    borderColor: seriesColor(i),
-    backgroundColor: seriesColor(i),
-    borderDash: i >= 8 ? [6, 3] : undefined,
+    borderColor: seriesColor(i, theme.global.current.value.dark),
+    backgroundColor: seriesColor(i, theme.global.current.value.dark),
+    borderDash: seriesDash(i),
     borderWidth: 1.5,
     pointRadius: s.points.length === 1 ? 3 : 0,
-    tension: 0.2,
+    // Straight segments: a spline overshoots and draws values never recorded.
+    tension: 0,
     fill: false,
   }))
 }

@@ -560,7 +560,7 @@
   "results.base_step": "基准记录",
   "results.base_chip": "基准",
   "results.run_col": "运行",
-  "results.flip_dir": "翻转最优方向",
+  "results.flip_dir": "点击设定最优方向：未设定 → 越大越好 → 越小越好",
   "results.behind_at": "该运行只到 x={x}——显示其最新记录",
   "results.no_points": "该指标 / x 轴下没有可绘制的点",
   "results.chart_label": "{metric} 随 {x} 变化，每条线一个运行",

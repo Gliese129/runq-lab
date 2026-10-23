@@ -70,18 +70,20 @@
      is ~3.7:1, below WCAG AA. Flagged for kit backport. */
   --terminal-dim: #94a3b8;
 
-  /* ── colors.css: deterministic project accents (oklch L=0.55 C=0.18) —
-     every project color has identical lightness/chroma. Consumed by the
-     project-grouping views (D ticket). ── */
-  --project-1: oklch(0.55 0.18 260); /* blue */
-  --project-2: oklch(0.55 0.18 150); /* green */
-  --project-3: oklch(0.55 0.18 70); /* amber */
-  --project-4: oklch(0.55 0.18 25); /* red */
-  --project-5: oklch(0.55 0.18 305); /* violet */
-  --project-6: oklch(0.55 0.18 195); /* teal */
-  --project-7: oklch(0.55 0.18 345); /* pink */
-  --project-8: oklch(0.55 0.18 115); /* lime */
 }
+
+/* Δ better/worse: Okabe–Ito blue/orange, kept apart from the status
+   green/red (U3). Shared by the view table and the results card. */
+:root {
+  --delta-better: #0072B2;
+  --delta-worse: #B35C00;
+}
+.v-theme--dark {
+  --delta-better: #56B4E9;
+  --delta-worse: #E69F00;
+}
+.delta-better { color: var(--delta-better) !important; }
+.delta-worse { color: var(--delta-worse) !important; }
 
 /* Terminal ground goes a step deeper than dark surface (slate-900), so the
    block still reads as a distinct object in dark mode (kit colors.css). */

@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest'
 import type { JobResultsResponse } from '@/types/api'
 import {
-  latestIdx, tableRows, renderLabel, guessDir, colDecimals,
+  latestIdx, tableRows, renderLabel, colDecimals, fmtNum,
   bestIndex, groupXOptions, resultsMarkdown, groupSeries, labelKeys,
   resolveBaseIdx, metricsAt,
 } from './resultsView'
@@ -99,17 +99,20 @@ describe('renderLabel', () => {
 })
 
 describe('column helpers', () => {
-  it('guesses direction from the metric name', () => {
-    expect(guessDir('loss')).toBe('min')
-    expect(guessDir('eval_ppl')).toBe('min')
-    expect(guessDir('latency_ms')).toBe('min')
-    expect(guessDir('acc')).toBe('max')
-  })
-
-  it('aligns a column on its widest decimal, capped at 4', () => {
+  it('aligns a column on its widest full decimal, without a cap', () => {
     expect(colDecimals([2.5, 2.31, null])).toBe(2)
     expect(colDecimals([1, 2])).toBe(0)
-    expect(colDecimals([0.123456])).toBe(4)
+    expect(colDecimals([0.123456])).toBe(6)
+    expect(colDecimals([1e-6, 0.5])).toBe(6)
+  })
+
+  it('prints numbers in full decimal, padding without rounding', () => {
+    expect(fmtNum(1e-6, 6)).toBe('0.000001')
+    expect(fmtNum(0.00012345, 8)).toBe('0.00012345')
+    expect(fmtNum(12345.678, 3)).toBe('12345.678')
+    expect(fmtNum(2.5, 3)).toBe('2.500')
+    expect(fmtNum(0.1, 4)).toBe('0.1000')
+    expect(fmtNum(null, 2)).toBe('—')
   })
 
   it('bestIndex honors direction and skips holes', () => {
@@ -168,6 +171,13 @@ describe('resultsMarkdown', () => {
     expect(md).toContain('| run | loss ↓ |')
     expect(md).toContain('| base | **2.10** |')
     expect(md).toContain('| wide (@100) | 2.31 |')
+  })
+
+  it('marks no direction or best for an undeclared column', () => {
+    const rows = tableRows(fixture())
+    const md = resultsMarkdown(rows, ['loss'], '{model}', { loss: 2 }, {})
+    expect(md).toContain('| run | loss |')
+    expect(md).not.toContain('**')
   })
 })
 

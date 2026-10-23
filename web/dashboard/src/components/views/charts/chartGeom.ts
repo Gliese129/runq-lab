@@ -12,6 +12,18 @@ export const GRID = '#e6e6e6'
 
 /** Okabe–Ito: distinguishable with common colour-vision deficiencies. */
 export const PALETTE = ['#0072B2', '#E69F00', '#009E73', '#D55E00', '#CC79A7', '#56B4E9', '#F0E442', '#000000']
+/** Series colour for the on-screen (theme-following) charts: the same
+ *  Okabe–Ito order as the paper figures, so a series keeps its colour
+ *  everywhere. Black is unreadable on a dark surface, so it turns light gray. */
+export function seriesColor(i: number, dark = false): string {
+  const c = PALETTE[i % PALETTE.length]
+  return dark && c === '#000000' ? '#CCCCCC' : c
+}
+/** Chart.js dash for series that wrap around the palette. */
+export function seriesDash(i: number): number[] | undefined {
+  return i >= PALETTE.length ? [6, 3] : undefined
+}
+
 /** Second cue so series survive grayscale printing. */
 export const MARKERS = ['circle', 'square', 'triangle', 'diamond', 'cross', 'triangle-down'] as const
 export const DASHES = ['', '5 3', '2 2', '7 2 2 2', '1 3']

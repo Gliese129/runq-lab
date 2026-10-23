@@ -1,3 +1,5 @@
+import { fullNumber } from '@/components/views/viewFormat'
+
 /** Metric names like "eval/V150/EN-plain/accuracy" are a path: a few
  *  prefix levels (benchmark, split, …) and a leaf (the metric). Listing
  *  every full name is a wall of near-identical text; picking one value per
@@ -155,13 +157,11 @@ export function groupByParent(names: readonly string[]): { shared: string; group
   return { shared, groups: [...groups.values()] }
 }
 
-/** Compact number for glance panels: integers as is, otherwise 4
- *  significant digits without exponent; the caller shows the full value
- *  on hover. */
-export function compactNumber(v: unknown): string {
+/** Number for glance panels: full decimal, never rounded or scientific. */
+export function metricNumber(v: unknown): string {
   if (v === null || v === undefined || v === '') return '—'
   if (typeof v !== 'number') return String(v)
   if (!Number.isFinite(v)) return String(v)
-  if (Number.isInteger(v)) return String(v)
-  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 4, useGrouping: false }).format(v)
+  // Full decimal, never rounded (12345.678 must not read as 12350).
+  return fullNumber(v)
 }

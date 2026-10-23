@@ -4,7 +4,8 @@
       v-for="j in jobs"
       :key="j.id"
       class="job-row"
-      :style="{ '--project': color(j.project) }"
+      :class="{ 'with-project': showProject }"
+      :style="showProject ? { '--project': color(j.project) } : undefined"
       role="listitem"
       tabindex="0"
       :aria-label="t('a11y.open_job', { id: j.id.slice(0, 8) })"
@@ -66,8 +67,9 @@ const color = useProjectColors()
   border: 0.5px solid rgb(var(--v-theme-outline-variant), 0.6);
 }
 /* Project colour as a bar on the row's left edge — read before the text,
-   and kept apart from the status dot on the right. */
-.job-row::before {
+   and kept apart from the status dot on the right. Only where projects mix:
+   on a project's own page every bar would be the same colour, just noise. */
+.job-row.with-project::before {
   content: '';
   position: absolute;
   left: 0; top: 0; bottom: 0;

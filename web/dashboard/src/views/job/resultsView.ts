@@ -3,6 +3,7 @@
 // module pivots range slices into table rows (latest per group) and chart
 // series (x-ordered per group). Pure functions — the card renders, this
 // decides. Slice semantics mirror internal/cli/results_cmd.go exactly.
+import { fullNumber } from '@/components/views/viewFormat'
 import type { JobResultsResponse, ResultAxis, ResultRange } from '@/types/api'
 
 /** First x candidate is the wire's sort key (schema.x_axes order). */
@@ -122,27 +123,27 @@ export function renderLabel(template: string, row: ResultRow): string {
 }
 
 /** Best-direction guess per metric name; the header arrow flips it. */
-export function guessDir(col: string): 'min' | 'max' {
-  return /loss|err|error|ppl|perplex|latency|_ms$|time|nll/i.test(col) ? 'min' : 'max'
-}
-
-/** Column-wide decimal count: the max decimals any value carries, capped
- *  at 4 — every cell in a column renders with the same width. */
+/** Column-wide decimal count: the most decimals any value carries in full
+ *  decimal (no cap) — every cell in a column renders with the same width. */
 export function colDecimals(vals: (number | null)[]): number {
   let d = 0
   for (const v of vals) {
     if (v === null) continue
-    const s = String(v)
-    const dot = s.indexOf('.')
-    if (dot >= 0) d = Math.max(d, Math.min(4, s.length - dot - 1))
-    if (s.includes('e-')) d = 4
+    const dot = fullNumber(v).indexOf('.')
+    if (dot >= 0) d = Math.max(d, fullNumber(v).length - dot - 1)
   }
   return d
 }
 
+/** Full decimal, zero-padded to the column's decimals: padding never
+ *  rounds, so 0.000001 stays 0.000001 (toFixed would print binary noise). */
 export function fmtNum(v: number | null, dec: number): string {
   if (v === null) return '—'
-  return v.toFixed(dec)
+  const s = fullNumber(v)
+  const dot = s.indexOf('.')
+  const have = dot < 0 ? 0 : s.length - dot - 1
+  if (have >= dec) return s
+  return (dot < 0 ? s + '.' : s) + '0'.repeat(dec - have)
 }
 
 /** Index (into rows) of the best value for a column, or -1. */
@@ -202,14 +203,19 @@ export function resultsMarkdown(
   cols: string[],
   template: string,
   decimals: Record<string, number>,
-  dirs: Record<string, 'min' | 'max'>,
+  dirs: Record<string, 'min' | 'max' | undefined>,
 ): string {
-  const head = ['run', ...cols.map(c => `${c} ${dirs[c] === 'min' ? '↓' : '↑'}`)]
+  // Direction and best only where the reader declared one; never guessed.
+  const arrow = (c: string) => (dirs[c] === 'min' ? ' ↓' : dirs[c] === 'max' ? ' ↑' : '')
+  const head = ['run', ...cols.map(c => `${c}${arrow(c)}`)]
   const lines = [
     `| ${head.join(' | ')} |`,
     `| ${head.map((_, i) => (i === 0 ? '---' : '---:')).join(' | ')} |`,
   ]
-  const bests = new Map(cols.map(c => [c, bestIndex(rows, c, dirs[c] ?? guessDir(c))]))
+  const bests = new Map(cols.map(c => {
+    const dir = dirs[c]
+    return [c, dir ? bestIndex(rows, c, dir) : -1]
+  }))
   rows.forEach((r, i) => {
     const label = renderLabel(template, r) + (r.behind && r.atX !== null ? ` (@${r.atX})` : '')
     const cells = cols.map(c => {

@@ -560,7 +560,7 @@
   "results.base_step": "基準レコード",
   "results.base_chip": "基準",
   "results.run_col": "実行",
-  "results.flip_dir": "最良方向を反転",
+  "results.flip_dir": "クリックで良い方向を設定：未設定 → 大きいほど良い → 小さいほど良い",
   "results.behind_at": "この実行は x={x} まで — 最新レコードを表示",
   "results.no_points": "この指標 / x 軸で描画できる点がありません",
   "results.chart_label": "{metric} の {x} 推移、1 本の線が 1 実行",
