@@ -196,8 +196,8 @@ const tsubameHPCBody = `
 hpc:
   # TSUBAME (UGE). Per-task scheduler knobs live in the sweep and are
   # referenced as {{param.*}} — zip node_kind / h_rt columns with your tasks.
-  # $TSUBAME_GROUP comes from the login shell (or hardcode it).
-  submit_template: "qsub -g $TSUBAME_GROUP -l {{param.node_kind}}=1 -l h_rt={{param.h_rt}} -N {{name}} -o {{task_dir}} -e {{task_dir}} {{run_sh}}"
+  # Set fixed_params.group in job.yaml to the charged TSUBAME group.
+  submit_template: "qsub -g {{param.group}} -l {{param.node_kind}}=1 -l h_rt={{param.h_rt}} -N {{name}} -o {{task_dir}} -e {{task_dir}} {{run_sh}}"
   submit_id_regex: "Your job ([0-9]+)"
 
   status_template: "qstat"

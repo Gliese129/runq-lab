@@ -38,6 +38,7 @@ params:
   - { name: num_shots, type: int}
   # Scheduler knobs: consumed by submit_template as {{param.h_rt}} /
   # {{param.node_kind}}; exempt from the command, never in {{args}}.
+  - { name: group, type: str, scope: scheduler }
   - { name: h_rt, type: str, scope: scheduler }
   - { name: node_kind, type: str, scope: scheduler,
       choices: [node_q, node_h, node_f] }

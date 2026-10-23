@@ -4,6 +4,9 @@
 
 ### Changes
 
+- TSUBAME preset: new targets charge `qsub -g {{param.group}}` instead of the
+  login shell's `$TSUBAME_GROUP`. Set `fixed_params.group` in each job (declared
+  as a `scope: scheduler` param in project.yaml). Existing targets are unchanged.
 - SSH now goes through the system OpenSSH (`ssh` on PATH, 7.6 or newer):
   `~/.ssh/config` applies exactly as in your terminal, including Include/Match,
   ProxyJump/ProxyCommand, certificates and HostKeyAlias. runq keeps its own

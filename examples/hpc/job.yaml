@@ -15,6 +15,11 @@
 project: llm-eval
 note: "eval sweep {{date}}: {{sweep}}"
 
+fixed_params:
+  group: your-tsubame-group
+  node_kind: node_q
+  num_shots: 5
+
 sweep:
   - method: grid
     parameters:
@@ -25,5 +30,4 @@ sweep:
       benchmark: [mmlu, gsm8k, humaneval]
       h_rt: ["4:00:00", "2:00:00", "1:00:00"]
 
-# Everything not listed here uses the catalog defaults from project.yaml
-# (num_shots=5, node_kind=node_q, 1 GPU).
+# GPUs per task come from project.yaml (1 GPU).
