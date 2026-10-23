@@ -4,6 +4,9 @@
 
 ### Changes
 
+- Skill: parameters reach code as command-line flags by default (argparse +
+  `{{args}}`), so released code runs without runq; `ctx.params` is the shortcut
+  for one-off ablations the researcher calls temporary.
 - Dashboard charts draw straight segments between recorded points (no spline
   overshoot), and every series chart uses the same Okabe–Ito order as the view
   figures.

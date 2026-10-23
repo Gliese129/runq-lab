@@ -8,6 +8,7 @@ files to the current directory).
 import runq
 
 ctx = runq.context()                     # call once, early
+# Shortcut for one-off ablations; code that ships parses flags (argparse + {{args}}).
 lr = ctx.params.get("lr", 1e-3)          # sweep value, or this explicit default
 config = ctx.params["config"]            # required: raises if the job omits it
 # ctx.params.get("lr") without a default raises — write the default out

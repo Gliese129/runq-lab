@@ -95,23 +95,35 @@ refresh the others. Their jobs live side by side under `<working_dir>/.runq/`, a
 the dashboard groups them under the directory.
 
 ### Parameters
-1. Put values in `fixed_params` / `sweep`; each lands in `params.json`, and code reads
-   it with `ctx.params.get("kl", 0.0)` — always with the default written out: it is
-   what every job that leaves the param out runs with, and when the script runs by
-   hand. A bare `ctx.params.get("kl")` raises, so the behaviour never silently
-   depends on `None`. For a param the code cannot run without, use
-   `ctx.params["kl"]` (raises with the available names when it is missing).
-2. Reference a param in the command (`{{x}}`, or `{{args}}` for all) when the script
-   expects it as a flag. Give every referenced `{{x}}` a value in the job — otherwise
-   submit reports `template references unknown parameter(s)`.
-3. For scheduler knobs, annotate `{ name: h_rt, scope: scheduler }` in the project and
-   use `{{param.h_rt}}` in the target's `submit_template`.
-4. `choices`, when present, are enforced. Keep each param in one sweep block.
-5. Target precedence: `-t` > `job.target` > `project.target`. `target use` and
-   `RUNQ_TARGET` scope queries only.
+Every value goes in `fixed_params` / `sweep` and lands in the task's `params.json`.
+How the code receives it is a choice; decide it per parameter:
+
+- **Command-line flag (the default).** If the parameter belongs to code that will
+  ship with the research — a released training script, anything another person
+  will run without runq — keep normal engineering practice: the script parses it
+  with argparse (or its existing config system), and the job passes it with
+  `{{x}}`, or `{{args}}` for all of them. Then the code runs the same with or
+  without runq, and nothing has to be cleaned out before release.
+- **`ctx.params` (a shortcut for one-off ablations).** If the researcher says it is
+  a temporary test ("just try kl=0.1 for now", "quick ablation"), reading
+  `ctx.params.get("kl", 0.0)` directly saves adding a flag. Write the default out:
+  it is what every job that leaves the param out runs with, and what a hand run
+  uses. A bare `ctx.params.get("kl")` raises, so behaviour never silently depends
+  on `None`; `ctx.params["kl"]` raises with the available names when a required
+  value is missing. When such a parameter turns out to stay, move it to a flag.
+- When it is unclear which applies, prefer the flag, or ask the researcher
+  whether the parameter is part of what gets released.
+
+Give every referenced `{{x}}` a value in the job — otherwise submit reports
+`template references unknown parameter(s)`.
+
+For scheduler knobs, annotate `{ name: h_rt, scope: scheduler }` in the project and
+use `{{param.h_rt}}` in the target's `submit_template`. `choices`, when present, are
+enforced. Keep each param in one sweep block. Target precedence: `-t` > `job.target` >
+`project.target`; `target use` and `RUNQ_TARGET` scope queries only.
 
 Read the `--dry` output before each real submit — task count, target, generated
-run.sh / submit line, params reaching code only via `ctx.params`, pending code
+run.sh / submit line, how each param reaches the code (flag or `ctx.params`), pending code
 sync — and tell the user the arithmetic (`kl(3) × seed(2) = 6`).
 
 ## 3. Let runq carry the setup
@@ -130,8 +142,8 @@ setting visible in `--dry`, and applies it the same way to every task:
 | one-off install / model download | `setup_command` (once per submit, on the login node) |
 | `mkdir -p $OUT $CKPT` | already done — `ctx.output_dir` / `ctx.checkpoint_dir` exist at start |
 | `test -f …`, `python -c 'import x'` | `preflight: { extra_run: "test -f …", imports: true, hf: [repo] }` |
-| building `--lr $LR --seed $SEED` | `fixed_params` / `sweep` + `ctx.params` |
-| choosing `--resume` | a resume job: `fixed_params: { resume_from: <checkpoint path> }`, read with `ctx.params` |
+| building `--lr $LR --seed $SEED` | `fixed_params` / `sweep`, passed as `{{args}}` (or `ctx.params` for a one-off test) |
+| choosing `--resume` | a resume job: `fixed_params: { resume_from: <checkpoint path> }`, passed as `--resume_from {{resume_from}}` |
 | rsync to another cluster | project `targets:` + `<working_dir>/.rsync` (mirrored on submit) |
 | waiting on `qstat` | `runq ps <job> --json` when there is a reason to look |
 
@@ -196,8 +208,8 @@ Each file you add is one more thing the researcher reads or cleans up later. Goo
 
 - Keep experiment files together, following the repo's existing layout and AGENTS.md
   (for example `configs/runq/` or `runq/jobs/`), one job file per experiment.
-- Prefer editing or parametrizing an existing job or script (`fixed_params`,
-  `ctx.params`) over copying it into a `-v2` / `-fixed` variant; git keeps the history.
+- Prefer editing or parametrizing an existing job or script (`fixed_params` plus a
+  flag, or `ctx.params` for a one-off test) over copying it into a `-v2` / `-fixed` variant; git keeps the history.
 - Make a smoke test a job: the same command with small `fixed_params`
   (`max_steps: 2`) and `note: smoke`.
 - Give each job a short `note` that tells it apart from its neighbours — 2–4 words,
