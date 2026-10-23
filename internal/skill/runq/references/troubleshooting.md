@@ -12,7 +12,7 @@ step, then act or report; one retry is usually enough to tell a blip from a faul
 | `key … is passphrase-protected — add it to ssh-agent` | encrypted key, no agent | `ssh-add <key>` |
 | `unknown host key for …` | first contact / rotated keys | `runq target connect <name>` |
 | `Could not resolve hostname …` / `no such host` | DNS/VPN, or a typo in the target host / `~/.ssh/config` entry | `ssh -G <host>` to see what runq resolves; check the network once |
-| `ProxyJump is not supported by runq's SSH transport` | the host needs a jump host | configure a directly reachable host or a local tunnel |
+| `ProxyJump is not supported by runq's SSH transport` | an older runq service is running | upgrade and restart; current runq delegates ProxyJump to system OpenSSH |
 | `handshake failed` although `ssh <host>` works in your shell | the service started without your ssh-agent | `runq serve restart` from a shell with `SSH_AUTH_SOCK` |
 | `template references unknown parameter(s): x` | template uses `x` but this job gives it no value (project `default` is not injected) | add `x` to the job's `fixed_params:` (constant) or `sweep:` |
 | `duplicate parameter "x" found across sweep blocks` | `x` in two blocks | keep it in one block; zip pairs in one `list` block |
@@ -47,3 +47,22 @@ step, then act or report; one retry is usually enough to tell a blip from a faul
 - Task workspace (log, params.json, run.sh, status.json, metrics, results):
   `runq task show <task_id>` → `task_dir`
 - Self-check of this machine's setup: `runq doctor`
+
+### SSH recovery diagnostics
+
+In Targets, inspect **SSH last observed** separately from **Remote CLI tunnel**.
+`runq doctor` shows the same tunnel failure phase and original OpenSSH error.
+
+- `ssh` / authentication: compare the displayed debug command in the service's
+  environment; inspect `SSH_AUTH_SOCK` and `IdentityAgent`. Unlock the existing
+  agent rather than copying keys into runq. Authentication failures retry at 30s.
+- `socket_probe` / conflict: SSH succeeded, but the remote endpoint responds or
+  belongs to another owner. Check for another controller before removing it.
+- `forward_bind`: inspect remote forwarding permissions, SFTP support and socket
+  directory permissions. Publication requires OpenSSH's SFTP posix-rename extension.
+- DNS/network/timeout: check VPN and connectivity. Network retries back off from
+  2s to 10s; OpenSSH and runq keepalives bound detection of dead connections.
+
+After sleep, an owned socket that accepts but cannot return a response can be
+replaced by a new generation. Submitted commands are never replayed on a lost
+connection; OpenSSH exit 255 is conservatively treated as an unknown outcome.

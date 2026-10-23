@@ -16,9 +16,9 @@
       </span>
 
       <!-- forward troubles only — a healthy forward earns no voice here -->
-      <span v-for="fw in troubledForwards" :key="fw.name" class="seg seg--warn" :title="fw.detail">
-        {{ fw.label }}
-      </span>
+      <router-link v-for="fw in troubledForwards" :key="fw.name" :to="{ name: 'targets' }" class="seg seg--warn" :title="fw.detail">
+        {{ fw.label }}<span v-if="fw.reason"> · {{ fw.reason }}</span>
+      </router-link>
     </template>
 
     <v-spacer />
@@ -61,6 +61,7 @@ const troubledForwards = computed(() => {
           ? t('statusbar.forward_reconnecting', { name, attempts: fw.attempts ?? 0 })
           : t('statusbar.forward_stopped', { name }),
       detail: fw.last_error ?? '',
+      reason: fw.reason ? t('ssh.reason.' + fw.reason) : '',
     }))
 })
 

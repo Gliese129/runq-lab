@@ -2,6 +2,8 @@ package rfs
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -94,12 +96,20 @@ type ForwardStatus struct {
 	State      string `json:"state"` // up | reconnecting | closed
 	Since      int64  `json:"since"` // when the current state was entered
 	// LastOnline is the last moment the forward was known to be serving:
-	// set on establish and refreshed when a live session drops. 0 = never
+	// set on establish and refreshed after successful keepalive. 0 = never
 	// online ("no contact yet" ≠ "went down" — doctor renders them apart).
 	LastOnline int64 `json:"last_online,omitempty"`
 	// Attempts counts consecutive failed sessions since the last up.
-	Attempts  int    `json:"attempts,omitempty"`
-	LastError string `json:"last_error,omitempty"`
+	Attempts      int    `json:"attempts,omitempty"`
+	LastError     string `json:"last_error,omitempty"`
+	Phase         string `json:"phase,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	Hint          string `json:"hint,omitempty"`
+	NextRetryAt   int64  `json:"next_retry_at,omitempty"`
+	LastAttemptAt int64  `json:"last_attempt_at,omitempty"`
+	Transport     string `json:"transport,omitempty"`
+	DebugCommand  string `json:"debug_command,omitempty"`
+	SSHAuthSock   string `json:"ssh_auth_sock,omitempty"`
 }
 
 // RemoteForward supervises one remote socket forward. Create with
@@ -110,7 +120,7 @@ type RemoteForward struct {
 	logger *slog.Logger
 
 	mu     sync.Mutex
-	client *ssh.Client // current connection; nil between sessions
+	client *sshTransport // current connection; nil between sessions
 
 	// stMu guards st — the observable status snapshot (RQ-74).
 	stMu sync.Mutex
@@ -139,7 +149,9 @@ func (f *RemoteForward) markUp() {
 		return
 	}
 	now := time.Now().Unix()
-	f.st = ForwardStatus{State: ForwardUp, Since: now, LastOnline: now, SocketPath: f.cfg.SocketPath, Owner: f.cfg.Owner}
+	f.st.State, f.st.Since, f.st.LastOnline = ForwardUp, now, now
+	f.st.Attempts, f.st.NextRetryAt = 0, 0
+	f.st.LastError, f.st.Reason, f.st.Hint, f.st.Phase = "", "", "", "serving"
 }
 
 // markDown records a session ending. err may be nil (orderly serve exit);
@@ -151,23 +163,24 @@ func (f *RemoteForward) markDown(err error) {
 	if f.st.State == ForwardClosed {
 		return
 	}
-	if f.st.State == ForwardUp {
-		// It WAS online until this very moment — that fact is the honest
-		// "last online" reference for doctor.
-		f.st.LastOnline = time.Now().Unix()
+	if f.st.State != ForwardReconnecting {
+		f.st.Since = time.Now().Unix()
 	}
 	f.st.State = ForwardReconnecting
-	f.st.Since = time.Now().Unix()
 	f.st.Attempts++
+	f.st.LastError = "forward listener stopped"
 	if err != nil {
 		f.st.LastError = err.Error()
 	}
+	f.st.Reason, f.st.Hint = forwardFailure(f.st.Phase, f.st.LastError)
+
 }
 
 // markClosed pins the terminal state (Close called).
 func (f *RemoteForward) markClosed() {
 	f.stMu.Lock()
 	defer f.stMu.Unlock()
+	f.st.NextRetryAt = 0
 	f.st.State = ForwardClosed
 	f.st.Since = time.Now().Unix()
 }
@@ -181,7 +194,7 @@ func NewRemoteForward(cfg RemoteForwardConfig) *RemoteForward {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &RemoteForward{cfg: cfg, logger: logger, done: make(chan struct{}), runDone: make(chan struct{}), st: ForwardStatus{State: ForwardReconnecting, Since: time.Now().Unix(), SocketPath: cfg.SocketPath, Owner: cfg.Owner}}
+	return &RemoteForward{cfg: cfg, logger: logger, done: make(chan struct{}), runDone: make(chan struct{}), st: ForwardStatus{State: ForwardReconnecting, Since: time.Now().Unix(), SocketPath: cfg.SocketPath, Owner: cfg.Owner, Transport: sshTransportName(cfg.SSH), DebugCommand: cfg.SSH.DebugCommand(), SSHAuthSock: os.Getenv("SSH_AUTH_SOCK")}}
 }
 
 // Run supervises the forward until ctx is cancelled or Close is called:
@@ -217,20 +230,31 @@ func (f *RemoteForward) Run(parent context.Context) {
 
 		started := time.Now()
 		err := f.session(ctx)
-		if err != nil {
-			f.logger.Warn("remote socket forward down", "error", err)
+		if ctx.Err() != nil {
+			return
 		}
 		f.markDown(err)
-		if time.Since(started) > forwardHealthyAfter {
-			backoff = forwardBackoffMin // it worked for a while; fail fast next time
+		status := f.Status()
+		if status.LastOnline >= started.Unix() && time.Since(started) > forwardHealthyAfter {
+			backoff = forwardBackoffMin
 		}
+		delay := backoff
+		if status.Reason == "authentication" || status.Reason == "host_key" || status.Reason == "configuration" {
+			delay = 30 * time.Second
+		}
+		f.stMu.Lock()
+		if f.st.State != ForwardClosed {
+			f.st.NextRetryAt = time.Now().Add(delay).Unix()
+		}
+		f.stMu.Unlock()
+		f.logger.Warn("remote socket forward down", "phase", status.Phase, "reason", status.Reason, "attempt", status.Attempts, "retry_in", delay, "error", err)
 
 		select {
 		case <-ctx.Done():
 			return
 		case <-f.done:
 			return
-		case <-time.After(backoff):
+		case <-time.After(delay):
 		}
 		backoff = min(backoff*2, forwardBackoffMax)
 	}
@@ -239,6 +263,7 @@ func (f *RemoteForward) Run(parent context.Context) {
 // session runs one full forward lifetime: dial, prepare the socket dir,
 // bind, serve until the connection or listener dies.
 func (f *RemoteForward) session(ctx context.Context) error {
+	f.setPhase("ssh")
 	client, err := dialSSH(ctx, f.cfg.SSH)
 	if err != nil {
 		return fmt.Errorf("dial/handshake: %w", err)
@@ -264,37 +289,73 @@ func (f *RemoteForward) session(ctx context.Context) error {
 
 	setup, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	f.setPhase("socket_probe")
 	sockPath, err := sshCall(setup, client, func() (string, error) { return f.prepareSocket(client) })
 	if err != nil {
 		return err
 	}
 
-	ln, err := sshCall(setup, client, func() (net.Listener, error) { return client.ListenUnix(sockPath) })
+	// Bind a fresh generation, then atomically publish the stable endpoint.
+	// A delayed old sshd can only close its own generation's listener.
+	token := make([]byte, 6)
+	if _, err := rand.Read(token); err != nil {
+		return err
+	}
+	boundPath := path.Join(path.Dir(sockPath), ".f-"+hex.EncodeToString(token))
+	if len([]byte(boundPath)) > 103 {
+		return fmt.Errorf("remote socket generation path too long: %s", boundPath)
+	}
+	f.setPhase("forward_bind")
+	ln, err := sshCall(setup, client, func() (net.Listener, error) { return client.ListenUnix(boundPath) })
 	if err != nil {
 		return fmt.Errorf("remote listen %s: %w", sockPath, err)
 	}
 	defer ln.Close()
+	published := false
+	defer func() {
+		if published {
+			return
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, _ = sshCall(cleanup, client, func() (bool, error) {
+			sc, err := client.NewSFTP()
+			if err != nil {
+				return false, err
+			}
+			defer sc.Close()
+			return true, sc.Remove(boundPath)
+		})
+	}()
 
 	// Permission clamping is part of readiness, not a best-effort promise.
 	_, err = sshCall(setup, client, func() (bool, error) {
-		sc, e := sftp.NewClient(client)
+		sc, e := client.NewSFTP()
 		if e != nil {
 			return false, e
 		}
 		defer sc.Close()
-		return true, sc.Chmod(sockPath, 0600)
+		if e := sc.Chmod(boundPath, 0600); e != nil {
+			return false, e
+		}
+		return true, publishForwardSocket(sc, sockPath, boundPath)
 	})
 	if err != nil {
 		return fmt.Errorf("socket permissions: %w", err)
 	}
+	published = true
 	cancel()
+	f.setPhase("serving")
 
 	// No exec traffic proves this connection alive, so probe it ourselves.
 	// A dead transport makes SendRequest fail → close → Accept unblocks →
 	// Serve returns → the Run loop reconnects.
+	keepaliveErr := make(chan error, 1)
 	stopKeepalive := make(chan struct{})
-	defer close(stopKeepalive)
+	keepaliveDone := make(chan struct{})
+	defer func() { close(stopKeepalive); _ = client.Close(); <-keepaliveDone }()
 	go func() {
+		defer close(keepaliveDone)
 		ticker := time.NewTicker(forwardKeepalive)
 		defer ticker.Stop()
 		for {
@@ -304,9 +365,13 @@ func (f *RemoteForward) session(ctx context.Context) error {
 				_, err := sshCall(probe, client, func() (bool, error) { _, _, e := client.SendRequest("keepalive@runq", true, nil); return true, e })
 				cancel()
 				if err != nil {
+					keepaliveErr <- fmt.Errorf("keepalive: %w", err)
 					_ = client.Close()
 					return
 				}
+				f.stMu.Lock()
+				f.st.LastOnline = time.Now().Unix()
+				f.stMu.Unlock()
 			case <-stopKeepalive:
 				return
 			case <-ctx.Done():
@@ -321,17 +386,29 @@ func (f *RemoteForward) session(ctx context.Context) error {
 	if f.cfg.OnEstablished != nil {
 		f.cfg.OnEstablished()
 	}
-	if err := f.cfg.Serve(deadlineListener{ln}); err != nil {
-		return fmt.Errorf("serve: %w", err)
+	serveErr := f.cfg.Serve(deadlineListener{ln})
+	select {
+	case err := <-keepaliveErr:
+		return err
+	default:
+	}
+	if client.system != nil {
+		select {
+		case <-client.system.done:
+			return fmt.Errorf("OpenSSH transport ended: %v: %s", client.system.waitErr, client.system.stderr.String())
+		default:
+		}
+	}
+	if serveErr != nil {
+		return fmt.Errorf("serve: %w", serveErr)
 	}
 	return nil
 }
 
-// prepareSocket resolves the socket path against the remote home, ensures
-// a 0700 parent dir, and removes a stale socket file — sshd refuses to
-// bind over an existing one (OpenSSH StreamLocalBindUnlink defaults to no).
-func (f *RemoteForward) prepareSocket(client *ssh.Client) (string, error) {
-	sc, err := sftp.NewClient(client)
+// prepareSocket resolves the stable endpoint and verifies ownership/liveness.
+// It leaves the old path intact until a new generation is ready to publish.
+func (f *RemoteForward) prepareSocket(client *sshTransport) (string, error) {
+	sc, err := client.NewSFTP()
 	if err != nil {
 		return "", fmt.Errorf("sftp: %w", err)
 	}
@@ -363,59 +440,126 @@ func (f *RemoteForward) prepareSocket(client *ssh.Client) (string, error) {
 	if owner == "" {
 		return "", fmt.Errorf("socket owner identity is required")
 	}
+	ownerErr := verifyForwardOwner(sc, ownerPath, owner)
 	if fi, err := sc.Lstat(sockPath); err == nil {
-		if fi.Mode()&os.ModeSocket == 0 {
+		if fi.Mode()&os.ModeSocket == 0 && fi.Mode()&os.ModeSymlink == 0 {
 			return "", fmt.Errorf("refusing to replace non-socket %s", sockPath)
 		}
-		file, err := sc.Open(ownerPath)
-		if err != nil {
-			return "", fmt.Errorf("socket has no ownership proof: %w", err)
+		if ownerErr != nil {
+			return "", ownerErr
 		}
-		data, err := io.ReadAll(io.LimitReader(file, 1024))
-		_ = file.Close()
-		if err != nil || string(data) != owner+"\n" {
-			return "", fmt.Errorf("socket belongs to another session: %s", sockPath)
-		}
-		conn, err := client.Dial("unix", sockPath)
-		if err == nil {
-			_ = conn.Close()
-			return "", fmt.Errorf("socket is already serving; stop its owning controller before reconnecting: %s", sockPath)
-		}
-		// ConnectFailed alone includes permission errors. Only an explicit refusal
-		// proves a dead listener. A transport failure never authorizes unlink.
-		var openErr *ssh.OpenChannelError
-		if !errors.As(err, &openErr) {
-			return "", fmt.Errorf("cannot prove socket stale: %w", err)
-		}
-		if !strings.Contains(strings.ToLower(openErr.Message), "connection refused") {
-			// OpenSSH may deliberately hide errno behind "open failed". Query
-			// the remote kernel without unlinking; only ECONNREFUSED is proof.
-			if probeErr := proveSocketRefused(client, sockPath); probeErr != nil {
-				return "", fmt.Errorf("cannot prove socket stale: %w", probeErr)
+		missingGeneration := false
+		if fi.Mode()&os.ModeSymlink != 0 {
+			link, err := sc.ReadLink(sockPath)
+			if err != nil || !validForwardLink(sockPath, link) {
+				return "", fmt.Errorf("unrecognized socket generation: %s", sockPath)
+			}
+			target, err := sc.Lstat(path.Join(dir, path.Base(link)))
+			if errors.Is(err, fs.ErrNotExist) {
+				missingGeneration = true
+			} else if err != nil {
+				return "", err
+			} else if target.Mode()&os.ModeSocket == 0 {
+				return "", fmt.Errorf("refusing non-socket generation: %s", link)
 			}
 		}
-		if err := sc.Remove(sockPath); err != nil {
-			return "", err
+		if !missingGeneration {
+			conn, err := client.Dial("unix", sockPath)
+			if err == nil {
+				// Opening the remote socket only proves sshd is listening. Require an
+				// application response, otherwise a half-open pre-sleep tunnel blocks us.
+				alive := forwardResponds(conn)
+				if alive {
+					return "", fmt.Errorf("socket is already serving; stop its owning controller before reconnecting: %s", sockPath)
+				}
+				// A broken NEW SSH transport cannot authorize replacing the old route.
+				if _, _, err := client.SendRequest("keepalive@runq", true, nil); err != nil {
+					return "", fmt.Errorf("socket probe transport: %w", err)
+				}
+			} else {
+				var openErr *ssh.OpenChannelError
+				if !errors.As(err, &openErr) {
+					return "", fmt.Errorf("cannot prove socket stale: %w", err)
+				}
+				if !strings.Contains(strings.ToLower(openErr.Message), "connection refused") {
+					if err := proveSocketRefused(client, sockPath); err != nil {
+						return "", fmt.Errorf("cannot prove socket stale: %w", err)
+					}
+				}
+			}
 		}
+		// Leave the public path in place until the replacement has bound and its
+		// permissions are correct. Publication below is an atomic rename.
+
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
-	file, err := sc.OpenFile(ownerPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
-	if err != nil {
-		return "", err
-	}
-	_, err = file.Write([]byte(owner + "\n"))
-	ce := file.Close()
-	if err == nil {
-		err = ce
-	}
-	if err != nil {
-		return "", err
-	}
-	if err := sc.Chmod(ownerPath, 0600); err != nil {
-		return "", err
+	if ownerErr != nil {
+		if !errors.Is(ownerErr, fs.ErrNotExist) {
+			return "", ownerErr
+		}
+		if err := createForwardOwner(sc, ownerPath, owner); err != nil {
+			return "", err
+		}
 	}
 	return sockPath, nil
+}
+
+func verifyForwardOwner(sc *sftp.Client, ownerPath, owner string) error {
+	file, err := sc.Open(ownerPath)
+	if err != nil {
+		return fmt.Errorf("open socket owner record %s: %w", ownerPath, err)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 1024))
+	closeErr := file.Close()
+	if err != nil {
+		return fmt.Errorf("read socket owner record %s: %w", ownerPath, err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close socket owner record %s: %w", ownerPath, closeErr)
+	}
+	if len(data) == 0 {
+		return fmt.Errorf("empty socket owner record: %s", ownerPath)
+	}
+	if string(data) != owner+"\n" {
+		return fmt.Errorf("socket belongs to another session: %s", ownerPath)
+	}
+	return nil
+}
+
+// Ownership is immutable across reconnects. Publish a complete private file
+// with an exclusive hard link: interruption cannot truncate the proof, and a
+// concurrent creator cannot have its ownership overwritten.
+func createForwardOwner(sc *sftp.Client, ownerPath, owner string) error {
+	token := make([]byte, 6)
+	if _, err := rand.Read(token); err != nil {
+		return err
+	}
+	tmp := ownerPath + ".tmp-" + hex.EncodeToString(token)
+	file, err := sc.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		return fmt.Errorf("create socket owner record: %w", err)
+	}
+	defer sc.Remove(tmp)
+	if err = file.Chmod(0600); err == nil {
+		_, err = file.Write([]byte(owner + "\n"))
+	}
+	closeErr := file.Close()
+	if err != nil {
+		return fmt.Errorf("write socket owner record: %w", err)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close socket owner record: %w", closeErr)
+	}
+	if err := sc.Link(tmp, ownerPath); err != nil {
+		// A same-owner concurrent creator is harmless; any other outcome
+		// fails closed without touching its file or socket.
+		if checkErr := verifyForwardOwner(sc, ownerPath, owner); checkErr == nil {
+			return nil
+		}
+		return fmt.Errorf("publish socket owner record: %w", err)
+	}
+	return nil
 }
 
 // Close stops the supervisor and tears down the current connection (which
@@ -449,7 +593,7 @@ func (f *RemoteForward) Close() error {
 
 // proveSocketRefused performs a read-only Unix connect on the login node.
 // Python is required only for servers that mask the SSH channel-open errno.
-func proveSocketRefused(client *ssh.Client, socketPath string) error {
+func proveSocketRefused(client *sshTransport, socketPath string) error {
 	session, err := client.NewSession()
 	if err != nil {
 		return err
@@ -468,7 +612,10 @@ else:
     sys.exit(0)
 `
 	err = session.Run(buildCmdLine("python3", []string{"-c", script, socketPath}))
-	var exit *ssh.ExitError
+	var exit interface {
+		error
+		ExitStatus() int
+	}
 	if errors.As(err, &exit) && exit.ExitStatus() == 3 {
 		return nil
 	}
@@ -476,4 +623,51 @@ else:
 		return fmt.Errorf("socket is still serving: %s", socketPath)
 	}
 	return fmt.Errorf("remote socket errno probe failed (python3 required): %w", err)
+}
+
+func forwardResponds(remote net.Conn) bool {
+	front, pump := net.Pipe()
+	conn := &deadlineConn{Conn: front, remote: remote, pump: pump}
+	defer conn.Close()
+	go func() { _, _ = io.Copy(pump, remote); _ = conn.Close() }()
+	go func() { _, _ = io.Copy(remote, pump); _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.WriteString(conn, "GET /api/v1/health HTTP/1.0\r\nHost: runq\r\n\r\n"); err != nil {
+		return false
+	}
+	var b [1]byte
+	n, _ := conn.Read(b[:])
+	return n > 0
+}
+func forwardGeneration(name string) bool {
+	if path.Base(name) != name || !strings.HasPrefix(name, ".f-") || len(name) != 15 {
+		return false
+	}
+	_, err := hex.DecodeString(name[3:])
+	return err == nil
+}
+func publishForwardSocket(sc *sftp.Client, public, bound string) error {
+	if _, ok := sc.HasExtension("posix-rename@openssh.com"); !ok {
+		return fmt.Errorf("atomic forward publication requires SFTP posix-rename")
+	}
+	old, _ := sc.ReadLink(public)
+	tmp := bound + ".link"
+	if err := sc.Symlink(bound, tmp); err != nil {
+		return err
+	}
+	if err := sc.PosixRename(tmp, public); err != nil {
+		_ = sc.Remove(tmp)
+		return fmt.Errorf("publish forward: %w", err)
+	}
+	if validForwardLink(public, old) && path.Base(old) != path.Base(bound) {
+		_ = sc.Remove(path.Join(path.Dir(public), path.Base(old)))
+	}
+	return nil
+}
+
+func validForwardLink(public, link string) bool {
+	if !forwardGeneration(path.Base(link)) {
+		return false
+	}
+	return link == path.Base(link) || path.Clean(link) == path.Join(path.Dir(public), path.Base(link))
 }

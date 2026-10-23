@@ -45,11 +45,11 @@ type Server struct {
 	version   string    // /health; stamped via internal/version (ldflags)
 	startedAt time.Time // /health uptime_seconds
 
-	// forwardStarter is the client daemon's runtime hook for POST
-	// /targets/{name}/connect (start/replace a remote CLI forward without
-	// a restart). nil when remote forwarding is unavailable → 501.
-	forwardStarter func(name string) error
-	forwardStopper func(name string) error
+	// targetConnector is the client daemon's runtime hook for POST
+	// /targets/{name}/connect (check SSH and start an enabled CLI forward).
+	// nil when target connection support is unavailable → 501.
+	targetConnector func(context.Context, string) error
+	forwardStopper  func(name string) error
 	// forwardStatus, when set (client daemon), snapshots every remote CLI
 	// forward's observable state for /health (RQ-74).
 	forwardStatus func() map[string]rfs.ForwardStatus

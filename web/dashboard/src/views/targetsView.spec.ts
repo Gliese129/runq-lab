@@ -37,3 +37,20 @@ describe('targetRows', () => {
     expect(rows[2]).toMatchObject({ kind: 'runqd', endpoint: '', connection: 'unknown', jobs: 0 })
   })
 })
+
+it('keeps SSH contact independent from a failed reverse tunnel and exposes diagnostics', () => {
+  const state = {
+    ...health,
+    targets: [{ name: 'tsubame', reachable: true, last_checked: 200 }],
+    forwards: { tsubame: {
+      state: 'reconnecting', since: 100, attempts: 32,
+      phase: 'socket_probe', reason: 'socket_conflict', last_error: 'socket is already serving',
+      next_retry_at: 210, debug_command: 'ssh -vvv -o BatchMode=yes fixture true',
+    } },
+  } as HealthResponse
+  const row = targetRows(targets, state, jobs, 'tsubame')[0]
+  expect(row.connection).toBe('reconnecting')
+  expect(row.sshObservation).toEqual({ reachable: true, checked: 200 })
+  expect(row.forward).toMatchObject({ attempts: 32, reason: 'socket_conflict', next_retry_at: 210 })
+  expect(row.lastError).toBe('socket is already serving')
+})

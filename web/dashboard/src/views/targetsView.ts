@@ -17,6 +17,8 @@ export interface TargetRow {
   /** unix seconds the connection state was observed/entered */
   since?: number
   lastError?: string
+  forward?: ForwardStatus
+  sshObservation?: { reachable: boolean; checked: number }
   running: number
   pending: number
   jobs: number
@@ -57,6 +59,11 @@ export function targetRows(
       endpoint: host ? `${t.ssh?.user ? t.ssh.user + '@' : ''}${host}` : '',
       maxInflight: t.max_inflight,
       ...connectionOf(t, health),
+      forward: t.remote_cli ? health?.forwards?.[t.name] : undefined,
+      sshObservation: (() => {
+        const observed = health?.targets?.find(h => h.name === t.name)
+        return observed?.last_checked ? { reachable: observed.reachable, checked: observed.last_checked } : undefined
+      })(),
       running: mine.filter(j => j.status === 'running').length,
       pending: mine.filter(j => j.status === 'pending').length,
       jobs: mine.length,

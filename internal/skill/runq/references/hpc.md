@@ -24,17 +24,31 @@ runq target show [tsubame]       # current definition (alias: target ls)
 - Submit target is `-t > job.target > project.target`. Session target scopes queries only.
 
 ### SSH facts
-- Auth: ssh-agent first (`SSH_AUTH_SOCK`), then key files. A
-  passphrase-protected key without an agent fails with a hint: `ssh-add <key>`.
-- SSH settings are resolved with `ssh -G`, so `~/.ssh/config` aliases, Include,
-  Match, User, Port, IdentityFile and IdentityAgent all apply. ProxyJump and
-  ProxyCommand are rejected — use a directly reachable host or a tunnel.
-- The service authenticates with the `SSH_AUTH_SOCK` of the shell that started
-  it. After changing the agent, `runq serve restart` from a shell that has it;
-  a working `ssh` in another shell proves nothing about the service.
-- `module load …` and other cluster profile setup go in the target's
-  `env_setup`; it runs before every task, preflight probe and `setup_command`.
-- Unknown host key → `runq target connect <name>` (asks to trust it).
+- runq uses the system OpenSSH executable for connections, commands and SFTP.
+  Keep hosts and identities in `~/.ssh/config`; aliases, Include/Match,
+  ProxyJump/ProxyCommand, IdentityAgent, IdentitiesOnly, certificates and custom
+  known-hosts files are handled by OpenSSH. Target fields are explicit overrides.
+- Background connections use `BatchMode=yes`: unlock encrypted keys through
+  your existing agent. Password/MFA prompts need an interactive terminal.
+  `runq target connect <name>` delegates first-use prompts to system SSH when
+  attached to a terminal, then verifies the service's noninteractive connection.
+- runq owns private ControlMaster sockets, not your terminal's connections.
+  It disables configured forwards/RemoteCommand/TTY for machine operations and
+  applies bounded keepalives. SSH configuration is read again on reconnect.
+- The service inherits `SSH_AUTH_SOCK` when started; `IdentityAgent` can override
+  it. If you switch to a different agent socket, restart the service from that
+  shell. A successful interactive login alone does not prove unattended auth.
+- `runq doctor` and Dashboard → Targets show the SSH failure phase, raw error,
+  retry time, service agent environment and a copyable `ssh -vvv` command.
+  This command bypasses existing control masters and uses the target overrides.
+- SSH reachability and the remote CLI tunnel are separate observations. A
+  working login can coexist with a broken reverse forward. The tunnel probes
+  the old endpoint's response before publishing a new socket generation;
+  a responding or foreign-owned endpoint is not replaced.
+- For a report, include the target, phase, raw error, attempt time, and relevant
+  service log lines (`runq serve status` gives the log path). Redact sensitive
+  host/user/path details before sharing OpenSSH debug output publicly.
+- Cluster profile setup (`module load …`) belongs in the target's `env_setup`.
 
 ## Templates
 

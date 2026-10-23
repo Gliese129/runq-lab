@@ -156,7 +156,7 @@ func newClientDaemon(dataDir string, paths utils.DataDirPaths, logger *slog.Logg
 	}
 	// `runq connect` starts/replaces forwards at runtime through this hook
 	// (POST /targets/{name}/connect) — no daemon restart for the forward.
-	d.Dashboard.SetForwardStarter(d.StartRemoteForward)
+	d.Dashboard.SetTargetConnector(d.ConnectTarget)
 	d.Dashboard.SetForwardStopper(d.StopRemoteForward)
 	d.Dashboard.SetForwardStatus(d.ForwardStatuses)
 	// RQ-75: API writes to config.yaml notify the reconciler directly —

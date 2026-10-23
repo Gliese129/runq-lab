@@ -27,6 +27,20 @@ runq target connect tsubame
   target, and version. A stopped daemon or failed install/forward returns nonzero.
   `runq target disconnect` stops that target's forward.
 
+For TSUBAME, the preset uses `qsub -g {{param.group}}`. Set the charged
+project group alongside the resource parameters in each job:
+
+```yaml
+fixed_params:
+  group: your-tsubame-group
+  node_kind: node_q
+  h_rt: "1:00:00"
+```
+
+The dashboard's **Connect** button checks SSH for every SSH target. It also
+restarts the remote CLI forward when `remote_cli: true` is configured.
+Successful file browsing updates the same reachability status.
+
 Start the local service with `runq serve -d` before connecting. Each controller
 and target gets its own private socket and env file under
 `~/.runq/f/<controller-id>/<target-hash>/`. Source the exact env path printed by
@@ -49,10 +63,10 @@ an official platform asset with its SHA-256 checksum. Installs use a unique
 remote temporary file, verify it runs and reports the correct version, then
 atomically rename it; failed installs preserve the previous executable.
 
-Connect, execution lanes, and forwards all use `ssh -G` to evaluate aliases,
-Include, Match, user, port, identity files, and IdentityAgent. ProxyJump,
-ProxyCommand, and HostKeyAlias are explicitly unsupported; configure a directly
-reachable endpoint or tunnel. The service retains its selected agent socket
+Connect, execution lanes, and forwards all use system OpenSSH and your
+`~/.ssh/config`, including aliases, Include, Match, ProxyJump/ProxyCommand,
+identity files, IdentityAgent, certificates, and HostKeyAlias.
+The service retains its selected agent socket
 path and reconnects to the agent for authentication. After changing that path,
 restart the service; a successful SSH test in another shell does not update
 its environment. If OpenSSH hides a stale socket's errno as `open failed`,

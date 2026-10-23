@@ -163,7 +163,11 @@ func (b *Backend) WithLifecycleLock(fn func() error) error {
 // NewWithFS builds a Backend with an explicit filesystem — used by SSHBackend
 // to inject an rfs.SSHFS for remote cluster operation.
 func NewWithFS(cfg *config.TargetConfig, st *store.Store, storageCfg *config.GlobalConfig, fsys rfs.FS) *Backend {
-	return &Backend{Cfg: cfg, Store: st, FS: fsys, StorageCfg: storageCfg}
+	b := &Backend{Cfg: cfg, Store: st, FS: fsys, StorageCfg: storageCfg}
+	if observed, ok := fsys.(interface{ SetContactObserver(func(error)) }); ok {
+		observed.SetContactObserver(b.recordContact)
+	}
+	return b
 }
 
 // shellRunClassified executes a shell command through the FS layer and

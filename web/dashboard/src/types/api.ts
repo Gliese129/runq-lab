@@ -334,6 +334,14 @@ export interface ForwardStatus {
   /** consecutive failed sessions since last up */
   attempts?: number
   last_error?: string
+  phase?: string
+  reason?: string
+  hint?: string
+  next_retry_at?: number
+  last_attempt_at?: number
+  transport?: string
+  debug_command?: string
+  ssh_auth_sock?: string
 }
 
 export interface HealthResponse {

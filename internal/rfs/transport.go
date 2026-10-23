@@ -9,7 +9,10 @@ import (
 )
 
 // dialSSH bounds TCP and the entire SSH handshake, not just TCP connect.
-func dialSSH(ctx context.Context, cfg SSHConfig) (*ssh.Client, error) {
+func dialSSH(ctx context.Context, cfg SSHConfig) (*sshTransport, error) {
+	if cfg.OpenSSH != nil {
+		return dialOpenSSH(ctx, cfg)
+	}
 	hostKeys := cfg.HostKeyCallback
 	if hostKeys == nil {
 		var err error
@@ -46,12 +49,12 @@ func dialSSH(ctx context.Context, cfg SSHConfig) (*ssh.Client, error) {
 		return nil, ctx.Err()
 	}
 	_ = raw.SetDeadline(time.Time{})
-	return ssh.NewClient(conn, chans, reqs), nil
+	return &sshTransport{Client: ssh.NewClient(conn, chans, reqs)}, nil
 }
 
 // Cancellation closes the real connection and joins the operation. SSH/SFTP
 // waits are released by transport shutdown; no orphaned blackhole goroutine.
-func sshCall[T any](ctx context.Context, client *ssh.Client, fn func() (T, error)) (T, error) {
+func sshCall[T any](ctx context.Context, client *sshTransport, fn func() (T, error)) (T, error) {
 	if err := ctx.Err(); err != nil {
 		var zero T
 		return zero, err

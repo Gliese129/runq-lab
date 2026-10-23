@@ -13,6 +13,7 @@ import (
 
 	"github.com/gliese129/runq-lab/internal/api"
 	"github.com/gliese129/runq-lab/internal/config"
+	"github.com/gliese129/runq-lab/internal/rfs"
 	"github.com/gliese129/runq-lab/internal/utils"
 
 	"github.com/spf13/cobra"
@@ -313,11 +314,18 @@ type targetHealthLine struct {
 
 // forwardHealthLine mirrors rfs.ForwardStatus over the /health wire.
 type forwardHealthLine struct {
-	State      string `json:"state"`
-	Since      int64  `json:"since"`
-	LastOnline int64  `json:"last_online"`
-	Attempts   int    `json:"attempts"`
-	LastError  string `json:"last_error"`
+	State        string `json:"state"`
+	Since        int64  `json:"since"`
+	LastOnline   int64  `json:"last_online"`
+	Attempts     int    `json:"attempts"`
+	LastError    string `json:"last_error"`
+	Phase        string `json:"phase"`
+	Reason       string `json:"reason"`
+	Hint         string `json:"hint"`
+	NextRetryAt  int64  `json:"next_retry_at"`
+	Transport    string `json:"transport"`
+	DebugCommand string `json:"debug_command"`
+	SSHAuthSock  string `json:"ssh_auth_sock"`
 }
 
 // render turns the forward state into one honest doctor line ("up 2h" /
@@ -328,6 +336,15 @@ func (f *forwardHealthLine) render() string {
 		return fmt.Sprintf("forward up since %s ago", time.Since(time.Unix(f.Since, 0)).Round(time.Second))
 	case "reconnecting":
 		s := fmt.Sprintf("forward reconnecting (attempt %d", f.Attempts)
+		if f.Phase != "" {
+			s += " · phase " + f.Phase
+		}
+		if f.Reason != "" {
+			s += " · " + f.Reason
+		}
+		if f.NextRetryAt > 0 {
+			s += fmt.Sprintf(" · retry in %s", max(time.Until(time.Unix(f.NextRetryAt, 0)).Round(time.Second), 0))
+		}
 		if f.LastOnline > 0 {
 			s += fmt.Sprintf(" · last online %s ago", time.Since(time.Unix(f.LastOnline, 0)).Round(time.Second))
 		} else {
@@ -336,6 +353,12 @@ func (f *forwardHealthLine) render() string {
 		s += ")"
 		if f.LastError != "" {
 			s += ": " + f.LastError
+		}
+		if f.Hint != "" {
+			s += "\n    " + f.Hint
+		}
+		if f.DebugCommand != "" {
+			s += "\n    service SSH_AUTH_SOCK: " + f.SSHAuthSock + " (IdentityAgent may override)\n    debug: " + f.DebugCommand
 		}
 		return s
 	case "closed":
@@ -524,6 +547,11 @@ func doctorConnection(cfg *config.GlobalConfig, health map[string]targetHealthLi
 			fmt.Printf("  %s\n", h.forward.render())
 		}
 
+		if !found || h.forward == nil {
+			if sshCfg, err := rfs.ResolveTargetSSH(t.SSH.Host, t.SSH.Port, t.SSH.User, t.SSH.Key, t.SSH.ProxyJump); err == nil {
+				fmt.Printf("  transport: system OpenSSH\n  debug: %s\n", sshCfg.DebugCommand())
+			}
+		}
 		block := sshConfigBlock(t.SSH.Host)
 		if len(block) > 0 {
 			fmt.Printf("  ~/.ssh/config:\n")
@@ -534,7 +562,7 @@ func doctorConnection(cfg *config.GlobalConfig, health map[string]targetHealthLi
 				fmt.Printf("    # user unset — current OS user (%s) will be used\n", os.Getenv("USER"))
 			}
 		} else {
-			fmt.Printf("  no ~/.ssh/config entry for %q — used as hostname directly\n", t.SSH.Host)
+			fmt.Printf("  no literal ~/.ssh/config block for %q — OpenSSH also evaluates Include/Match/system config\n", t.SSH.Host)
 		}
 	}
 }

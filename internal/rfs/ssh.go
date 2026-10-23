@@ -13,7 +13,6 @@ import (
 	"sync"
 
 	"github.com/pkg/sftp"
-	"golang.org/x/crypto/ssh"
 )
 
 // ErrExecInterrupted marks an Exec whose command STARTED on the remote side
@@ -44,6 +43,14 @@ type SSHFS struct {
 // NewSSHFS creates an SSHFS. The connection is lazy — no dial happens here.
 func NewSSHFS(cfg SSHConfig) *SSHFS {
 	return &SSHFS{conn: newSSHConn(cfg)}
+}
+
+// SetContactObserver reports transport outcomes, including file browsing.
+// Context-scoped views share the observer. The callback runs outside conn.mu.
+func (s *SSHFS) SetContactObserver(observe func(error)) {
+	s.conn.mu.Lock()
+	s.conn.contactObserver = observe
+	s.conn.mu.Unlock()
 }
 
 // Close tears down the SSH connection. The SSHFS should not be used after Close.
@@ -123,7 +130,7 @@ func (s *SSHFS) Open(path string) (File, error) {
 		s.conn.endOpErr(err)
 		return nil, err
 	}
-	return &sshFile{f: f, s: s, client: client, release: s.conn.endOp}, nil
+	return &sshFile{f: f, s: s, client: client, release: s.conn.endOpErr}, nil
 }
 func (s *SSHFS) ReadDir(path string) ([]fs.DirEntry, error) {
 	return sftpOp(s, func(sc *sftp.Client) ([]fs.DirEntry, error) {
@@ -256,7 +263,11 @@ func (s *SSHFS) Exec(parent context.Context, cmd string, args ...string) (stdout
 
 	so, se := sob.Bytes(), seb.Bytes()
 	if waitErr != nil {
-		if ee, ok := waitErr.(*ssh.ExitError); ok {
+		var ee interface {
+			error
+			ExitStatus() int
+		}
+		if errors.As(waitErr, &ee) {
 			return so, se, ee.ExitStatus(), nil
 		}
 		return so, se, -1, fmt.Errorf("%w: %v", ErrExecInterrupted, waitErr)
@@ -303,11 +314,22 @@ func (s *SSHFS) ExecStream(ctx context.Context, cmd string, args ...string) (io.
 		}
 	}()
 	go func() {
-		pw.CloseWithError(sess.Wait())
+		waitErr := sess.Wait()
+		pw.CloseWithError(waitErr)
 		sess.Close()
 		release()
 		close(finished)
-		s.conn.endOp()
+		var exit interface {
+			error
+			ExitStatus() int
+		}
+		if errors.As(waitErr, &exit) {
+			waitErr = nil // a command's exit status proves the transport worked
+		}
+		if ctx.Err() != nil {
+			waitErr = ctx.Err()
+		}
+		s.conn.endOpErr(waitErr)
 	}()
 	return &sshStream{ReadCloser: pr, closeSession: func() error {
 		closeCtx, cancel := context.WithTimeout(context.Background(), s.conn.timeout())
@@ -375,8 +397,8 @@ func buildCmdLine(cmd string, args []string) string {
 type sshFile struct {
 	f        *sftp.File
 	s        *SSHFS
-	client   *ssh.Client
-	release  func()
+	client   *sshTransport
+	release  func(error)
 	once     sync.Once
 	closeErr error
 }
@@ -400,7 +422,10 @@ func (sf *sshFile) Stat() (fs.FileInfo, error) {
 	return fileOp(sf, func() (fs.FileInfo, error) { return sf.f.Stat() })
 }
 func (sf *sshFile) Close() error {
-	sf.once.Do(func() { _, sf.closeErr = fileOp(sf, func() (bool, error) { return true, sf.f.Close() }); sf.release() })
+	sf.once.Do(func() {
+		_, sf.closeErr = fileOp(sf, func() (bool, error) { return true, sf.f.Close() })
+		sf.release(sf.closeErr)
+	})
 	return sf.closeErr
 }
 

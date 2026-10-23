@@ -17,8 +17,10 @@ import (
 // SSHConfig holds the parameters needed to establish an SSH connection.
 // Populated from the target config (see internal/config.TargetConfig).
 type SSHConfig struct {
-	Host string // "login.cluster.edu" or "login.cluster.edu:22"
-	User string
+	// OpenSSH is set for user targets. Native SSH remains for injected transports.
+	OpenSSH *OpenSSHConfig
+	Host    string // original OpenSSH alias; native transports use host[:port]
+	User    string
 	// AuthMethods are tried in order. Convention (RQ-45): ssh-agent first
 	// (the daemon never touches key plaintext), key file second. Build
 	// with ResolveAuthMethods.
@@ -86,13 +88,14 @@ var errClosed = errors.New("ssh connection manager closed")
 //     (active == 0), the watcher closes the connection. In-flight streams
 //     (logs -f, large SFTP copies) hold active > 0 and are never cut.
 type sshConn struct {
-	mu         sync.Mutex
-	connecting chan struct{}
-	dialCancel context.CancelFunc
-	client     *ssh.Client
-	sftp       *sftp.Client
-	lastUsed   time.Time
-	active     int // in-flight operations; idle teardown requires active == 0
+	mu              sync.Mutex
+	connecting      chan struct{}
+	dialCancel      context.CancelFunc
+	client          *sshTransport
+	sftp            *sftp.Client
+	lastUsed        time.Time
+	active          int // in-flight operations; idle teardown requires active == 0
+	contactObserver func(error)
 
 	cfg        SSHConfig
 	sessionSem chan struct{} // cap = MaxSessions
@@ -143,17 +146,27 @@ func (c *sshConn) endOp() { c.endOpErr(nil) }
 // Transport-level failures leave lastUsed alone, letting quiet time
 // accumulate until getConn's keepalive probe fires and heals the connection.
 func (c *sshConn) endOpErr(err error) {
+	// Remote filesystem verdicts prove contact just as successful commands do.
+	var status *sftp.StatusError
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) ||
+		(errors.As(err, &status) && status.Code != 6 && status.Code != 7) {
+		err = nil
+	}
 	c.mu.Lock()
 	c.active--
-	if err == nil || errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+	if err == nil {
 		c.lastUsed = time.Now()
 	}
+	observe := c.contactObserver
 	c.mu.Unlock()
+	if observe != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errClosed) {
+		observe(err)
+	}
 }
 
 // ── Connection acquisition ──────────────────────────────────────────────────
 
-// getConn returns a live *ssh.Client, dialing or redialing as needed.
+// getConn returns a live *sshTransport, dialing or redialing as needed.
 // Thread-safe. On reuse after a quiet period, the connection's liveness is
 // verified first — a dead connection is torn down and redialed instead of
 // poisoning every future call.
@@ -166,8 +179,8 @@ func (c *sshConn) timeout() time.Duration {
 
 // Network I/O never holds mu. A cancelled setup closes the actual transport;
 // waiters can cancel independently without abandoning a handshake goroutine.
-func (c *sshConn) getConn() (*ssh.Client, error) { return c.getConnContext(context.Background()) }
-func (c *sshConn) getConnContext(parent context.Context) (*ssh.Client, error) {
+func (c *sshConn) getConn() (*sshTransport, error) { return c.getConnContext(context.Background()) }
+func (c *sshConn) getConnContext(parent context.Context) (*sshTransport, error) {
 	ctx, cancel := context.WithTimeout(parent, c.timeout())
 	defer cancel()
 	for {
@@ -222,7 +235,7 @@ func (c *sshConn) getConnContext(parent context.Context) (*ssh.Client, error) {
 		client, err := dialSSH(dialCtx, c.cfg)
 		var sc *sftp.Client
 		if err == nil {
-			sc, err = sshCall(dialCtx, client, func() (*sftp.Client, error) { return sftp.NewClient(client, sftp.UseConcurrentWrites(false)) })
+			sc, err = sshCall(dialCtx, client, func() (*sftp.Client, error) { return client.NewSFTP() })
 		}
 		stop()
 		c.mu.Lock()
@@ -250,7 +263,7 @@ func (c *sshConn) getConnContext(parent context.Context) (*ssh.Client, error) {
 	}
 }
 
-func (c *sshConn) invalidate(client *ssh.Client) {
+func (c *sshConn) invalidate(client *sshTransport) {
 	c.mu.Lock()
 	if c.client == client {
 		c.client = nil
@@ -259,7 +272,7 @@ func (c *sshConn) invalidate(client *ssh.Client) {
 	c.mu.Unlock()
 	_ = client.Close()
 }
-func (c *sshConn) getSFTPContext(ctx context.Context) (*ssh.Client, *sftp.Client, error) {
+func (c *sshConn) getSFTPContext(ctx context.Context) (*sshTransport, *sftp.Client, error) {
 	client, err := c.getConnContext(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -271,7 +284,7 @@ func (c *sshConn) getSFTPContext(ctx context.Context) (*ssh.Client, *sftp.Client
 	}
 	return client, c.sftp, nil
 }
-func (c *sshConn) newSession(parent context.Context) (sess *ssh.Session, client *ssh.Client, release func(), err error) {
+func (c *sshConn) newSession(parent context.Context) (sess *sshSession, client *sshTransport, release func(), err error) {
 	ctx, cancel := context.WithTimeout(parent, c.timeout())
 	defer cancel()
 	select {
@@ -290,7 +303,7 @@ func (c *sshConn) newSession(parent context.Context) (sess *ssh.Session, client 
 	}
 	setup, stop := context.WithTimeout(ctx, c.timeout())
 	defer stop()
-	sess, err = sshCall(setup, client, func() (*ssh.Session, error) { return client.NewSession() })
+	sess, err = sshCall(setup, client, func() (*sshSession, error) { return client.NewSession() })
 	if err != nil {
 		var rejection *ssh.OpenChannelError
 		if setup.Err() != nil || !errors.As(err, &rejection) {

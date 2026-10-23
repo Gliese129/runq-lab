@@ -4,6 +4,19 @@
 
 ### Changes
 
+- SSH now goes through the system OpenSSH (`ssh` on PATH, 7.6 or newer):
+  `~/.ssh/config` applies exactly as in your terminal, including Include/Match,
+  ProxyJump/ProxyCommand, certificates and HostKeyAlias. runq keeps its own
+  private control sockets, so it never closes your terminal sessions. Background
+  connections run with `BatchMode=yes`; `runq target connect` hands first-use
+  host-key and password prompts to `ssh` in your terminal.
+- SSH diagnostics: `runq doctor` and Targets show the failure phase, reason,
+  next retry and a `ssh -vvv` command that reproduces the service's login. SSH
+  reachability and the remote CLI tunnel are shown separately.
+- The dashboard's Connect button checks SSH for every SSH target, and restarts
+  the remote CLI tunnel only when `remote_cli: true`.
+- The remote CLI tunnel replaces a half-open socket after sleep with a fresh
+  one and never takes over a socket another controller owns.
 - Dashboard links from the CLI: `submit`, `ps` and `task show` JSON carry a
   `url` for each job/task page, and text output prints a `dashboard:` line.
   The URL comes from the runq service (`/api/v1/health` `dashboard_url`), so a

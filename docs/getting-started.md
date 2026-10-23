@@ -26,9 +26,8 @@ runq target connect tsubame     # trusts the host key, installs the remote CLI
 
 The preset is a starting point: adjust `submit_template` (group, resource
 flags) in `~/.runq/config.yaml`, then `runq target check tsubame` again.
-SSH settings come from your `~/.ssh/config` (evaluated with `ssh -G`:
-aliases, identity files, IdentityAgent); ProxyJump/ProxyCommand are not
-supported. See [hpc.md](./hpc.md).
+System OpenSSH reads your `~/.ssh/config`, including aliases, identity files,
+IdentityAgent, and ProxyJump/ProxyCommand. See [hpc.md](./hpc.md).
 
 ## 3. Register the code base (once)
 

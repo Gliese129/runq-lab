@@ -148,3 +148,18 @@ Run `runq skill install` once per machine. The short version:
 ## License
 
 [MIT](./LICENSE)
+
+### SSH connections and recovery
+
+runq uses system OpenSSH and your existing SSH configuration and agent. Use the
+same host alias as in `ssh <host>`; jump hosts, custom known-hosts files and
+identity selection stay in SSH config. Background connections require
+noninteractive authentication (`BatchMode=yes`). No separate runq credential
+store is needed. Configuration changes apply on the next connection; changing
+`SSH_AUTH_SOCK` requires restarting the service from the new environment.
+
+For connection problems, use **Targets → SSH diagnostics** or `runq doctor`.
+They distinguish SSH contact from the remote CLI tunnel and show the failure
+phase, original error, next retry and a command for reproducing authentication
+with `ssh -vvv`. `runq serve status` locates the service log. runq uses its own
+control sockets and does not close terminal SSH sessions.

@@ -1,10 +1,13 @@
 package rfs
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -21,6 +24,7 @@ import (
 )
 
 type faultSSH struct {
+	hostKey           ssh.PublicKey
 	listener          net.Listener
 	cfg               SSHConfig
 	root              string
@@ -41,6 +45,7 @@ const (
 	faultFile         = 5
 	faultMaskedSocket = 6
 	faultKeepalive    = 7
+	faultOwnerWrite   = 8
 )
 
 func newFaultSSH(t *testing.T, configure ...func(*ssh.ServerConfig)) *faultSSH {
@@ -60,7 +65,7 @@ func newFaultSSH(t *testing.T, configure ...func(*ssh.ServerConfig)) *faultSSH {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &faultSSH{listener: ln, root: dir, sockets: map[string]net.Listener{}}
+	f := &faultSSH{hostKey: signer.PublicKey(), listener: ln, root: dir, sockets: map[string]net.Listener{}}
 	f.cfg = SSHConfig{Host: ln.Addr().String(), User: "test", OperationTimeout: 500 * time.Millisecond, HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
 		if string(key.Marshal()) != string(signer.PublicKey().Marshal()) {
 			return errors.New("wrong test host")
@@ -92,6 +97,28 @@ func newFaultSSH(t *testing.T, configure ...func(*ssh.ServerConfig)) *faultSSH {
 				defer server.Close()
 				go f.requests(server, reqs)
 				for ch := range chans {
+					if ch.ChannelType() == "direct-tcpip" {
+						var p struct {
+							Host       string
+							Port       uint32
+							Origin     string
+							OriginPort uint32
+						}
+						_ = ssh.Unmarshal(ch.ExtraData(), &p)
+						conn, err := net.Dial("tcp", net.JoinHostPort(p.Host, fmt.Sprint(p.Port)))
+						if err != nil {
+							_ = ch.Reject(ssh.ConnectionFailed, err.Error())
+							continue
+						}
+						channel, req, err := ch.Accept()
+						if err != nil {
+							_ = conn.Close()
+							continue
+						}
+						go ssh.DiscardRequests(req)
+						go bridge(channel, conn)
+						continue
+					}
 					if ch.ChannelType() == "direct-streamlocal@openssh.com" {
 						var payload struct {
 							Path, Reserved string
@@ -135,6 +162,9 @@ func newFaultSSH(t *testing.T, configure ...func(*ssh.ServerConfig)) *faultSSH {
 									return
 								}
 								var stream io.ReadWriteCloser = channel
+								if f.mode.Load() == faultOwnerWrite {
+									stream = &dropSFTPWrite{ReadWriteCloser: channel}
+								}
 								if f.mode.Load() == faultFile {
 									stream = &freezeSFTP{ReadWriteCloser: channel}
 								}
@@ -155,6 +185,9 @@ func newFaultSSH(t *testing.T, configure ...func(*ssh.ServerConfig)) *faultSSH {
 								var code uint32
 								var command struct{ Command string }
 								_ = ssh.Unmarshal(r.Payload, &command)
+								if command.Command == "exit 7" {
+									code = 7
+								}
 								if strings.Contains(command.Command, "RUNQ_SOCKET_PROBE") {
 									fields := strings.Fields(command.Command)
 									p := strings.Trim(fields[len(fields)-1], "'")
@@ -547,5 +580,139 @@ func TestKeepaliveBlackholeRecoveryAndClose(t *testing.T) {
 	}
 	if f.execRequests.Load() != 0 {
 		t.Fatal("forward recovery replayed a command")
+	}
+}
+
+func TestFileBrowsingReportsContactAndRecovery(t *testing.T) {
+	f := newFaultSSH(t)
+	remote := NewSSHFS(f.cfg)
+	defer remote.Close()
+	var calls int
+	var contactErr error
+	remote.SetContactObserver(func(err error) { calls++; contactErr = err })
+	f.mode.Store(faultSFTP)
+	if _, err := remote.Home(); err == nil || calls != 1 || contactErr == nil {
+		t.Fatalf("failed SFTP contact not reported: calls=%d operation=%v contact=%v", calls, err, contactErr)
+	}
+	f.mode.Store(0)
+	if _, err := remote.WithContext(context.Background()).ReadDir(f.root); err != nil || calls != 2 || contactErr != nil {
+		t.Fatalf("file browsing did not restore contact: calls=%d operation=%v contact=%v", calls, err, contactErr)
+	}
+	if _, err := remote.Stat(filepath.Join(f.root, "missing")); !errors.Is(err, os.ErrNotExist) || calls != 3 || contactErr != nil {
+		t.Fatalf("remote missing file must still prove contact: calls=%d operation=%v contact=%v", calls, err, contactErr)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = remote.WithContext(ctx).Home()
+	if calls != 3 {
+		t.Fatalf("cancellation changed reachability: calls=%d", calls)
+	}
+}
+
+// Drop the transport immediately before the server receives a file write.
+// This models sleep after OPEN/TRUNCATE but before the owner bytes arrive.
+type dropSFTPWrite struct {
+	io.ReadWriteCloser
+	pending bytes.Buffer
+}
+
+func (s *dropSFTPWrite) Read(p []byte) (int, error) {
+	if s.pending.Len() == 0 {
+		var header [4]byte
+		if _, err := io.ReadFull(s.ReadWriteCloser, header[:]); err != nil {
+			return 0, err
+		}
+		packet := make([]byte, binary.BigEndian.Uint32(header[:]))
+		if _, err := io.ReadFull(s.ReadWriteCloser, packet); err != nil {
+			return 0, err
+		}
+		if packet[0] == 6 {
+			_ = s.ReadWriteCloser.Close()
+			return 0, io.EOF
+		} // SSH_FXP_WRITE
+		s.pending.Write(header[:])
+		s.pending.Write(packet)
+	}
+	return s.pending.Read(p)
+}
+
+func TestForwardOwnerSurvivesInterruptedCreation(t *testing.T) {
+	f := newFaultSSH(t)
+	public := filepath.Join(f.root, "owner-interrupt/rq.sock")
+	fw := NewRemoteForward(RemoteForwardConfig{SSH: f.cfg, SocketPath: public, Owner: "c:t"})
+	f.mode.Store(faultOwnerWrite)
+	client, err := dialSSH(context.Background(), f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fw.prepareSocket(client)
+	_ = client.Close()
+	if err == nil {
+		t.Fatal("expected interrupted owner write")
+	}
+	if data, err := os.ReadFile(public + ".owner"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("interrupted write published ownership: %q, %v", data, err)
+	}
+	f.mode.Store(0)
+	client, err = dialSSH(context.Background(), f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := fw.prepareSocket(client); err != nil {
+		t.Fatalf("creation did not recover: %v", err)
+	}
+	data, err := os.ReadFile(public + ".owner")
+	if err != nil || string(data) != "c:t\n" {
+		t.Fatalf("owner=%q err=%v", data, err)
+	}
+}
+
+func TestForwardReconnectNeverRewritesOwner(t *testing.T) {
+	f := newFaultSSH(t)
+	public := filepath.Join(f.root, "owner-reconnect/rq.sock")
+	_ = os.MkdirAll(filepath.Dir(public), 0700)
+	_ = os.WriteFile(public+".owner", []byte("c:t\n"), 0600)
+	timestamp := time.Unix(1000000, 0)
+	_ = os.Chtimes(public+".owner", timestamp, timestamp)
+	_ = os.Symlink(filepath.Join(filepath.Dir(public), ".f-0123456789ab"), public)
+	// Any write would drop this connection. A stale generation must recover
+	// using the existing owner proof, without opening it for writing at all.
+	f.mode.Store(faultOwnerWrite)
+	client, err := dialSSH(context.Background(), f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	fw := NewRemoteForward(RemoteForwardConfig{SSH: f.cfg, SocketPath: public, Owner: "c:t"})
+	if _, err := fw.prepareSocket(client); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(public + ".owner")
+	if err != nil || !info.ModTime().Equal(timestamp) {
+		t.Fatalf("owner was rewritten: %v %v", info, err)
+	}
+}
+
+func TestForwardRejectsEmptyAndForeignOwner(t *testing.T) {
+	for _, owner := range []string{"", "another:controller\n"} {
+		t.Run(fmt.Sprintf("owner=%q", owner), func(t *testing.T) {
+			f := newFaultSSH(t)
+			public := filepath.Join(f.root, "rq.sock")
+			_ = os.WriteFile(public+".owner", []byte(owner), 0600)
+			client, err := dialSSH(context.Background(), f.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			fw := NewRemoteForward(RemoteForwardConfig{SSH: f.cfg, SocketPath: public, Owner: "c:t"})
+			if _, err := fw.prepareSocket(client); err == nil {
+				t.Fatal("unverified owner accepted")
+			}
+			data, _ := os.ReadFile(public + ".owner")
+			if string(data) != owner {
+				t.Fatal("unverified owner overwritten")
+			}
+		})
 	}
 }

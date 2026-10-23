@@ -6,9 +6,8 @@ import (
 )
 
 // SSH settings for every connection site (lane, remote forward, connect) are
-// resolved by ResolveTargetSSH via OpenSSH's own `ssh -G` (resolve.go), so
-// aliases, Include and Match behave exactly as in the user's ssh. This file
-// keeps the small shared pieces.
+// passed to the system OpenSSH executable by ResolveTargetSSH (resolve.go).
+// The native transport helpers below remain for injected/test connections.
 
 // Host key policy values consumed by sshConn/RemoteForward.
 const (

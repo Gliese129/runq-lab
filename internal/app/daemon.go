@@ -98,7 +98,7 @@ type Daemon struct {
 	// keyed by target name: each keeps the runq client socket on its login node
 	// routed to this daemon's mux, so a remote `runq` CLI is just another
 	// socket client. fwdMu guards the map — `runq connect` can start or
-	// replace forwards at runtime via StartRemoteForward.
+	// replace forwards at runtime via ConnectTarget.
 	fwdMu    sync.Mutex
 	forwards map[string]*rfs.RemoteForward
 
@@ -276,13 +276,10 @@ func (d *Daemon) serveDashboard() {
 	}
 }
 
-// StartRemoteForward (re)establishes the remote CLI forward for one target
-// at runtime — the path behind POST /targets/{name}/connect. It first runs
-// a reconcile pass: `runq connect` just wrote config.yaml, and a brand-new
-// target's LANE is exactly that diff's add-branch (RQ-75 — this is what
-// deleted errLaneRestartRequired; "restart to build a lane" is history).
-// An existing forward is torn down and replaced (reconnect ceremony).
-func (d *Daemon) StartRemoteForward(name string) error {
+// ConnectTarget checks the target's SSH transport using the active lane. When
+// remote_cli is enabled it also replaces the remote CLI forward. Reconcile
+// first so a newly saved target is immediately usable without a restart.
+func (d *Daemon) ConnectTarget(ctx context.Context, name string) error {
 	if d.shuttingDown.Load() {
 		return fmt.Errorf("daemon is shutting down")
 	}
@@ -309,8 +306,6 @@ func (d *Daemon) StartRemoteForward(name string) error {
 		return fmt.Errorf("target %q not found", name)
 	case tc.SSH == nil:
 		return fmt.Errorf("target %q has no ssh section", name)
-	case !tc.RemoteCLI:
-		return fmt.Errorf("target %q does not have remote_cli enabled", name)
 	}
 	if d.buildLane != nil { // client deployment: the lane must exist by now
 		d.laneMu.Lock()
@@ -320,12 +315,31 @@ func (d *Daemon) StartRemoteForward(name string) error {
 			return fmt.Errorf("target %q has no lane — its build failed during reconcile; see daemon logs (Settings → runq logs)", name)
 		}
 	}
+	if d.multiBe == nil {
+		return fmt.Errorf("target connection is unavailable")
+	}
+	fsys, err := d.multiBe.TargetFS(name)
+	if err != nil {
+		return err
+	}
+	probe, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_, stderr, code, err := fsys.Exec(probe, "true")
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("SSH connection check exited %d: %s", code, stderr)
+	}
+	if !tc.RemoteCLI {
+		return nil
+	}
 	return d.startForwardFor(*tc)
 }
 
 // startForwardFor builds and launches the remote CLI forward for one
 // target, replacing any existing one. Shared by the reconciler (add/change
-// branches) and StartRemoteForward.
+// branches) and ConnectTarget.
 func (d *Daemon) startForwardFor(tc config.TargetConfig) error {
 	d.forwardOpMu.Lock()
 	defer d.forwardOpMu.Unlock()

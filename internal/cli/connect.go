@@ -28,7 +28,7 @@ import (
 	"github.com/gliese129/runq-lab/internal/version"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 )
 
 // ── runq connect：连接一个已配置的 remote target（RQ-45）──
@@ -140,26 +140,13 @@ func connectOne(cmd *cobra.Command, cfg *config.GlobalConfig, name string) error
 		return fmt.Errorf("SSH configuration: %w", err)
 	}
 	fmt.Printf("Connecting to %s ...\n", sshCfg.Host)
-	// RQ-74: `StrictHostKeyChecking accept-new` in ~/.ssh/config skips the
-	// TOFU prompt — the user already told ssh to trust new hosts silently,
-	// and runq follows their config instead of adding ceremony. One line
-	// says so (self-report: silence is fine, invisibility is not).
-	var hostKeys ssh.HostKeyCallback
-	if sshCfg.HostKeyPolicy == rfs.HostKeyAcceptNew {
-		fmt.Println("host key: new hosts auto-trusted (StrictHostKeyChecking accept-new in ~/.ssh/config)")
-		hostKeys, err = rfs.AcceptNewHostKeyCallback()
-	} else {
-		hostKeys, err = rfs.TOFUHostKeyCallback(func(h, fingerprint string) bool {
-			fmt.Printf("\nThe authenticity of host %q can't be established.\n", h)
-			fmt.Printf("Key fingerprint: %s\n", fingerprint)
-			fmt.Println("Verify it against the cluster's published fingerprint if you can.")
-			return confirmYN("Trust this host and add it to ~/.ssh/known_hosts?")
-		})
+	// OpenSSH owns host-key confirmation and credential prompts. Background
+	// service connections remain BatchMode=yes; never collect secrets in runq.
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		if err := rfs.VerifySSHInteractive(ctx, sshCfg); err != nil {
+			return err
+		}
 	}
-	if err != nil {
-		return err
-	}
-	sshCfg.HostKeyCallback = hostKeys
 	sshCfg.IdleTimeout = time.Minute
 	sshCfg.OperationTimeout = 30 * time.Second
 	fsys := rfs.NewSSHFS(sshCfg).WithContext(ctx)

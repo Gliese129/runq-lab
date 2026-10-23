@@ -1,35 +1,37 @@
 package rfs
 
 import (
-	"context"
 	"fmt"
 	"net"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 )
 
-// ResolveTargetSSH is shared by connect, lane operations, and forwarding.
-// OpenSSH evaluates Include/Match and command-line precedence; unsupported
-// transport options are rejected explicitly rather than silently bypassed.
+// ResolveTargetSSH retains the alias and explicit overrides. OpenSSH resolves
+// configuration and authentication on every reconnect; resolving the alias in
+// advance would lose Host/Match, ProxyJump and host-key store semantics.
 func ResolveTargetSSH(host string, port int, user, key, jump string) (SSHConfig, error) {
-	if host == "" || strings.HasPrefix(host, "-") {
+	if host == "" || strings.HasPrefix(host, "-") || strings.ContainsAny(host, "\x00\r\n") {
 		return SSHConfig{}, fmt.Errorf("invalid SSH host %q", host)
 	}
 	if h, p, err := net.SplitHostPort(host); err == nil {
 		host = h
 		if port == 0 {
-			port, _ = strconv.Atoi(p)
+			port, err = strconv.Atoi(p)
+			if err != nil {
+				return SSHConfig{}, fmt.Errorf("invalid SSH port %q", p)
+			}
 		}
 	}
-	if jump != "" && jump != "none" {
-		return SSHConfig{}, fmt.Errorf("ProxyJump is not supported by runq's SSH transport; configure a directly reachable endpoint or tunnel")
+	if port < 0 || port > 65535 {
+		return SSHConfig{}, fmt.Errorf("invalid SSH port %d", port)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	args := []string{"-G"}
+	binary, err := exec.LookPath("ssh")
+	if err != nil {
+		return SSHConfig{}, fmt.Errorf("system OpenSSH is required: %w", err)
+	}
+	var args []string
 	if port != 0 {
 		args = append(args, "-p", strconv.Itoa(port))
 	}
@@ -39,67 +41,19 @@ func ResolveTargetSSH(host string, port int, user, key, jump string) (SSHConfig,
 	if key != "" {
 		args = append(args, "-i", key)
 	}
-	args = append(args, host)
-	out, err := exec.CommandContext(ctx, "ssh", args...).Output()
-	if err != nil {
-		return SSHConfig{}, fmt.Errorf("resolve SSH configuration using ssh -G: %w", err)
+	if jump != "" {
+		args = append(args, "-J", jump)
 	}
-	values := map[string][]string{}
-	for _, line := range strings.Split(string(out), "\n") {
-		k, v, ok := strings.Cut(line, " ")
-		if ok {
-			values[k] = append(values[k], strings.TrimSpace(v))
-		}
-	}
-	first := func(k string) string {
-		if len(values[k]) > 0 {
-			return values[k][0]
-		}
+	return SSHConfig{Host: host, User: user, OpenSSH: &OpenSSHConfig{Binary: binary, Args: args, Host: host}}, nil
+}
+
+// DebugCommand reproduces fresh noninteractive authentication using the alias
+// and overrides, bypassing existing control masters. No credentials are printed.
+func (c SSHConfig) DebugCommand() string {
+	if c.OpenSSH == nil {
 		return ""
 	}
-	for _, option := range []string{"proxyjump", "proxycommand"} {
-		if v := first(option); v != "" && v != "none" {
-			return SSHConfig{}, fmt.Errorf("SSH %s is not supported by runq's SSH transport; configure a directly reachable endpoint or tunnel", option)
-		}
-	}
-	home, _ := os.UserHomeDir()
-	host = first("hostname")
-	user = first("user")
-	p, err := strconv.Atoi(first("port"))
-	if err != nil || p < 1 || p > 65535 {
-		return SSHConfig{}, fmt.Errorf("invalid SSH port")
-	}
-	if key != "" {
-		key = expandHome(key, home)
-	} else {
-		for _, file := range values["identityfile"] {
-			file = expandHome(file, home)
-			if _, err := os.Stat(file); err == nil {
-				key = file
-				break
-			}
-		}
-	}
-	sock := os.Getenv("SSH_AUTH_SOCK")
-	if selected := first("identityagent"); selected != "" {
-		if selected == "none" {
-			sock = ""
-		} else if selected != "SSH_AUTH_SOCK" {
-			sock = expandHome(os.ExpandEnv(selected), home)
-		}
-	}
-	auth, err := ResolveAuthMethods(key, sock)
-	if err != nil {
-		return SSHConfig{}, err
-	}
-	policy := HostKeyStrict
-	switch first("stricthostkeychecking") {
-	case "accept-new", "false", "no", "off":
-		policy = HostKeyAcceptNew
-	}
-	// Custom host-key stores/aliases would otherwise change verification semantics.
-	if alias := first("hostkeyalias"); alias != "" && alias != "none" {
-		return SSHConfig{}, fmt.Errorf("SSH HostKeyAlias is not supported")
-	}
-	return SSHConfig{Host: net.JoinHostPort(host, strconv.Itoa(p)), User: user, AuthMethods: auth, HostKeyPolicy: policy}, nil
+	args := append([]string{"-vvv", "-T", "-o", "BatchMode=yes", "-o", "ControlMaster=no", "-o", "ControlPersist=no", "-S", "none", "-o", "RemoteCommand=none", "-o", "ClearAllForwardings=yes"}, c.OpenSSH.Args...)
+	args = append(args, c.OpenSSH.Host, "true")
+	return buildCmdLine(c.OpenSSH.Binary, args)
 }

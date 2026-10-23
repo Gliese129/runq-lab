@@ -64,8 +64,8 @@ func (s *Server) handleListTargets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// SetForwardStarter installs the runtime forward hook (client daemon only).
-func (s *Server) SetForwardStarter(fn func(name string) error) { s.forwardStarter = fn }
+// SetTargetConnector installs the runtime SSH connection hook (client daemon only).
+func (s *Server) SetTargetConnector(fn func(context.Context, string) error) { s.targetConnector = fn }
 
 // SetForwardStatus wires the client daemon's forward-status snapshot into
 // /health (RQ-74).
@@ -98,17 +98,15 @@ func (s *Server) handleDisconnectTarget(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, backend.ActionResponse{OK: true})
 }
 
-// handleConnectTarget — POST /targets/{name}/connect: start or replace the
-// target's remote CLI forward NOW, against the just-saved config. The
-// forward starter runs a reconcile pass first (RQ-75), so even a target
-// added moments ago gets its lane built on the spot — no restart case left.
+// handleConnectTarget checks SSH and, when configured, starts the remote CLI
+// forward against the just-saved config. A plain SSH target needs no forward.
 func (s *Server) handleConnectTarget(w http.ResponseWriter, r *http.Request) {
-	if s.forwardStarter == nil {
+	if s.targetConnector == nil {
 		// Intentional degradation — see handleDisconnectTarget.
 		notImplemented(w, "remote CLI forward")
 		return
 	}
-	if err := s.forwardStarter(r.PathValue("name")); err != nil {
+	if err := s.targetConnector(r.Context(), r.PathValue("name")); err != nil {
 		writeErr(w, http.StatusBadRequest, backend.CodeInvalidState, err.Error())
 		return
 	}
