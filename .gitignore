@@ -60,3 +60,4 @@ progress/
 
 # Local design notes, verification evidence, migrations, and audit exports
 /artifacts/
+.project/run/

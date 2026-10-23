@@ -1,0 +1,78 @@
+{
+  "topics": [
+    {
+      "id": "cli",
+      "paths": [
+        "internal/cli/**",
+        "cmd/**"
+      ]
+    },
+    {
+      "id": "ssh-transport",
+      "paths": [
+        "internal/rfs/**",
+        "internal/remote/**"
+      ]
+    },
+    {
+      "id": "scheduler",
+      "paths": [
+        "internal/scheduler/**",
+        "internal/backend/**",
+        "internal/app/**",
+        "internal/submitplan/**",
+        "internal/job/**"
+      ]
+    },
+    {
+      "id": "config",
+      "paths": [
+        "internal/config/**",
+        "internal/project/**",
+        "examples/**"
+      ]
+    },
+    {
+      "id": "views",
+      "paths": [
+        "internal/views/**",
+        "internal/store/record*.go",
+        "internal/store/views*.go"
+      ]
+    },
+    {
+      "id": "dashboard",
+      "paths": [
+        "web/dashboard/src/**",
+        "internal/dashboard/**"
+      ]
+    },
+    {
+      "id": "sdk",
+      "paths": [
+        "sdk/python/**"
+      ]
+    },
+    {
+      "id": "docs-skill",
+      "paths": [
+        "docs/**",
+        "README*.md",
+        "internal/skill/**",
+        "CHANGELOG.md"
+      ]
+    },
+    {
+      "id": "release",
+      "paths": [
+        ".github/workflows/**",
+        "install.sh",
+        "scripts/**"
+      ]
+    }
+  ],
+  "acceptAfterSessions": 3,
+  "language": "中文",
+  "strictness": "balanced",
+  "requires": "0.2.0"
+}
