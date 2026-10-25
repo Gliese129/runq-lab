@@ -73,6 +73,7 @@
 | rc6 第 2 段：section（数据表、runq section 命令、-s / job.yaml section:、归类规则、内置 smoke 和未分类） | verified | run: `go test ./internal/store/ ./internal/backend/ ./internal/dashboard/ ./internal/cli/ ./internal/remote/` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-25 03:45) |
 | rc6 第 3 段：job.yaml tasks: 行、plan {baseline, footer}、run_name、ps 的 run 列、runq export 往返 | verified | run: `go test ./internal/job/ ./internal/backend/ ./internal/submitplan/ ./internal/store/ ./internal/remote/ ./internal/cli/ ./internal/dashboard/` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-25 04:25) |
 | rc6 第 4 段：草稿表和 API、runq draft、draft ps/show/edit/discard、runq submit dr…（幂等、rev 校验）、每 project 最多 5 个 open 草稿 | verified | run: `go test ./internal/backend/ ./internal/store/ ./internal/dashboard/ ./internal/cli/ ./internal/remote/ ./internal/job/` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-25 04:57) |
+| rc6 第 5 段：人用 TUI（终端里 runq submit job.yaml / - / 无参数从模板开始，先建草稿，计划表加预览，选 project，e 编辑、s 提交、q 退出保留草稿；非终端报错并提示 draft） | verified | run: `go test ./internal/cli/ ./internal/backend/` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-25 05:55) |
 
 ## Change history
 

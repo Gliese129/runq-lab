@@ -36,6 +36,7 @@ type DraftRequest struct {
 	SourcePath string `json:"source_path,omitempty"`
 	Project    string `json:"project,omitempty"` // overrides job.yaml project:
 	Section    string `json:"section,omitempty"` // overrides job.yaml section:
+	Name       string `json:"name,omitempty"`    // overrides job.yaml name:
 	Target     string `json:"target,omitempty"`  // -t
 }
 
@@ -84,6 +85,9 @@ func (m *MultiBackend) CreateDraft(ctx context.Context, req DraftRequest) (*Draf
 	}
 	if req.Section != "" {
 		cfg.Section = req.Section
+	}
+	if req.Name != "" {
+		cfg.Name = req.Name
 	}
 	if strings.TrimSpace(cfg.Project) == "" {
 		return nil, fmt.Errorf("draft needs an explicit project: set project: in the job file or pass -p <project>")

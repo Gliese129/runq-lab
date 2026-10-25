@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,39 +20,36 @@ import (
 	"github.com/gosuri/uilive"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
 // ── runq submit (shortcut for job submit) ──
 
 var submitCmd = &cobra.Command{
-	Use:   "submit [job.yaml | .]",
-	Short: "Submit a draft (dr… from runq draft) — or, for now, a job.yaml",
-	Long: `Submit a job.yaml. A job is one experiment of a registered project:
+	Use:   "submit <dr…> | submit [job.yaml | . | -]",
+	Short: "Submit a draft (dr…); at a terminal, plan and submit a job file interactively",
+	Long: `Submit a draft made by 'runq draft': it is frozen into a new job. Submitting
+the same draft again returns the same job; --rev N refuses if the draft was
+edited since you read rev N.
 
-  project: my-code-base
-  note: kl-ablation
-  command: python train.py            # optional; overrides the project's command
-  target: abci                        # optional; must be in the project's targets
-  fixed_params: { model: qwen3-8b }   # same value in every task
-  sweep:                              # grid = cross product, list = zip rows
-    - method: grid
-      parameters: { kl: [0, 0.1], seed: [1, 2] }
+At a terminal, 'runq submit job.yaml' (or '-' for stdin, or no argument to
+start from a template in $EDITOR) plans the file as a draft and shows it —
+preview and run table — then waits for one key:
 
-Every param is written to the task's params.json and read in code with
-ctx.params; only params the command references ({{x}} / {{args}}) appear on
-the command line. Target precedence: -t > job.target > project.target.
-"." means ./job.yaml.`,
-	Example: `  runq submit job.yaml --dry                         # tasks, target, rendered command
-  runq submit job.yaml --json                        # {"job_id": ..., "total_tasks": ...}
-  runq submit job.yaml --project-file project.yaml   # register/update the project, then submit
-  runq submit job.yaml -t abci --dry                 # same job on another declared target`,
-	Args: cobra.ExactArgs(1),
+  s  submit        e  edit in $EDITOR        p  pick the project
+  q  quit, keeping the draft (runq draft ps)
+
+The project is the file's project:, else -p, else the most recently used
+project of this directory. Outside a terminal (scripts, agents) a job file is
+refused: use 'runq draft job.yaml', then 'runq submit dr…'.`,
+	Example: `  runq draft job.yaml && runq submit dr8f2k --json   # agents and scripts
+  runq submit job.yaml                                 # at a terminal: plan, look, press s
+  runq submit                                          # at a terminal: start from a template`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		file := args[0]
-		if file == "" {
-			return fmt.Errorf("no job file")
+		file := ""
+		if len(args) == 1 {
+			file = args[0]
 		}
 		if strings.HasPrefix(file, "dr") {
 			if _, err := os.Stat(file); err != nil {
@@ -61,11 +59,25 @@ the command line. Target precedence: -t > job.target > project.target.
 				return submitDraft(cmd, file, rev, noPreflight, jsonOut)
 			}
 		}
-		if !term.IsTerminal(int(os.Stdout.Fd())) {
-			fmt.Fprintf(os.Stderr, "note: submitting a job file directly is going away; plan it with `runq draft %s`, then `runq submit dr…`\n", file)
-		}
 		dryRun, _ := cmd.Flags().GetBool("dry")
 		dryRunAlias, _ := cmd.Flags().GetBool("dry-run")
+		jsonFlag, _ := cmd.Flags().GetBool("json")
+		if !dryRun && !dryRunAlias {
+			tty, ok := interactive()
+			if !ok || jsonFlag {
+				shown := file
+				if shown == "" {
+					shown = "job.yaml"
+				}
+				return fmt.Errorf("outside a terminal, submit takes a draft: runq draft %s, then runq submit dr…", shown)
+			}
+			defer tty.Close()
+			return runSubmitTUI(cmd, tty, file)
+		}
+		if file == "" {
+			return fmt.Errorf("--dry needs a job file (or use: runq draft <job.yaml>)")
+		}
+		fmt.Fprintf(os.Stderr, "note: --dry is going away; `runq draft %s` shows the same plan and keeps it as a draft\n", file)
 		watch, _ := cmd.Flags().GetBool("watch")
 		projectOverride, _ := cmd.Flags().GetString("project")
 		noteOverride, _ := cmd.Flags().GetString("note")
@@ -314,4 +326,70 @@ func printGPUHint(ctx context.Context, be backend.Backend) {
 	} else if free < total {
 		fmt.Printf("  %d/%d GPUs free — some tasks may queue\n", free, total)
 	}
+}
+
+// runSubmitTUI is `runq submit [job.yaml | - ]` at a terminal: read the job
+// (a file, stdin, or a fresh template in $EDITOR), then hand it to the TUI.
+func runSubmitTUI(cmd *cobra.Command, tty *os.File, file string) error {
+	projectFlag, _ := cmd.Flags().GetString("project")
+	name, _ := cmd.Flags().GetString("note")
+	section, _ := cmd.Flags().GetString("section")
+	noPreflight, _ := cmd.Flags().GetBool("no-preflight")
+	edit := openEditor(tty)
+	return withBackend(cmd, func(be backend.Backend) error {
+		ctx := cmd.Context()
+		d, ok := be.(backend.Drafter)
+		if !ok {
+			return fmt.Errorf("this backend does not support drafts")
+		}
+		if err := ensureProjectRegistered(cmd, be, projectFlag); err != nil {
+			return err
+		}
+		candidates := projectCandidates(ctx, be)
+		var text string
+		switch file {
+		case "":
+			t, err := templateYAML(firstNonEmpty(projectFlag, defaultProject(ctx, be, "", candidates)), edit)
+			if err != nil {
+				return err
+			}
+			if t == "" {
+				fmt.Println("nothing to plan (the template was left as is)")
+				return nil
+			}
+			text = t
+		case "-":
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return err
+			}
+			text = string(data)
+		default:
+			path := file
+			if path == "." {
+				path = "job.yaml"
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			text = string(data)
+		}
+		ui := &submitTUI{
+			ctx: ctx, d: d, out: os.Stdout, key: ttyKey(tty), edit: edit, projects: candidates,
+			skipPreflight: noPreflight,
+			req: backend.DraftRequest{JobYAML: text, SourcePath: sourcePathFor(file), Section: section, Name: name,
+				Target: explicitSubmitTarget(cmd), Project: firstNonEmpty(projectFlag, defaultProject(ctx, be, text, candidates))},
+		}
+		return ui.run()
+	})
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

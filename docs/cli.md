@@ -17,6 +17,7 @@ When the service serves the dashboard, `submit`, `ps` and `task show` JSON carry
 | `runq draft edit dr… [-f file]` | Replace the plan from the edited YAML (rev-checked) or in `$EDITOR` |
 | `runq draft discard dr…` | Delete an open draft |
 | `runq submit dr… [--rev N] --json` | Freeze the draft into a job → `{"job_id", "total_tasks", "draft_id", "url"}`; submitting it again returns the same job |
+| `runq submit [job.yaml \| . \| -]` (at a terminal) | Plan the file as a draft and show it, then one key: `s` submit, `e` edit in `$EDITOR`, `p` pick the project, `q` quit keeping the draft. No argument starts from a template. Outside a terminal a job file is refused — use `runq draft` |
 | `runq submit <job.yaml \| .> --dry` | Older one-step preview; prefer `runq draft` |
 | `runq submit <job.yaml \| .> --json` | Submit → `{"job_id", "total_tasks", "url"}`. `-t <target>` overrides the target (`-t` > `job.target` > `project.target`) · `-n/--note` job name · `--project-file project.yaml` registers/updates the project first (also on `--dry`) · `--no-preflight` skips submit-time checks |
 | `runq kill <task_id \| job_id>` | Cancel a task, or every task of a job |

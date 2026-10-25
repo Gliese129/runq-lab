@@ -39,7 +39,7 @@ agent) or you are about to set one up, read `references/heartbeat.md` first.
 | Goal | Command |
 |---|---|
 | Plan (the preview; submits nothing) | `runq draft job.yaml` → draft `dr…` (`--json` for the full plan) |
-| Submit the draft | `runq submit dr… --json` → `{job_id,total_tasks,draft_id}` (repeat-safe: same job) |
+| Submit the draft | `runq submit dr… --json` → `{job_id,total_tasks,draft_id}` (repeat-safe: same job). A job file passed to `submit` outside a terminal is refused — that interactive form is for the researcher |
 | Change a draft | `runq draft show dr… --yaml > plan.yaml`, edit, `runq draft edit dr… -f plan.yaml` · `runq draft ps` |
 | Jobs / one job's tasks | `runq ps --json` · `runq ps <job_id> --json` (add `--fresh` to probe the scheduler first) |
 | A submitted job back as job.yaml (`tasks:` rows) | `runq export <jb…> [-o file]` |

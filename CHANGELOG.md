@@ -33,6 +33,13 @@
 - Preflight warns (never blocks) when a script defines an output flag such as
   `--output_dir` that the command does not pass.
 - `runq target check` reports the target's `data_path`.
+- At a terminal, `runq submit job.yaml` (or `-` for stdin, or no argument for a
+  template in `$EDITOR`) plans the file as a draft and shows the preview and run
+  table, then takes one key: `s` submit, `e` edit, `p` pick the project (default:
+  the file's `project:`, else this directory's most recently used project),
+  `q` quit keeping the draft. Outside a terminal, or with `--json`, a job file
+  is refused with the `runq draft` hint; `--dry` still works for now, with a
+  note.
 - Drafts: `runq draft <job.yaml|->` plans and validates without side effects
   (no sync, preflight, scheduler or repo writes) and keeps the plan as `dr…`;
   its output is the full preview plus a run table. `runq submit dr…` freezes it
@@ -40,8 +47,7 @@
   refuses if it was edited since. `runq draft ps / show [--yaml] / edit [-f] /
   discard`; edits are rev-checked, project and target stay fixed, `edit`
   without `-f` opens `$EDITOR`. Each project keeps its newest 5 open drafts.
-  New `/api/v1/drafts` endpoints; jobs record their `draft_id`. Submitting a
-  job.yaml directly still works for now and prints a note outside a terminal.
+  New `/api/v1/drafts` endpoints; jobs record their `draft_id`.
 - job.yaml `tasks:` lists named runs instead of a `sweep:` (one or the other):
   `{run: R1 lr, lr: 2e-6}` per row, overriding `fixed_params`; `needs_code:
   [param]` flags rows that need a code change (listed in the preview, not

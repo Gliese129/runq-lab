@@ -91,7 +91,9 @@ runq draft job.yaml
 The draft is the plan itself: `kl(3) × seed(2) = 6 tasks`, the target, a table
 of the runs, the generated `run.sh` and the exact `qsub` line, and which params
 reach the code only via `ctx.params`. It submits nothing and is kept as `dr…`.
-Change it with `runq draft edit dr…` (opens `$EDITOR`). When it looks right:
+Change it with `runq draft edit dr…` (opens `$EDITOR`). At a terminal you can
+also run `runq submit job.yaml` to see the same plan and press `s` to submit,
+`e` to edit or `q` to keep it as a draft. When it looks right:
 
 ```bash
 runq submit dr… --json      # {"job_id": "jb…", "total_tasks": 6}
