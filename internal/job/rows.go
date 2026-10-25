@@ -93,6 +93,9 @@ func (r TaskRow) MarshalJSON() ([]byte, error) { return json.Marshal(r.toMap()) 
 // ("kl=0.1, seed=2"; the baseline itself is "base"). Validation errors say
 // which row is wrong.
 func Rows(cfg *JobConfig) ([]Row, error) {
+	if cfg.Preflight != nil && cfg.Preflight.ExtraRun != nil {
+		return nil, fmt.Errorf(`job-level "preflight: extra_run" is no longer supported — move the check to project.yaml preflight.extra_run (it runs for every job), then remove it here`)
+	}
 	if len(cfg.Tasks) > 0 && len(cfg.Sweep) > 0 {
 		return nil, fmt.Errorf("job has both sweep: and tasks: — use one (sweep generates rows, tasks lists them)")
 	}

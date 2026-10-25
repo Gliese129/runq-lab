@@ -3,16 +3,16 @@
 A project is a codebase and how it runs; each experiment has its own job file.
 One directory may hold several projects (say, training and evaluation with different
 environments): give each its own file (`train.project.yaml`, `eval.project.yaml`) and
-register it with `runq project add -f <file>`. Only a file named exactly
-`project.yaml` in the working_dir is re-read automatically, into the project it names.
+register it with `runq project <file>`. runq reads the file only then: after an
+edit, run `runq project <file>` again (`runq draft` warns when it has changed).
 
 - **project.yaml** holds the code directory, source/default target and stable execution defaults.
-- **job.yaml** holds the experiment's command, optional target/preflight overrides and parameters.
+- **job.yaml** holds the experiment's command, optional target and overrides, and parameters.
 - The dashboard reads locally recorded state and results, with stop and archive operations.
   Configure and submit with files and the CLI.
 
 Execution target: **explicit `-t` > job.target > project.target**.
-Session target, `RUNQ_TARGET` and global default_target only scope queries; they never choose a submission target.
+default_target in ~/.runq/config.yaml never chooses a submission target; queries cover every target unless you pass `-t`.
 The source target remains project.target when execution is overridden.
 
 ## project.yaml
@@ -45,9 +45,8 @@ job_name: "rq-{{task_id}}"      # HPC scheduler job name template; exposed to
                                 # submit_template as {{name}}, always sanitized
                                 # (scheduler-safe charset, never digit-first)
 
-# env_file: .env                # override which env file to source (default:
-                                # working_dir/.env — sourced at task start,
-                                # NEVER stored by runq; explicit environment: wins)
+# Secrets: <working_dir>/.env is sourced at task start and NEVER stored by
+# runq (explicit environment: wins). There is no env_file key anymore.
 
 # wandb:                        # optional; runq writes wandb_config.json per
 #   project: my-experiment      # task; the SDK folds it into ctx.wandb_like_cfg
@@ -118,26 +117,23 @@ runq activates it around the task's command. Without `python_env` the command
 runs with whatever `PATH` the task inherits (`environment:`, `setup_command`,
 `.env`); nothing is auto-detected.
 
-## Job command and preflight overrides
+## Job command
 
 ```yaml
 project: resnet50
 command: python smoke.py
 # target: server-b             # omit for project default; -t wins
-preflight:
-  imports: false
-  hf: []                       # explicitly clear inherited repos
-  extra_run: ""                # explicitly clear inherited shell check
 fixed_params: {lr: 0.001, optimizer: adam}
 ```
 
-Absent preflight fields inherit project values. Explicit false disables a check;
-`preflight: false` disables the entire preflight for this job.
+Preflight is configured once, in project.yaml. A job-level `preflight:` is
+ignored with a warning (with `extra_run` it is an error); to skip preflight for
+one submission, use `runq submit dr… --no-preflight`.
 Resources and environment continue to use `overrides`.
 Preview, preflight and submission use the same effective configuration. Submitted jobs save
 command, execution target, its selection source and the merged project snapshot.
 Cross-target preview reports pending code sync; it checks destination files as they currently exist.
-`--project-file` upserts project configuration even with `--dry`; preview itself does not submit or sync.
+`runq draft` does not submit or sync; register project changes first with `runq project <file>`.
 
 ## job.yaml
 
@@ -231,8 +227,8 @@ top-level `data_path` still applies to local targets, as a fallback.
 | Path (per task) | What |
 |---|---|
 | `params.json` | the exact sweep-expanded parameters |
-| `metrics.jsonl` | per-step metric stream (SDK `report` / `log_metric`) — dashboard curves |
-| `results.jsonl` | result records (SDK `record(metrics, **axes)`) — `runq results` and the dashboard results view |
+| `metrics.jsonl` | per-step metric stream (SDK `report`) — dashboard curves |
+| `results.jsonl` | result records (SDK `record(metrics, **axes)`) — `runq view --job` and the dashboard results view |
 | `links.json` | external pages reported by SDK `runq.link` / `ctx.link_wandb` (e.g. the W&B run) |
 | `outputs/` | `RUNQ_OUTPUT_DIR` / `ctx.output_dir` — write training outputs here |
 | `checkpoints/` | `RUNQ_CHECKPOINT_DIR` / `ctx.checkpoint_dir` — stable across retries |

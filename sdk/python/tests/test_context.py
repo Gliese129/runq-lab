@@ -78,8 +78,8 @@ def test_params_loaded_from_env_path(clean_env, tmp_path, monkeypatch):
 
     ctx = runq.context()
     assert ctx.params == {"lr": 1e-4, "bs": 32}
-    assert ctx.get("lr", 0.0) == 1e-4
-    assert ctx.get("missing", 99) == 99
+    assert ctx.params.get("lr", 0.0) == 1e-4
+    assert ctx.params.get("missing", 99) == 99
 
 
 def test_params_manual_mode_picks_up_local(clean_env, tmp_path, monkeypatch):
@@ -178,11 +178,3 @@ def test_params_get_requires_an_explicit_default():
         p["lrr"]
 
 
-def test_ctx_get_requires_an_explicit_default(clean_env):
-    import pytest
-    import runq
-
-    ctx = runq.context()
-    assert ctx.get("x", 3) == 3
-    with pytest.raises(TypeError, match=r"needs an explicit default"):
-        ctx.get("x")

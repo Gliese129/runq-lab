@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -69,6 +71,9 @@ its newest 5 open drafts; creating a 6th discards the oldest.`,
 			}
 			for _, w := range res.Warnings {
 				fmt.Fprintf(os.Stderr, "%s: %s\n", filepath.Base(src), w)
+			}
+			if w := projectFileWarning(cmd, res.Draft.Project); w != "" {
+				fmt.Fprintln(os.Stderr, w)
 			}
 			fmt.Print(res.Preview)
 			fmt.Println()
@@ -323,6 +328,7 @@ func submitDraft(cmd *cobra.Command, ref string, rev int, noPreflight, jsonOut b
 			fmt.Printf("target: %s (%s)\n", target, source)
 		}
 		printDashboardLink(os.Stdout, url)
+		printGPUHint(cmd.Context(), be)
 		return nil
 	})
 }
@@ -340,4 +346,26 @@ func init() {
 	draftCmd.AddCommand(draftPsCmd, draftShowCmd, draftEditCmd, draftDiscardCmd)
 	draftCmd.GroupID = groupCore
 	rootCmd.AddCommand(draftCmd)
+}
+
+// projectFileWarning: runq never re-reads project.yaml, so when the file a
+// project was registered from has changed since, say how to apply it.
+func projectFileWarning(cmd *cobra.Command, project string) string {
+	var out string
+	_ = withBackend(cmd, func(be backend.Backend) error {
+		cfg, err := be.GetProject(cmd.Context(), project)
+		if err != nil || cfg.SourcePath == "" || cfg.SourceSHA == "" {
+			return nil
+		}
+		data, err := os.ReadFile(cfg.SourcePath)
+		if err != nil {
+			return nil
+		}
+		sum := sha256.Sum256(data)
+		if hex.EncodeToString(sum[:]) != cfg.SourceSHA {
+			out = fmt.Sprintf("warning: %s changed since project %s was registered; apply it with: runq project %s", cfg.SourcePath, project, utils.ShellQuote(cfg.SourcePath))
+		}
+		return nil
+	})
+	return out
 }

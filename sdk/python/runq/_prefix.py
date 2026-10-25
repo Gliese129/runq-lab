@@ -2,7 +2,7 @@
 
 Why a separate module
 ---------------------
-``_events`` (log_metric) and ``_report`` (report) both need to read the
+``_report`` (report) needs to read the
 current prefix when assembling jsonl events. ``_log_group`` defines
 ``log_group`` which writes the prefix. Putting the state in either
 caller would create a cycle (``_events`` ↔ ``_log_group``). A tiny standalone
@@ -15,7 +15,7 @@ naturally::
 
     with runq.log_group("train"):
         with runq.log_group("step1"):
-            runq.log_metric("loss", l)   # key becomes "train/step1/loss"
+            runq.report({"loss": l})   # key becomes "train/step1/loss"
 
 Each ``log_group`` pushes one segment; the joined prefix is what
 ``apply_prefix`` returns. ``contextvars.ContextVar`` gives us push/pop

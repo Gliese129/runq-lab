@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"strings"
 
 	"github.com/gliese129/runq-lab/internal/rfs"
 
@@ -91,7 +92,6 @@ func (c *Config) preflightScaffold() string {
 preflight:
   enabled: true       # master switch; runq submit --no-preflight still skips per-run
   imports: true       # probe top-level imports of the entry .py (best effort)
-  wandb: false        # verify wandb credentials when wandb is configured
 ` + hfBlock + `  extra_run: ""       # custom shell check; non-zero exit blocks submission
 `
 }
@@ -102,6 +102,11 @@ type Config struct {
 	// project.yaml). ProjectName is the renamable label.
 	ID          string `yaml:"-" json:"id,omitempty"`
 	ProjectName string `yaml:"project_name" json:"project_name"`
+	// SourcePath / SourceSHA record the file this registration came from
+	// (`runq project <file>`), so a later draft can say the file changed.
+	// runq never reads or writes that file on its own.
+	SourcePath string `yaml:"-" json:"source_path,omitempty"`
+	SourceSHA  string `yaml:"-" json:"source_sha,omitempty"`
 	// Target is the project's home: the compute target whose filesystem
 	// owns WorkingDir and every other path in this config (RQ-65). All
 	// path semantics — yaml sync, preflight, workspace layout — resolve
@@ -160,8 +165,7 @@ type PreflightConfig struct {
 	// Imports probes top-level imports of the entry .py (best effort;
 	// shell entries have nothing to statically analyze). nil/true = on.
 	Imports *bool `yaml:"imports,omitempty" json:"imports,omitempty"`
-	// Wandb verifies wandb credentials (WANDB_API_KEY / ~/.netrc) are
-	// visible where the task runs. nil/false = off.
+	// Wandb is retired in rc6 (warned and ignored, see NormalizeLegacy).
 	Wandb *bool `yaml:"wandb,omitempty" json:"wandb,omitempty"`
 	// HF lists HuggingFace repos to verify. "{{param.NAME}}" entries
 	// expand against the sweep — EVERY value is checked. Declared repos
@@ -181,11 +185,6 @@ func (p *PreflightConfig) EnabledOrDefault() bool {
 // ImportsOrDefault: absent = on (best-effort static analysis).
 func (p *PreflightConfig) ImportsOrDefault() bool {
 	return p == nil || p.Imports == nil || *p.Imports
-}
-
-// WandbOrDefault: absent = off (many projects run wandb-less).
-func (p *PreflightConfig) WandbOrDefault() bool {
-	return p != nil && p.Wandb != nil && *p.Wandb
 }
 
 // HFRepos returns the declared repo list (nil-safe).
@@ -288,4 +287,29 @@ type PythonEnvConfig struct {
 	Type string `yaml:"type,omitempty" json:"type,omitempty"` // "venv", "conda", "uv", "system", "" (auto)
 	Path string `yaml:"path,omitempty" json:"path,omitempty"` // venv: relative path to venv dir (e.g. ".venv")
 	Name string `yaml:"name,omitempty" json:"name,omitempty"` // conda: environment name
+}
+
+// NormalizeLegacy applies the rc6 rule for retired project.yaml keys:
+// dropping one that changes nothing warns; one whose removal would change
+// what runs is an error naming the replacement.
+//
+//   - env_file: .env → dropped with a warning (runq always reads
+//     <working_dir>/.env); any other value (including "") → error.
+//   - preflight.wandb → dropped with a warning (no credential check).
+func NormalizeLegacy(c *Config) ([]string, error) {
+	var warns []string
+	if c.Preflight != nil && c.Preflight.Wandb != nil {
+		warns = append(warns, `"preflight.wandb" is no longer checked; remove it`)
+		c.Preflight.Wandb = nil
+	}
+	if c.EnvFile != nil {
+		switch strings.TrimSpace(*c.EnvFile) {
+		case ".env", "./.env":
+			warns = append(warns, `"env_file" is no longer used (runq always reads <working_dir>/.env); remove it`)
+			c.EnvFile = nil
+		default:
+			return nil, fmt.Errorf(`"env_file" is no longer supported; runq always reads <working_dir>/.env — move the file or its variables there, then remove env_file`)
+		}
+	}
+	return warns, nil
 }

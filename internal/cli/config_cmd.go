@@ -305,6 +305,6 @@ func init() {
 	configAddCmd.Flags().String("user", "", "SSH user for remote targets")
 	configAddCmd.Flags().String("gpus", "", "Comma-separated GPU indices for local targets (e.g. 0,1,2,3)")
 	configCmd.AddCommand(configSetCmd, configGetCmd, configListCmd)
-	configCmd.GroupID = groupManagement
 	rootCmd.AddCommand(configCmd)
+	retire(configCmd, "edit ~/.runq/config.yaml directly (`runq doctor` prints its path, `runq target check` validates it)")
 }

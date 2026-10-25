@@ -12,8 +12,10 @@ import (
 // parsed programmatically (`runq connect` runs it on the remote to decide
 // whether the installed binary is stale), so the output is the contract.
 func init() {
-	versionCmd.GroupID = groupDiag
 	rootCmd.AddCommand(versionCmd)
+	retire(versionCmd, "use `runq --version`")
+	rootCmd.Version = version.Version
+	rootCmd.SetVersionTemplate("{{.Version}}\n")
 }
 
 var versionCmd = &cobra.Command{

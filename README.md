@@ -78,7 +78,7 @@ sweep:
 ```
 
 ```bash
-runq project add -f project.yaml
+runq project project.yaml
 runq draft job.yaml                    # the plan: tasks, target, rendered command → dr… (nothing submitted)
 runq submit dr… --json                 # {"job_id": "jb…", "total_tasks": 6}
 runq ps <job_id> --json --fresh        # task states
@@ -105,10 +105,10 @@ HPC details (templates, reservations, sync): [docs/hpc.md](./docs/hpc.md)
 ```bash
 runq draft job.yaml · runq submit dr…  # plan / submit
 runq ps [job_id] --json [--fresh]     # jobs, or one job's tasks
-runq task show <task_id>              # command, dirs, status evidence (JSON)
+runq show <task_id>                   # command, dirs, status evidence (JSON)
 runq logs <task_id> --no-follow -n 200
 runq logs <task_id> --grep '<regex>' -n 20
-runq results <job_id> --json          # rows written by runq.record
+runq view --job <job_id> --json       # rows written by runq.record
 runq kill <task_id|job_id>
 runq draft job.yaml                  # after fixing a failed task, plan and submit a new one
 runq clean --job <job_id> --show      # preview; deletion is irreversible

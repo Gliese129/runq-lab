@@ -42,10 +42,9 @@ func TestAddAndGet(t *testing.T) {
 		t.Fatalf("Add failed: %v", err)
 	}
 
-	// project.yaml must exist on disk
-	yamlPath := filepath.Join(cfg.WorkingDir, "project.yaml")
-	if _, err := os.Stat(yamlPath); err != nil {
-		t.Fatalf("project.yaml not written: %v", err)
+	// Registration never writes project.yaml (rc6 explicit upsert).
+	if _, err := os.Stat(filepath.Join(cfg.WorkingDir, "project.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("Add must not write project.yaml: %v", err)
 	}
 
 	got, err := reg.Get(context.Background(), "resnet50")
@@ -57,27 +56,6 @@ func TestAddAndGet(t *testing.T) {
 	}
 	if got.CmdTemplate != cfg.CmdTemplate {
 		t.Errorf("cmd = %q, want %q", got.CmdTemplate, cfg.CmdTemplate)
-	}
-}
-
-func TestAddFailsOnBadDir(t *testing.T) {
-	reg, cleanup := setup(t)
-	defer cleanup()
-
-	cfg := Config{
-		ProjectName: "bad",
-		WorkingDir:  "/this/path/does/not/exist",
-		CmdTemplate: "echo {{args}}",
-	}
-	err := reg.Add(context.Background(), cfg)
-	if err == nil {
-		t.Fatal("expected error for non-existent working_dir, got nil")
-	}
-
-	// DB should NOT have the project
-	_, getErr := reg.Get(context.Background(), "bad")
-	if getErr == nil {
-		t.Fatal("project should not be in DB after failed Add")
 	}
 }
 
@@ -196,10 +174,8 @@ func TestUpdate(t *testing.T) {
 		t.Errorf("gpus_per_task = %d, want 2", got.Defaults.GPUsPerTask)
 	}
 
-	// project.yaml should be overwritten by Update
-	data, _ := os.ReadFile(filepath.Join(cfg.WorkingDir, "project.yaml"))
-	if !strings.Contains(string(data), "train_v2.py") {
-		t.Error("project.yaml not updated after Update")
+	if _, err := os.Stat(filepath.Join(cfg.WorkingDir, "project.yaml")); !os.IsNotExist(err) {
+		t.Error("Update must not write project.yaml")
 	}
 }
 

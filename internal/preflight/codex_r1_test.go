@@ -92,26 +92,6 @@ func TestProbeEnvInjection(t *testing.T) {
 			t.Fatalf("env not injected into probe shell: %+v", c)
 		}
 	}
-
-	// And the wandb credential check sees the injected env too — the
-	// exact false negative from the review (run.sh exports the key,
-	// preflight claimed it missing).
-	wandbOn := true
-	proj.Preflight = &project.PreflightConfig{Wandb: &wandbOn}
-	pf.Env = map[string]string{"WANDB_API_KEY": "k-123"}
-	results = pf.probeChecks(context.Background(), proj, "echo hi", &report)
-	found := false
-	for _, c := range results {
-		if c.Name == "wandb" {
-			found = true
-			if c.Status != "passed" {
-				t.Fatalf("wandb cred exported by the task env reported as: %+v", c)
-			}
-		}
-	}
-	if !found {
-		t.Fatal("no wandb result")
-	}
 }
 
 // Codex r1 #5: ProbeTimeout is a wall-clock bound — a stuck extra_run is

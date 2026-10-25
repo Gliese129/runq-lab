@@ -80,4 +80,5 @@ func init() {
 	gpuCmd.Flags().Bool("json", false, "Machine-readable output ([]GPUSlot JSON, THIS machine — plumbing)")
 	gpuCmd.Flags().StringP("output", "o", "", "Output format (json: {target: GPUSlot[]})")
 	rootCmd.AddCommand(gpuCmd)
+	retire(gpuCmd, "GPU allocation is shown on the dashboard's Targets page (`runq dashboard`)")
 }

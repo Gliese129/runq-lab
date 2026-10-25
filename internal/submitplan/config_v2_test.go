@@ -18,7 +18,7 @@ func TestV2EffectivePlanAndWireOverrides(t *testing.T) {
 	on := true
 	source := &project.Config{ProjectName: "p", WorkingDir: t.TempDir(), CmdTemplate: "echo old", Environment: map[string]string{"A": "old"}, Preflight: &project.PreflightConfig{Enabled: &on, Imports: &on, Wandb: &on, HF: []string{"old/repo"}, ExtraRun: "exit 99"}, Params: []project.ParamDef{{Name: "h_rt", Scope: "scheduler"}}}
 	var cfg job.JobConfig
-	if err := yaml.Unmarshal([]byte("project: p\ncommand: echo {{seed}}\npreflight: {enabled: false, imports: false, wandb: false, hf: [], extra_run: ''}\nfixed_params: {seed: 1, lr: 0.1, h_rt: '4:00:00'}\noverrides: {env: {A: new}, timeout: 2h}"), &cfg); err != nil {
+	if err := yaml.Unmarshal([]byte("project: p\ncommand: echo {{seed}}\npreflight: {enabled: false, imports: false, hf: []}\nfixed_params: {seed: 1, lr: 0.1, h_rt: '4:00:00'}\noverrides: {env: {A: new}, timeout: 2h}"), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	wire, err := json.Marshal(cfg)
@@ -34,8 +34,9 @@ func TestV2EffectivePlanAndWireOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	effective := plan.EffectiveConfig
-	if effective.Preflight.EnabledOrDefault() || effective.Preflight.ImportsOrDefault() || effective.Preflight.WandbOrDefault() || len(effective.Preflight.HF) != 0 || effective.Preflight.ExtraRun != "" {
-		t.Fatalf("empty overrides lost: %+v", effective.Preflight)
+	// rc6: job-level preflight is retired — the project's settings stand.
+	if !effective.Preflight.EnabledOrDefault() || !effective.Preflight.ImportsOrDefault() || len(effective.Preflight.HF) != 1 || effective.Preflight.ExtraRun != "exit 99" {
+		t.Fatalf("job-level preflight must not override the project: %+v", effective.Preflight)
 	}
 	if plan.Tasks[0].Command != "echo 1" || plan.Tasks[0].Params["lr"] == nil || plan.Tasks[0].Timeout != 7200 || plan.Env["A"] != "new" || !reflect.DeepEqual(plan.UnconsumedParams, []string{"lr"}) {
 		t.Fatalf("wrong plan: %+v", plan)
@@ -105,5 +106,16 @@ func TestV2PreflightUsesOverriddenCommandAndEnvironment(t *testing.T) {
 	cfg := job.JobConfig{Project: "p", Command: "python new.py", Overrides: &job.Overrides{Env: map[string]string{"MARK": "job"}}}
 	if _, err := Build(context.Background(), cfg, source, Deps{}); err != nil {
 		t.Fatalf("preflight checked source command/environment: %v", err)
+	}
+}
+
+func TestJobLevelExtraRunIsRefused(t *testing.T) {
+	var cfg job.JobConfig
+	if err := yaml.Unmarshal([]byte("project: p\npreflight: {extra_run: 'test -f x'}\nfixed_params: {a: 1}"), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	source := &project.Config{ProjectName: "p", WorkingDir: t.TempDir(), CmdTemplate: "echo {{a}}"}
+	if _, err := Build(context.Background(), cfg, source, Deps{Paths: Paths{WorkspaceRoot: "<w>", LogRoot: "<w>"}, SkipPreflight: true}); err == nil || !strings.Contains(err.Error(), "project.yaml preflight.extra_run") {
+		t.Fatalf("job-level extra_run must be refused with the move, got %v", err)
 	}
 }

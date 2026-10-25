@@ -53,7 +53,7 @@ var rootCmd = &cobra.Command{
   ablation axes need no command-line plumbing and no wrapper scripts.
 
   Typical loop:
-    runq project add -f project.yaml        register the code base (once)
+    runq project project.yaml               register / update the code base
     runq draft job.yaml                     plan: tasks, target, rendered command -> dr…
     runq submit dr… --json                  submit -> {job_id, total_tasks}
     runq ps <job_id> --json --fresh         task states

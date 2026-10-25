@@ -59,6 +59,7 @@ func BuildJobSummary(job store.JobRow, tasks []store.TaskRow) JobSummary {
 		Project:      job.ProjectName,
 		Name:         job.Name,
 		Section:      sectionOrUnsorted(job.Section),
+		DraftID:      job.DraftID,
 		Description:  job.Description,
 		Status:       job.Status,
 		Target:       job.Target,

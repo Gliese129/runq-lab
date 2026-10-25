@@ -58,7 +58,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
 runq target connect tsubame --remote-binary /tmp/runq-linux-amd64 --timeout 2m
 ```
 
-`VERSION` must match the local `runq version`. Published versions can download
+`VERSION` must match the local `runq --version`. Published versions can download
 an official platform asset with its SHA-256 checksum. Installs use a unique
 remote temporary file, verify it runs and reports the correct version, then
 atomically rename it; failed installs preserve the previous executable.
@@ -79,14 +79,15 @@ idle lane makes no automatic observation requests. Manual refreshes enter the
 same sensor loop and respect its scheduler query floor.
 
 Set project.target to the code source and default execution target.
-Submit uses `-t > job.target > project.target`. `runq target use` and `RUNQ_TARGET`
-scope queries only; they do not override experiment submission.
+A job runs on `-t > job.target > project.target`; queries cover every target unless
+you pass `-t`.
 
 ## Submitting
 
 ```bash
-runq submit job.yaml --project-file project.yaml -t tsubame --dry
-runq submit job.yaml --project-file project.yaml -t tsubame
+runq project project.yaml       # register or update the project
+runq draft job.yaml -t tsubame  # the plan, kept as dr…
+runq submit dr… --json          # submit that draft
 runq ps <job_id> --json --fresh  # task states after one scheduler probe
 runq kill <job_id|task_id>       # cancels via your kill_template
 ```
@@ -107,7 +108,7 @@ fixed_params: { group: your-group, ar_id: "9245", node_kind: node_f, h_rt: "4:00
 ```
 
 Leave `ar_id` out (or set it to `""`) and `-ar` is not passed. Confirm `-ar '9245'`
-appears in the `--dry` submit line.
+appears in the submit line of `runq draft`.
 
 ## Optional segments in `submit_template`
 

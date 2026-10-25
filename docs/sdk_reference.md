@@ -27,13 +27,8 @@ The SDK auto-detects its environment from `RUNQ_TASK_ID` and
 ```python
 import runq
 
-@runq.dataclass(auto_overwrite=True)
-class Params:
-    lr: float = 0.001
-    batch_size: int = 32
-
-cfg = Params()                          # sweep params auto-merged
 ctx = runq.context()
+lr = ctx.params.get("lr", 0.001)        # the sweep value, or this explicit default
 
 for step in range(1000):
     loss = train_step(model, cfg)
@@ -73,33 +68,13 @@ on that node; multi-node runs only show the first node).
 `runq.link(name, url)` records any external page for the task (last write
 per name wins); it works whatever run id your script chooses.
 
-### Typed parameters with `@runq.dataclass`
-
-```python
-@runq.dataclass(auto_overwrite=True)
-class Params:
-    lr: float = 0.001
-    optimizer: str = "adam"
-
-cfg = Params()  # defaults overwritten by sweep values automatically
-```
-
-`auto_overwrite=True` merges sweep parameters into the dataclass fields
-by name and type. Missing sweep params keep their defaults. Extra sweep
-params not in the class are ignored.
-
 ## Metrics
-
-### `runq.log_metric(key, value, step=None)`
-
-Log one scalar. An explicit `step` is written back to `ctx.current_step`;
-without it the current ctx step (possibly `None`) is used.
 
 ### `runq.report(metrics, step=None)`
 
-Log several scalars in one call — one `metrics.jsonl` row per key, same
-format as `log_metric`. Returns `None`. `ctx.wandb_like_metric` exposes
-the latest reported dict.
+Log scalars — one `metrics.jsonl` row per key. Returns `None`. An explicit
+`step` is written back to `ctx.current_step`; without it the current ctx
+step (possibly `None`) is used.
 
 ```python
 runq.report({"loss": 0.42, "lr": sched.get_last_lr()[0]}, step=step)
@@ -166,9 +141,9 @@ with runq.utils.atomic_write("output.json") as f:
 | File | Written by | Read by |
 |---|---|---|
 | `params.json` | runq (at submit) | SDK `context()` |
-| `metrics.jsonl` | SDK `log_metric` / `report` | dashboard |
-| `results.jsonl` | SDK `record` | `runq results`, dashboard |
-| `links.json` | SDK `link` | `runq task show`, dashboard |
+| `metrics.jsonl` | SDK `report` | dashboard |
+| `results.jsonl` | SDK `record` | `runq view --job`, dashboard |
+| `links.json` | SDK `link` | `runq show <tk…>`, dashboard |
 | `checkpoints/` | your training script | your resume code |
 
 ## Installation

@@ -198,17 +198,15 @@ func resolveEnvFile(proj *project.Config, fsys rfs.FS) (string, error) {
 		}
 		return "", nil
 	}
-	path := strings.TrimSpace(*proj.EnvFile)
-	if path == "" {
-		return "", nil // explicitly disabled
+	// Pre-rc6 registrations may still carry env_file (see
+	// project.NormalizeLegacy): .env is the default anyway; anything else
+	// would change what runs if ignored, so it stops the submit.
+	cp := *proj
+	if _, err := project.NormalizeLegacy(&cp); err != nil {
+		return "", fmt.Errorf("project %s: %w; then run: runq project <project.yaml>", proj.ProjectName, err)
 	}
-	if !posixpath.IsAbs(path) {
-		path = posixpath.Join(proj.WorkingDir, path)
-	}
-	if _, err := fsys.Stat(path); err != nil {
-		return "", fmt.Errorf("env_file %q: %w", path, err)
-	}
-	return path, nil
+	cp.EnvFile = nil
+	return resolveEnvFile(&cp, fsys)
 }
 
 // Build compiles a JobConfig plus an already-resolved Project into a

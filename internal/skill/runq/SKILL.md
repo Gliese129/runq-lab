@@ -21,7 +21,7 @@ each item saved hours of tokens when followed.
 ## 0. Start by orienting
 
 ```bash
-runq version; runq serve status          # service up? data dir, socket, logs
+runq --version; runq serve status        # service up? data dir, socket, logs
 runq target show                         # targets + which is default
 runq project ls                          # registered projects
 ls project.yaml job*.yaml .rsync 2>/dev/null
@@ -43,14 +43,14 @@ agent) or you are about to set one up, read `references/heartbeat.md` first.
 | Change a draft | `runq draft show dr… --yaml > plan.yaml`, edit, `runq draft edit dr… -f plan.yaml` · `runq draft ps` |
 | Jobs / one job's tasks | `runq ps --json` · `runq ps <job_id> --json` (add `--fresh` to probe the scheduler first) |
 | A submitted job back as job.yaml (`tasks:` rows) | `runq export <jb…> [-o file]` |
-| One task (command, dirs, scheduler id, times, links) | `runq task show <task_id>` |
+| One job (run table) / task (command, dirs, scheduler id, times, links) / project | `runq show <jb…\|tk…\|pj…>` |
 | Log tail | `runq logs <task_id> --no-follow -n 200` |
 | Last matching log lines | `runq logs <task_id> --grep 'loss\|step' -n 20` (ERE, runs on the target) |
-| Result rows from `runq.record` | `runq results <job_id> --json` |
+| Result rows from `runq.record` | `runq view --job <job_id> --json` |
 | Kill | `runq kill <task_id\|job_id\|consumer_id>` |
 | Rename a job or project (ids never change) | `runq rename <jb…\|pj…\|project-name> "<new name>"` |
 | Sections of a project / file a job | `runq section ls <project>` · `runq submit job.yaml -s <section>` · `runq section move <section> <jb…>` |
-| Register a project / update it | `runq project add -f project.yaml` · `runq submit job.yaml --project-file project.yaml` (upsert, also on `--dry`) |
+| Register a project / update it | `runq project project.yaml` (re-run after editing the file) |
 | Targets | `runq target show [name]` · `runq target check <name>` · `runq target connect <name>` |
 | Service | `runq serve -d` · `runq serve status` · `runq serve restart` |
 | Delete finished tasks | `runq clean --job <job_id> --show`, then `-y` |
@@ -63,7 +63,12 @@ Older names you may remember, and what replaced them in v0.6:
 | `sweep`, `run` | a job.yaml + `runq submit` (only `fixed_params:` = one task) |
 | `status <job>`, `job ls`, `job show` | `runq ps <job_id> --fresh --json` |
 | `job kill` | `runq kill <job_id>` |
-| `best`, `collect` | `runq results <job_id> --json` |
+| `best`, `collect`, `results` | `runq view --job <job_id> --json` |
+| `task show`, `consumer show`, `project show` | `runq show <id>` |
+| `project add -f`, `submit --project-file` | `runq project <file>` |
+| `job archive`, `project archive` | `runq archive <id> [--restore]` |
+| `submit --dry` | `runq draft <job.yaml>` |
+| `open`, `version`, `target use`, `config set` | `runq dashboard`, `runq --version`, `-t`, edit ~/.runq/config.yaml |
 | job `note:` | `name:` (free text, renamable with `runq rename`) |
 | target `workspace:` | target `data_path:` |
 | `init`, `project edit`, `target edit` | write the YAML directly, then `--project-file` / `runq target check` |
@@ -82,7 +87,7 @@ For reusable progress and paper tables: `runq view <file.yaml|name>` — see `re
   timeout}`, `preflight`, `python_env`, `wandb`, param annotations.
 - **job** = one experiment (`job.yaml`), also id (`jb…`) + renamable `name`:
   `project`, `name`, optional `command`,
-  `target`, `preflight`, `overrides{gpus_per_task,timeout,env}`,
+  `target`, `overrides{gpus_per_task,timeout,env}`,
   `fixed_params` (same in every task) and `sweep` (`grid` = cross product,
   `list` = zip rows; blocks multiply).
 - **section** = how a project's jobs are grouped (an ablation, an experiment, smoke
@@ -109,16 +114,15 @@ reservation — as job files under the existing project; a job can carry its own
 projects (`-tmp`, `-smoke`, `-a1` projects scatter one study): file smoke runs with
 `-s smoke` (a name containing "smoke" lands there anyway), and ask the researcher
 before creating a new section — they usually have one in mind. Create a separate
-project when the code base or its Python environment genuinely differs. When `project add` says `project "x" already
-exists`, update it with `--project-file` and keep the name.
+project when the code base or its Python environment genuinely differs. `runq project <file>`
+registers a new project or updates the one the file names; keep the name.
 
 One directory can hold several projects — e.g. training and evaluation with
 different `python_env`, `defaults` or `wandb` — all with the same `working_dir`.
 Give each its own file (`train.project.yaml`, `eval.project.yaml`), register it
-with `runq project add -f <file>`, and name it in each job's `project:`. Only a
-file called exactly `project.yaml` in the working_dir is re-read automatically,
-and only into the project it names; pass `--project-file <file>` on submit to
-refresh the others. Their jobs live side by side under `<working_dir>/.runq/`, and
+with `runq project <file>`, and name it in each job's `project:`. runq reads a
+project file only when you run `runq project <file>`; after editing one, run it
+again (`runq draft` warns when the registered file has changed). Their jobs live side by side under `<working_dir>/.runq/`, and
 the dashboard groups them under the directory.
 
 ### Parameters
@@ -148,7 +152,7 @@ For scheduler knobs, annotate `{ name: h_rt, scope: scheduler }` in the project 
 use `{{param.h_rt}}` in the target's `submit_template`; wrap a flag that only some jobs
 need in `[[...]]` (e.g. `[[-ar {{param.ar_id}}]]` for a reservation). `choices`, when present, are
 enforced. Keep each param in one sweep block. Target precedence: `-t` > `job.target` >
-`project.target`; `target use` and `RUNQ_TARGET` scope queries only.
+`project.target`; queries cover every target unless you pass `-t`.
 
 Read the `runq draft` output before submitting — task count, target, section, the run
 table, generated run.sh / submit line, how each param reaches the code (flag or
@@ -192,14 +196,13 @@ A task ID executes once. On failure: inspect the error, fix it, preview, then su
 
 - `runq ps` shows a cached snapshot with observation times; `--fresh` probes once.
   `pending` means the cluster is queueing the task (`qstat -j <ext_id>` gives the reason).
-- If stderr says `showing target "X" only`, the list is filtered by a leftover
-  `runq target use` / `RUNQ_TARGET`; pass `-t <name>` to see another target.
+- Lists cover every target unless you pass `-t <name>`.
 - Times: `queue_seconds` (waiting), `scheduler_seconds` (allocation, when known),
   `elapsed_seconds` (the script). Treat a missing value as unknown, and take start
   times from these fields rather than file mtimes, legacy `started_at` or W&B runtime.
 - When runq and the scheduler disagree, or a probe fails, report the result as
   **unconfirmed** with both observations and their times. `ext_id` (the scheduler
-  job id) is in `runq task show`.
+  job id) is in `runq show <task_id>`.
 - "success" means exit 0. To judge the *experiment*, read the output fields the user
   cares about (`runq logs --grep`, the result file) and quote them.
 
@@ -272,7 +275,7 @@ Each file you add is one more thing the researcher reads or cleans up later. Goo
 2. **Check state when there is a reason** — one `runq ps <job> --json`; the researcher
    follows progress on the dashboard.
 3. **Put the dashboard link in your reports.** `submit --json`, `ps --json` and
-   `task show` carry a `url` per job/task page. When you tell the researcher a job
+   `show` carry a `url` per job/task page. When you tell the researcher a job
    was submitted, finished or failed, give that link — the job's for a sweep, the
    task's for one cell — next to the id, so one click shows them what you saw.
    No `url` field means the service serves no UI; the id alone is fine then.
@@ -299,7 +302,7 @@ first; otherwise sync your edits to the target before submitting and say so.
 
 ```python
 run = wandb.init(**ctx.wandb_like_cfg)   # project/entity/tags from the project's wandb: block
-ctx.link_wandb(run)                       # the dashboard and `task show` link to the run
+ctx.link_wandb(run)                       # the dashboard and `runq show <tk…>` link to the run
 ```
 
 Call `ctx.link_wandb(run)` right after init so the researcher can open the run from

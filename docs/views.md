@@ -192,13 +192,13 @@ consumers:
 
 ```bash
 runq consumer add jb123 scorer -- python scripts/score.py
-runq consumer ls jb123
-runq consumer show cs123
+runq ps jb123          # consumers are listed under the tasks
+runq show cs123
 runq logs cs123 --no-follow
 runq kill cs123
 ```
 
-Submission prepares files and prints `bash <run_sh>`; `--dry` only previews.
+Submission prepares files and prints `bash <run_sh>`; `runq draft` only previews.
 The user/agent prepares iqrsh/tmux and runs that command on a CPU node with shared
 workspace access. runq does not acquire allocations, arrange tmux nesting or
 keep SSH sessions alive. Consumers inherit project environment/python_env and

@@ -4,7 +4,7 @@
 #          or:  runq submit path/to/job.yaml
 #
 # Preview first (free, prints the exact expansion, submits nothing):
-#     runq submit job.yaml --dry
+#     runq draft job.yaml
 # Submit and watch:  runq submit job.yaml --watch
 # Machine-readable:  runq submit job.yaml --json   → {"job_id": ..., "total_tasks": ...}
 #

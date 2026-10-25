@@ -35,6 +35,6 @@ func init() {
 	// so scripted callers can pass it uniformly.
 	taskShowCmd.Flags().Bool("json", true, "output raw JSON (always on; accepted for parity)")
 	taskCmd.AddCommand(taskShowCmd)
-	taskCmd.GroupID = groupManagement
 	rootCmd.AddCommand(taskCmd)
+	retire(taskCmd, "use `runq show <tk…>`")
 }

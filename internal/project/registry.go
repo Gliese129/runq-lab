@@ -13,8 +13,6 @@ import (
 	"github.com/gliese129/runq-lab/internal/rfs"
 	"github.com/gliese129/runq-lab/internal/store"
 	"github.com/gliese129/runq-lab/internal/utils"
-	"gopkg.in/yaml.v3"
-	"path"
 )
 
 // Registry manages the set of registered projects, backed by SQLite.
@@ -46,9 +44,8 @@ func NewRegistry(db *sql.DB) *Registry {
 	return &Registry{db: db}
 }
 
-// Add registers a new project. Writes project.yaml to working_dir then
-// inserts into the database. The directory must exist and be writable —
-// project.yaml is the source of truth, so a failed write blocks registration.
+// Add registers a new project. The registration is the only truth runq
+// reads (rc6 explicit upsert): project.yaml is never written or re-read.
 // Returns an error if a project with the same name already exists.
 func (r *Registry) Add(ctx context.Context, cfg Config) error {
 	if err := ValidateName(cfg.ProjectName); err != nil {
@@ -61,11 +58,6 @@ func (r *Registry) Add(ctx context.Context, cfg Config) error {
 	}
 	if err != sql.ErrNoRows {
 		return fmt.Errorf("query project %q: %w", cfg.ProjectName, err)
-	}
-
-	// Write project.yaml — hard failure (file is source of truth)
-	if err := cfg.WriteYAML(r.fs(cfg.Target)); err != nil {
-		return fmt.Errorf("write project.yaml: %w", err)
 	}
 
 	if cfg.ID == "" {
@@ -93,7 +85,7 @@ func (r *Registry) Get(ctx context.Context, ref string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return r.syncFromYAML(ctx, cfg.ProjectName, cfg), nil
+	return cfg, nil
 }
 
 // GetCached reads the controller's persisted snapshot without filesystem I/O.
@@ -178,55 +170,6 @@ func (r *Registry) Resolve(ctx context.Context, ref string) (string, error) {
 	return "", fmt.Errorf("project %q not found; known: %s", ref, strings.Join(known, ", "))
 }
 
-// syncFromYAML reconciles the DB copy with <working_dir>/project.yaml on
-// every Get. project.yaml is the source of truth (CLI users hand-edit it);
-// the DB row is a cache for listing/joins. Drift → reload the file and
-// refresh the cache, so CLI and GUI can never disagree about a project.
-// Fault-tolerant: a missing or unparsable file falls back to the DB copy
-// (a botched hand-edit must not make the project vanish).
-func (r *Registry) syncFromYAML(ctx context.Context, name string, dbCfg *Config) *Config {
-	if dbCfg.WorkingDir == "" {
-		return dbCfg
-	}
-	// Read through the project's HOME filesystem (RQ-65) — for a remote
-	// project this reuses the lane's warm SSH connection. Fault-tolerant
-	// as ever: unreachable target = fall back to the DB cache.
-	buf, err := r.fs(dbCfg.Target).ReadFile(path.Join(dbCfg.WorkingDir, "project.yaml"))
-	if err != nil {
-		return dbCfg
-	}
-	var fileCfg Config
-	if yaml.Unmarshal(buf, &fileCfg) != nil {
-		return dbCfg
-	}
-	// Sanity: yaml.Unmarshal happily produces a zero struct for garbage
-	// scalars. A real project.yaml always carries these two fields.
-	if fileCfg.WorkingDir == "" {
-		return dbCfg
-	}
-	// Ownership: the file speaks ONLY for the project it names. Multiple
-	// projects can legitimately share a working_dir (--project-file
-	// submissions); syncing the dir's project.yaml into a DIFFERENTLY-named
-	// registry entry would graft one project's config onto another's
-	// identity. Same-name (or legacy nameless) files stay source of truth.
-	if fileCfg.ProjectName != "" && fileCfg.ProjectName != name {
-		return dbCfg
-	}
-	// Identity stays with the DB key — renames go through Rename(), not a
-	// hand-edited project_name (that would orphan the job FKs).
-	fileCfg.ProjectName, fileCfg.ID = name, dbCfg.ID
-
-	fileJSON, err1 := json.Marshal(fileCfg)
-	dbJSON, err2 := json.Marshal(dbCfg)
-	if err1 != nil || err2 != nil || string(fileJSON) == string(dbJSON) {
-		return dbCfg
-	}
-	// File wins: refresh the cache. Best-effort — a read-only DB still
-	// returns the file's truth for this call.
-	_, _ = r.db.ExecContext(ctx, `UPDATE projects SET config_json = ? WHERE name = ?`, string(fileJSON), name)
-	return &fileCfg
-}
-
 // List returns all registered projects, ordered by name.
 func (r *Registry) List(ctx context.Context) ([]Config, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT name, COALESCE(id, ''), config_json FROM projects ORDER BY name`)
@@ -254,8 +197,7 @@ func (r *Registry) List(ctx context.Context) ([]Config, error) {
 	return configs, nil
 }
 
-// Update modifies an existing project's config.
-// Rewrites project.yaml and updates the database.
+// Update replaces an existing project's registered config.
 // Returns an error if the project does not exist.
 func (r *Registry) Update(ctx context.Context, cfg Config) error {
 	var existing int
@@ -265,11 +207,6 @@ func (r *Registry) Update(ctx context.Context, cfg Config) error {
 	}
 	if err != nil {
 		return fmt.Errorf("query project %q: %w", cfg.ProjectName, err)
-	}
-
-	// Rewrite project.yaml (explicit update) — on the project's home FS.
-	if err := cfg.OverwriteYAML(r.fs(cfg.Target)); err != nil {
-		return fmt.Errorf("write project.yaml: %w", err)
 	}
 
 	data, err := json.Marshal(cfg)
@@ -313,7 +250,8 @@ func (r *Registry) Match(ctx context.Context, dir string) ([]Config, error) {
 
 // Rename atomically renames a project; ref is its name, id or id prefix.
 // The id never changes. Every table that carries the name denormalized is
-// updated in the same transaction, then project.yaml is rewritten.
+// updated in the same transaction. project.yaml is not touched: the CLI
+// tells the user to update project_name there.
 func (r *Registry) Rename(ctx context.Context, ref, newName string) error {
 	oldName, err := r.Resolve(ctx, ref)
 	if err != nil {
@@ -378,9 +316,6 @@ func (r *Registry) Rename(ctx context.Context, ref, newName string) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit rename: %w", err)
 	}
-
-	// Rewrite project.yaml with new name — on the project's home FS.
-	_ = cfg.OverwriteYAML(r.fs(cfg.Target))
 
 	return nil
 }

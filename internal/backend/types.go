@@ -40,6 +40,8 @@ type JobSummary struct {
 	Name      string         `json:"name"`
 	// Section is the job's section within its project ("unsorted" when none).
 	Section string `json:"section"`
+	// DraftID is the draft the job was submitted from ("" = before drafts).
+	DraftID string `json:"draft_id,omitempty"`
 	// Description is the job.yaml sentence behind the short note.
 	Description string `json:"description,omitempty"`
 	// Status: pending / running / paused while live; done / failed /

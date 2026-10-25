@@ -16,8 +16,8 @@ var jobCmd = &cobra.Command{
 func init() {
 	jobCmd.AddCommand(jobArchiveCmd)
 	jobCmd.AddCommand(jobUnarchiveCmd)
-	jobCmd.GroupID = groupManagement
 	rootCmd.AddCommand(jobCmd)
+	retire(jobCmd, "use `runq archive <jb…>` (`--restore` to undo); jobs are listed by `runq ps`")
 }
 
 // ── archive / unarchive (mode-aware: daemon API or HPC store) ──

@@ -1,6 +1,6 @@
 # runq project configuration — one codebase and stable execution defaults
 #
-# Register once:  runq project add -f project.yaml
+# Register (and after each edit):  runq project project.yaml
 # After editing:  runq submit job.yaml --project-file project.yaml   (upserts)
 #
 # One project per code base. Experiments differ by job.yaml (which may set
@@ -22,7 +22,7 @@ command: python test_train.py     # swept values reach the code via ctx.params
 # prefixed onto the submit command, so $MY_GROUP-style references in
 # submit_template resolve from here. NEVER put secrets here (not even
 # placeholders) — put them in working_dir/.env, which is sourced at task
-# start and never stored by runq. Override the file with `env_file:`.
+# start and never stored by runq.
 environment:
   WANDB_PROJECT: resnet-experiments
 

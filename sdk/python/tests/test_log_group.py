@@ -5,7 +5,7 @@ Contract:
   the prefix; both pop on exit (CM exit / wrapped fn return).
 - Nesting joins with '/': log_group("a") inside log_group("b") →
   prefix "b/a".
-- log_metric and report's emitted keys get the prefix.
+- report's emitted keys get the prefix.
 - report's latest-metrics snapshot keeps the unprefixed key names.
 - Exception inside the CM/decorator still pops the prefix.
 - Validation: prefix must be a non-empty string, no '/' inside.
@@ -43,11 +43,11 @@ def test_log_group_rejects_non_str_prefix(clean_env, tmp_path, monkeypatch):
 
 # ---- context-manager form ----
 
-def test_log_group_cm_prefixes_log_metric(clean_env, tmp_path, monkeypatch):
+def test_log_group_cm_prefixes_report(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
     with runq.log_group("train"):
-        runq.log_metric("loss", 0.5, step=1)
+        runq.report({"loss": 0.5}, step=1)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert events[0]["key"] == "train/loss"
 
@@ -56,8 +56,8 @@ def test_log_group_cm_pops_prefix_on_exit(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
     with runq.log_group("train"):
-        runq.log_metric("loss", 0.5, step=1)
-    runq.log_metric("untagged", 9.0, step=2)
+        runq.report({"loss": 0.5}, step=1)
+    runq.report({"untagged": 9.0}, step=2)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     keys = [e["key"] for e in events]
     assert keys == ["train/loss", "untagged"]
@@ -73,7 +73,7 @@ def test_log_group_cm_pops_prefix_after_exception(clean_env, tmp_path, monkeypat
     except RuntimeError:
         pass
 
-    runq.log_metric("after_crash", 1.0, step=1)
+    runq.report({"after_crash": 1.0}, step=1)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert events[0]["key"] == "after_crash"   # NOT "train/after_crash"
 
@@ -82,23 +82,23 @@ def test_log_group_cm_nesting(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
     with runq.log_group("outer"):
-        runq.log_metric("a", 1.0, step=0)
+        runq.report({"a": 1.0}, step=0)
         with runq.log_group("inner"):
-            runq.log_metric("b", 2.0, step=1)
-        runq.log_metric("c", 3.0, step=2)
+            runq.report({"b": 2.0}, step=1)
+        runq.report({"c": 3.0}, step=2)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert [e["key"] for e in events] == ["outer/a", "outer/inner/b", "outer/c"]
 
 
 # ---- decorator form ----
 
-def test_log_group_decorator_prefixes_log_metric(clean_env, tmp_path, monkeypatch):
+def test_log_group_decorator_prefixes_report(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
 
     @runq.log_group("train")
     def step():
-        runq.log_metric("loss", 0.5, step=1)
+        runq.report({"loss": 0.5}, step=1)
 
     step()
     events = _read_events(tmp_path / "runq_metrics.jsonl")
@@ -111,10 +111,10 @@ def test_log_group_decorator_pops_after_return(clean_env, tmp_path, monkeypatch)
 
     @runq.log_group("train")
     def step():
-        runq.log_metric("loss", 0.5, step=1)
+        runq.report({"loss": 0.5}, step=1)
 
     step()
-    runq.log_metric("after", 1.0, step=2)
+    runq.report({"after": 1.0}, step=2)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert [e["key"] for e in events] == ["train/loss", "after"]
 
@@ -125,12 +125,12 @@ def test_log_group_decorator_pops_after_exception(clean_env, tmp_path, monkeypat
 
     @runq.log_group("train")
     def crash():
-        runq.log_metric("before_crash", 1.0, step=1)
+        runq.report({"before_crash": 1.0}, step=1)
         raise RuntimeError("boom")
 
     with pytest.raises(RuntimeError):
         crash()
-    runq.log_metric("after", 2.0, step=2)
+    runq.report({"after": 2.0}, step=2)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     keys = [e["key"] for e in events]
     assert keys == ["train/before_crash", "after"]

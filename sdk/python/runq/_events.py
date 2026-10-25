@@ -4,7 +4,7 @@ File contract: each stream has its own file so the semantics split at the
 API boundary and downstream never disambiguates:
 
 - ``metrics.jsonl`` — pure per-step metric stream (``report`` /
-  ``log_metric``); unbounded, summarized on ingest (+ pyramid).
+  ``report``); unbounded, summarized on ingest (+ pyramid).
 - ``results.jsonl`` — ``runq.record`` data plane; bounded facts,
   ingested in full (see :mod:`runq._record`).
 
@@ -24,7 +24,6 @@ source of truth for "what step is this?" is ``ctx.current_step``,
 maintained by:
 
 - ``report(metrics, step=N)`` — explicit step writes back to ctx.
-- ``log_metric(..., step=N)`` — same; keeps the two helpers in sync.
 - ``loop()`` (step 8) — sets it once per iteration.
 
 When the caller omits ``step`` and ctx has never been written to,
@@ -87,45 +86,6 @@ def _append_result(record: dict) -> None:
     """Append one ``runq.record`` result record to results.jsonl."""
     ctx = get_ctx()
     _append_jsonl_line(ctx.results_file, record, "results")
-
-
-def log_metric(key: str, value: float, step: int | None = None) -> None:
-    """Append a single metric event to ``metrics.jsonl``.
-
-    Low-level helper. For training loops, prefer :func:`runq.report`
-    which handles multiple metrics + early-stop check in one call.
-
-    Step semantics (step 6 contract)
-    --------------------------------
-    - ``step=N`` (explicit) — written to jsonl AND saved back to
-      ``ctx.current_step``. Future ``report`` / ``log_metric`` calls
-      without ``step=`` will see ``N`` until it's updated.
-    - ``step=None`` — read ``ctx.current_step`` as fallback. If the ctx
-      step has never been set, ``step=null`` ends up in jsonl. There is
-      NO auto-increment counter.
-
-    Why the write-back: it keeps log_metric (side-channel) consistent
-    with report (canonical) so the two helpers can be interleaved
-    without their step views drifting apart.
-
-    ``step=0`` is a legitimate value; only ``None`` triggers the ctx
-    fallback (Codex review #6 — never use ``step or X`` here).
-    """
-    ctx = get_ctx()
-    if step is not None:
-        ctx.current_step = step
-        resolved_step: int | None = step
-    else:
-        resolved_step = ctx.current_step
-    _append_event(
-        {
-            "type": "metric",
-            "key": apply_prefix(key),
-            "value": float(value),
-            "step": resolved_step,
-            "ts": int(time.time()),
-        }
-    )
 
 
 # ---- testing helper ----

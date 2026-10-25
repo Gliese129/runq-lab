@@ -52,7 +52,14 @@ func viewProject(cmd *cobra.Command, p *api.Proxy, name string) (string, error) 
 	return "", fmt.Errorf("view %q exists in %v; use --project", name, matches)
 }
 
-var viewCmd = &cobra.Command{Use: "view <file.yaml | name>", Short: "Render a saved research view (cached data)", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+var viewCmd = &cobra.Command{Use: "view <file.yaml | name> | view --job <jb…>", Short: "Render a saved research view (cached data); --job alone shows a job's recorded results", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		jobs, _ := cmd.Flags().GetStringArray("job")
+		if len(jobs) != 1 {
+			return fmt.Errorf("give a view (file or name), or exactly one --job <jb…> for that job's recorded results")
+		}
+		return runResults(cmd, jobs)
+	}
 	return withBackend(cmd, func(be backend.Backend) error {
 		p := be.(*api.Proxy)
 		name := args[0]

@@ -92,3 +92,16 @@ func TestMigrateBackfillsProjectIDs(t *testing.T) {
 		t.Fatalf("pre-rc6 project should get an id on migrate, got %q %v", id, err)
 	}
 }
+
+func TestNormalizeLegacyProjectKeys(t *testing.T) {
+	on, dot, other := true, ".env", "secrets.env"
+	c := Config{EnvFile: &dot, Preflight: &PreflightConfig{Wandb: &on}}
+	warns, err := NormalizeLegacy(&c)
+	if err != nil || len(warns) != 2 || c.EnvFile != nil || c.Preflight.Wandb != nil {
+		t.Fatalf("env_file: .env and preflight.wandb drop with warnings: %v %v %+v", warns, err, c)
+	}
+	c = Config{EnvFile: &other}
+	if _, err := NormalizeLegacy(&c); err == nil {
+		t.Fatal("another env_file changes what runs: error")
+	}
+}

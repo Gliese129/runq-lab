@@ -42,7 +42,7 @@ defaults: { gpus_per_task: 2, timeout: 12h }
 ```
 
 ```bash
-runq project add -f project.yaml
+runq project project.yaml
 ```
 
 One project per code base. Later changes: edit the file and pass
@@ -104,8 +104,8 @@ runq submit dr… --json      # {"job_id": "jb…", "total_tasks": 6}
 ```bash
 runq ps <job_id> --json                    # task states (cached; add --fresh to probe now)
 runq logs <task_id> --grep 'loss' -n 20    # last matching lines, grepped on the cluster
-runq task show <task_id>                   # command, dirs, scheduler id, links
-runq results <job_id> --json               # rows from runq.record
+runq show <task_id>                        # command, dirs, scheduler id, links
+runq view --job <job_id> --json            # rows from runq.record
 ```
 
 The dashboard shows the same jobs, logs, curves and results. `pending` means

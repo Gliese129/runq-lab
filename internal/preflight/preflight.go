@@ -398,7 +398,9 @@ func (p Preflight) probeChecks(ctx context.Context, proj *project.Config, sample
 	}
 	hfWanted := len(contractRefs) > 0 || probeEntry.Mode != ""
 
-	wandb := contract.WandbOrDefault()
+	// rc6: preflight.wandb is retired (project.NormalizeLegacy warns and
+	// drops it); the probe no longer checks W&B credentials.
+	const wandb = false
 	extraRun := strings.TrimSpace(contract.ExtraRunOrEmpty())
 	shEntry := entry.ShPath
 	// Interpreter: the entry command's python token, else the one the
@@ -512,16 +514,6 @@ func (p Preflight) probeChecks(ctx context.Context, proj *project.Config, sample
 		case hfWanted && !res.Done:
 			results = append(results, CheckResult{Name: "huggingface", Status: "skipped",
 				Detail: fmt.Sprintf("probe cut short before the HF check (timeout %s)", timeout)})
-		}
-		if wandb {
-			switch res.Wandb {
-			case "ok":
-				results = append(results, CheckResult{Name: "wandb", Status: "passed", Detail: "credentials found (WANDB_API_KEY or ~/.netrc)"})
-			case "missing":
-				results = append(results, CheckResult{Name: "wandb", Status: "warning", Detail: "no WANDB_API_KEY and no api.wandb.ai entry in ~/.netrc — the task may hang on wandb login"})
-			default:
-				results = append(results, CheckResult{Name: "wandb", Status: "skipped", Detail: "probe cut short before the wandb check"})
-			}
 		}
 	}
 

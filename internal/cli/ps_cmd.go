@@ -28,9 +28,7 @@ var psCmd = &cobra.Command{
 }
 
 func runPs(cmd *cobra.Command, args []string) error {
-	output, _ := cmd.Flags().GetString("output")
 	jsonOut, _ := cmd.Flags().GetBool("json")
-	jsonOut = jsonOut || output == "json"
 
 	return withBackend(cmd, func(be backend.Backend) error {
 		// Task view: ps <job_id> → flat task table.
@@ -45,12 +43,15 @@ func runPs(cmd *cobra.Command, args []string) error {
 				t := &tasks[i]
 				t.URL = dashboard.TaskURL(base, t.Project, t.JobID, t.ID)
 			}
-			if jsonOut {
+			if jsonOut { // consumers: runq show <jb…> --json
 				printJSON(tasks)
 				return nil
 			}
 			if err := printDashboardTasks(tasks); err != nil {
 				return err
+			}
+			if c, ok := be.(backend.Consumers); ok {
+				printJobConsumers(cmd, c, args[0])
 			}
 			if len(tasks) > 0 {
 				printDashboardLink(os.Stdout, dashboard.JobURL(base, tasks[0].Project, tasks[0].JobID))
@@ -59,9 +60,6 @@ func runPs(cmd *cobra.Command, args []string) error {
 		}
 
 		// Job view.
-		if t, src := implicitTargetScope(cmd); t != "" {
-			fmt.Fprintf(cmd.ErrOrStderr(), "%s\n", utils.Dimf("showing target %q only (set by %s) — pass -t <name> for another target", t, src))
-		}
 		applyFresh(cmd, be, "")
 		jobs, err := be.ListJobs(cmd.Context(), "")
 		if err != nil {
@@ -89,11 +87,25 @@ func runPs(cmd *cobra.Command, args []string) error {
 }
 
 func init() {
-	psCmd.Flags().StringP("output", "o", "", "Output format (json)")
 	psCmd.Flags().Bool("json", false, "output raw JSON")
 	psCmd.Flags().StringP("target", "t", "", "Filter by compute target")
-	_ = psCmd.Flags().MarkHidden("output") // legacy spelling of --json
 
 	psCmd.GroupID = groupCore
 	rootCmd.AddCommand(psCmd)
+}
+
+// printJobConsumers lists a job's consumers under its task table (the old
+// `runq consumer ls`).
+func printJobConsumers(cmd *cobra.Command, c backend.Consumers, jobID string) {
+	list, err := c.ListConsumers(cmd.Context(), jobID)
+	if err != nil || len(list) == 0 {
+		return
+	}
+	fmt.Println()
+	w := newTable()
+	fmt.Fprintf(w, "CONSUMER\tNAME\tSTATUS\tRUN\n")
+	for _, x := range list {
+		fmt.Fprintf(w, "%s\t%s\t%s\tbash %s\n", utils.IDColor(x.ID), x.Name, x.Status, utils.ShellQuote(x.RunSH))
+	}
+	_ = w.Flush()
 }

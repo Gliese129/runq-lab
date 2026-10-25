@@ -92,20 +92,6 @@ def test_report_step_none_with_unset_ctx_writes_null(clean_env, tmp_path, monkey
     assert events[0]["step"] is None
 
 
-def test_report_and_log_metric_share_step_view(clean_env, tmp_path, monkeypatch):
-    """Both helpers read+write the same ctx.current_step."""
-    monkeypatch.chdir(tmp_path)
-    runq.context()
-    runq.report({"a": 1.0}, step=10)
-    runq.log_metric("b", 2.0)        # uses ctx (10)
-    runq.log_metric("c", 3.0, step=20)  # writes back ctx
-    runq.report({"d": 4.0})           # uses ctx (20)
-    events = _read_events(tmp_path / "runq_metrics.jsonl")
-    assert [(e["key"], e["step"]) for e in events] == [
-        ("a", 10), ("b", 10), ("c", 20), ("d", 20),
-    ]
-
-
 # ---- latest metrics ------------------------------------------------
 
 def test_report_returns_none(clean_env, tmp_path, monkeypatch):

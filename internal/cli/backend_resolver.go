@@ -3,19 +3,15 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/gliese129/runq-lab/internal/api"
 	"github.com/gliese129/runq-lab/internal/backend"
-	"github.com/gliese129/runq-lab/internal/config"
 	"github.com/spf13/cobra"
 )
 
 // withBackend opens a Proxy connected to the running daemon's Unix socket,
-// resolves the active target (--target / $RUNQ_TARGET / .active-target),
-// and runs fn. This is the single entry point for ALL CLI commands that need
+// applies the command's -t/--target as the query scope, and runs fn. This is the single entry point for ALL CLI commands that need
 // a Backend — every command automatically gets target resolution.
 //
 // The resolved target is applied as Proxy.TargetFilter, which:
@@ -66,45 +62,13 @@ func applyFresh(cmd *cobra.Command, be backend.Backend, jobID string) {
 	}
 }
 
-// resolveTarget reads the active target from the CLI --target flag, the
-// RUNQ_TARGET env var, or the .active-target session file.
-// Returns "" if no target is explicitly set (list = all targets,
-// submit = daemon's default_target).
-//
-// Priority: --target flag > $RUNQ_TARGET > <configDir>/.active-target
-// implicitTargetScope reports a query scope that the caller did NOT pass on
-// this command line (RUNQ_TARGET or a leftover `runq target use`). An agent
-// that reads "No jobs" without knowing the list was filtered draws the wrong
-// conclusion, so listings name the scope on stderr.
-func implicitTargetScope(cmd *cobra.Command) (target, source string) {
-	if cmd.Flags().Lookup("target") != nil && cmd.Flags().Changed("target") {
-		return "", ""
-	}
-	if t := os.Getenv("RUNQ_TARGET"); t != "" {
-		return t, "RUNQ_TARGET"
-	}
-	path := filepath.Join(config.ConfigDir(), ".active-target")
-	if buf, err := os.ReadFile(path); err == nil {
-		if t := strings.TrimSpace(string(buf)); t != "" {
-			return t, "`runq target use` (" + path + ")"
-		}
-	}
-	return "", ""
-}
-
+// resolveTarget is the target the command line names with -t/--target;
+// "" means none (list = all targets, submit = job/project target). rc6:
+// query scope is never implicit — RUNQ_TARGET and `target use` are gone.
 func resolveTarget(cmd *cobra.Command) string {
-	if cmd.Flags().Changed("target") {
+	if f := cmd.Flags().Lookup("target"); f != nil && cmd.Flags().Changed("target") {
 		t, _ := cmd.Flags().GetString("target")
 		return t
-	}
-	if t := os.Getenv("RUNQ_TARGET"); t != "" {
-		return t
-	}
-	path := filepath.Join(config.ConfigDir(), ".active-target")
-	if buf, err := os.ReadFile(path); err == nil {
-		if t := strings.TrimSpace(string(buf)); t != "" {
-			return t
-		}
 	}
 	return ""
 }

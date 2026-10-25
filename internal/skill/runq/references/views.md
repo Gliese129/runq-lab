@@ -149,7 +149,7 @@ Put expensive work in a task/consumer and emit record snapshots.
 
 ```bash
 runq consumer add jb123 scorer -- python scripts/score.py
-runq consumer show cs123
+runq show cs123
 runq logs cs123 --no-follow
 runq kill cs123
 ```

@@ -42,7 +42,7 @@ Sweeps are described as blocks that combine:
   like a benchmark and its walltime).
 - Blocks **cross-multiply**: `grid(3×2) × list(2) = 12 tasks`.
 
-The expansion is deterministic and previewable with `--dry`.
+The expansion is deterministic and previewable with `runq draft`.
 
 ## Targets
 
@@ -89,7 +89,7 @@ Each task gets a workspace under `<data>/<project_id>/<job_id>/<task_id>/`, wher
 
 ```
 params.json       — exact parameters for this task
-metrics.jsonl     — metric stream (log_metric / report)
+metrics.jsonl     — metric stream (runq.report)
 results.jsonl     — result records (runq.record)
 links.json        — external pages (runq.link / ctx.link_wandb)
 outputs/          — RUNQ_OUTPUT_DIR / ctx.output_dir

@@ -14,20 +14,14 @@ config = ctx.params["config"]            # required: raises if the job omits it
 # ctx.params.get("lr") without a default raises — write the default out
 seed = ctx.seed                          # deterministic per task
 
-@runq.dataclass(auto_overwrite=True)     # typed params, merged from the sweep
-class Params:
-    lr: float = 1e-3
-    batch_size: int = 32
-cfg = Params()
-
 with runq.log_group("train"):
     runq.report({"loss": loss, "lr": lr}, step=step)   # metrics.jsonl → dashboard curves
-runq.log_metric("val/acc", acc, step=step)             # single metric
+runq.report({"val/acc": acc}, step=step)              # a single metric too
 
 runq.record({"acc": acc, "f1": f1}, seed=ctx.seed, split="val")  # one comparable result row
 ```
 
-- `report` / `log_metric`: per-step scalars; `step` written back to `ctx.current_step`.
+- `report`: per-step scalars; `step` written back to `ctx.current_step`.
 - `record(metrics, section=..., **axes)`: evaluation results and progress snapshots.
   Keep keys fixed per section; use null for unknown values. `step` orders snapshots
   but is not identity. The controller retains the latest per source/section/axes;

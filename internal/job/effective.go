@@ -29,26 +29,7 @@ func EffectiveProject(cfg JobConfig, source *project.Config) (*project.Config, e
 	if cfg.Command != "" {
 		out.CmdTemplate = cfg.Command
 	}
-	if p := cfg.Preflight; p != nil {
-		if out.Preflight == nil {
-			out.Preflight = &project.PreflightConfig{}
-		}
-		if p.Enabled != nil {
-			out.Preflight.Enabled = p.Enabled
-		}
-		if p.Imports != nil {
-			out.Preflight.Imports = p.Imports
-		}
-		if p.Wandb != nil {
-			out.Preflight.Wandb = p.Wandb
-		}
-		if p.HF != nil {
-			out.Preflight.HF = append([]string{}, (*p.HF)...)
-		}
-		if p.ExtraRun != nil {
-			out.Preflight.ExtraRun = *p.ExtraRun
-		}
-	}
+	// rc6: job-level preflight overrides are retired (see NormalizeLegacy).
 	if o := cfg.Overrides; o != nil {
 		if o.GPUsPerTask != nil {
 			out.Defaults.GPUsPerTask = *o.GPUsPerTask

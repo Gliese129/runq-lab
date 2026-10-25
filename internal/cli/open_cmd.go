@@ -77,4 +77,5 @@ func pageForID(cmd *cobra.Command, be backend.Backend, base, id string) (string,
 func init() {
 	openCmd.GroupID = groupCore
 	rootCmd.AddCommand(openCmd)
+	retire(openCmd, "use `runq dashboard`; job, task and draft pages are linked from `runq show`, `runq ps` and `runq draft`")
 }

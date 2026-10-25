@@ -4,6 +4,39 @@
 
 ### Breaking
 
+- Removed commands fail with the replacement in the error:
+  - `runq submit job.yaml` outside a terminal and `submit --dry` → `runq draft
+    job.yaml`, then `runq submit dr…`; `submit --project-file` → `runq project
+    <file>` first; `submit --project` → `project:` in the file (or `draft -p`);
+    `submit -n/--note` → `name:` in the file; `submit --watch` → `runq ps <jb…>`.
+  - `runq project add` → `runq project [file]` (register or update);
+    `project show` → `runq show <pj…|name>`; `project archive/unarchive` and
+    `job archive/unarchive` → `runq archive <id> [--restore]`.
+  - `runq task show` and `consumer show` → `runq show <tk…|cs…>`;
+    `consumer ls` → `runq ps <jb…>` (consumers under the tasks).
+  - `runq results` → `runq view --job <jb…>`.
+  - `runq open` → `runq dashboard` (pages are linked from `show`/`ps`/`draft`).
+  - `runq config get/set/list` → edit `~/.runq/config.yaml` (`runq doctor` prints
+    the path, `runq target check` validates it).
+  - `runq target use`, `~/.runq/.active-target` and `RUNQ_TARGET` no longer scope
+    queries → pass `-t`. `runq version` → `runq --version`. The `runq connect`
+    and `runq gpu` aliases and `ps -o` are gone.
+- runq no longer reads or writes project.yaml on its own: `runq project <file>`
+  is the only way a change gets in, and `runq draft` warns when the registered
+  file has changed since. Renaming a project leaves the file alone; registering
+  the file under its old name is refused with the fix.
+- project.yaml `env_file: .env` is dropped with a warning; any other `env_file`
+  value is an error (runq always reads `<working_dir>/.env`).
+- Preflight no longer checks W&B credentials: project.yaml `preflight.wandb` is
+  ignored with a warning. A job-level `preflight:` is ignored with a warning
+  (preflight lives in project.yaml; skip it for one submission with
+  `runq submit dr… --no-preflight`); a job-level `extra_run` is an error —
+  move it to project.yaml.
+- SDK: `runq.log_metric` → `runq.report({key: value}, step=)`;
+  `ctx.wandb_like_metric` → pass your metrics to `wandb.log` yourself;
+  `runq.dataclass` → `ctx.params.get(name, default)`; `ctx.get(name, default)` →
+  `ctx.params.get(name, default)`. `runq.log_group` stays.
+
 - A job's `note` is now its `name`: free text (spaces and CJK are fine), shown
   first in `runq ps` and renamable with `runq rename <jb…> "<name>"`. `note:` is
   read as `name:` with a warning. Note templates (`{{date}}`, `{{sweep}}`,
@@ -23,6 +56,10 @@
 
 ### Changes
 
+- One verb per thing: `runq show <jb…|tk…|cs…|dr…|pj…|name>` (a job prints its
+  run table), `runq archive <id> [--restore]`, `runq dashboard`,
+  `runq project [file]` (prints the `pj…` id or the keys that changed),
+  `runq --version`.
 - Projects have an immutable id (`pj…`) next to their name; every command and
   job.yaml `project:` accept the name, the id or a unique id prefix. Upgrading
   assigns ids to existing projects. `runq rename <pj…|name> <new>` keeps the id,

@@ -7,7 +7,7 @@ step, then act or report; one retry is usually enough to tell a blip from a faul
 |---|---|---|
 | `dial unix …runq.sock: … no such file or directory` / `connection refused` | runq service not running | `runq serve status` → `runq serve -d` |
 | `… (PID n) exists but is not responding` | service hung | `runq serve restart` |
-| `context deadline exceeded` on submit / logs / task show | the service is waiting on SSH to the target | `runq target show <name>`; one `ssh <host> true`; report "unconfirmed"; restart the service once if the target itself is reachable |
+| `context deadline exceeded` on submit / logs / show | the service is waiting on SSH to the target | `runq target show <name>`; one `ssh <host> true`; report "unconfirmed"; restart the service once if the target itself is reachable |
 | `ssh: handshake failed: unable to authenticate` | no usable key | `ssh-add <key>` (agent is used first) or fix the key path in the target |
 | `key … is passphrase-protected — add it to ssh-agent` | encrypted key, no agent | `ssh-add <key>` |
 | `unknown host key for …` | first contact / rotated keys | `runq target connect <name>` |
@@ -16,13 +16,13 @@ step, then act or report; one retry is usually enough to tell a blip from a faul
 | `handshake failed` although `ssh <host>` works in your shell | the service started without your ssh-agent | `runq serve restart` from a shell with `SSH_AUTH_SOCK` |
 | `template references unknown parameter(s): x` | template uses `x` but this job gives it no value (project `default` is not injected) | add `x` to the job's `fixed_params:` (constant) or `sweep:` |
 | `duplicate parameter "x" found across sweep blocks` | `x` in two blocks | keep it in one block; zip pairs in one `list` block |
-| `project "x" already exists` on `project add` | already registered | `runq submit job.yaml --project-file project.yaml` (upserts) |
-| `project "x" is archived` | archived | `runq project unarchive x` |
+| `… was registered as pj… (renamed?)` on `runq project` | the project was renamed | set `project_name:` in the file to the new name |
+| `project "x" is archived` | archived | `runq archive x --restore` |
 | `target "x" is not declared in project … targets` / `is pinned to target` | project home rules | add `x` to the project's `targets:` (and `.rsync` for what to mirror) |
 | `unknown command "daemon"` / `"sweep"` / `"best"` … | removed in v0.6 | see SKILL.md §1 (serve / submit / results) |
 | `unknown flag: --x` | wrong flag | `runq <cmd> --help` — one call, then use it |
 | `runq logs` never returns / killed with 137 | it follows by default | `--no-follow -n N` or `--grep '<re>' -n N` |
-| `runq logs` times out on HPC | SSH slow | retry once; or `ssh <host> tail -n 200 '<log_path>'` (path from `runq task show`) |
+| `runq logs` times out on HPC | SSH slow | retry once; or `ssh <host> tail -n 200 '<log_path>'` (path from `runq show <task_id>`) |
 
 ## State looks wrong
 
@@ -45,7 +45,7 @@ step, then act or report; one retry is usually enough to tell a blip from a faul
   `~/.runq/logs/runq.log`
 - Service log, socket, data dir, API access log: `runq serve status`
 - Task workspace (log, params.json, run.sh, status.json, metrics, results):
-  `runq task show <task_id>` → `task_dir`
+  `runq show <task_id>` → `task_dir`
 - Self-check of this machine's setup: `runq doctor`
 
 ### SSH recovery diagnostics

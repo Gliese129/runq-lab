@@ -1,9 +1,8 @@
-"""Tests for ctx.wandb_like_cfg / ctx.wandb_like_metric — F9.
+"""Tests for ctx.wandb_like_cfg — F9.
 
 Contract recap:
 - Both properties return fresh dicts. No SDK import of wandb.
 - wandb_like_cfg pulls project / name / group / config from ctx.
-- wandb_like_metric returns the latest reported metrics dict, or {}.
 - Returned dicts are copies — user mutation must not poison ctx /
   history.
 
@@ -30,10 +29,8 @@ def test_wandb_helpers_do_not_import_wandb(clean_env, tmp_path, monkeypatch):
 
     # Both properties must succeed even with wandb explicitly disabled.
     cfg = ctx.wandb_like_cfg
-    metric = ctx.wandb_like_metric
 
     assert isinstance(cfg, dict)
-    assert isinstance(metric, dict)
 
 
 # ---- wandb_like_cfg shape ----------------------------------------
@@ -98,43 +95,6 @@ def test_wandb_like_cfg_project_default_when_unset(clean_env, tmp_path, monkeypa
 
 
 # ---- wandb_like_metric shape -------------------------------------
-
-def test_wandb_like_metric_empty_when_no_report(clean_env, tmp_path, monkeypatch):
-    """Before any report(), should be {} (still safe to splat)."""
-    monkeypatch.chdir(tmp_path)
-    ctx = runq.context()
-    assert ctx.wandb_like_metric == {}
-
-
-def test_wandb_like_metric_returns_latest_report(clean_env, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    ctx = runq.context()
-    runq.report({"loss": 0.5, "acc": 0.9}, step=1)
-    runq.report({"loss": 0.4, "acc": 0.95}, step=2)
-    m = ctx.wandb_like_metric
-    assert m == {"loss": 0.4, "acc": 0.95}
-
-
-def test_wandb_like_metric_returns_copy(clean_env, tmp_path, monkeypatch):
-    """Caller mutation of the returned dict must not poison the snapshot."""
-    from runq._report import latest_report_metrics
-    monkeypatch.chdir(tmp_path)
-    ctx = runq.context()
-    runq.report({"loss": 0.5}, step=1)
-    m = ctx.wandb_like_metric
-    m["loss"] = 9999.0
-    m["new"] = "injected"
-    assert latest_report_metrics() == {"loss": 0.5}
-
-
-def test_wandb_like_metric_splat_pattern(clean_env, tmp_path, monkeypatch):
-    """Verify the canonical usage shape works: {**ctx.wandb_like_metric, ...}."""
-    monkeypatch.chdir(tmp_path)
-    ctx = runq.context()
-    runq.report({"loss": 0.5}, step=1)
-    merged = {**ctx.wandb_like_metric, "lr": 1e-4, "loss": 999.0}
-    # User's extras + override should win on collision.
-    assert merged == {"loss": 999.0, "lr": 1e-4}
 
 
 # ---- project wandb config, resume id, rank gating, link ----------

@@ -24,59 +24,6 @@ func newTestRegistry(t *testing.T) *Registry {
 	return NewRegistry(db)
 }
 
-// project.yaml is the source of truth: a hand-edit is picked up on the next
-// Get, and the DB cache refreshes. A broken file falls back to the DB copy.
-func TestGetSyncsFromYAML(t *testing.T) {
-	dir := t.TempDir()
-	r := newTestRegistry(t)
-	ctx := context.Background()
-	if err := r.Add(ctx, Config{ProjectName: "p", WorkingDir: dir, CmdTemplate: "python a.py {{args}}"}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Hand-edit the yaml (CLI persona).
-	yamlPath := filepath.Join(dir, "project.yaml")
-	edited := "project_name: p\nworking_dir: " + dir + "\ncommand_template: python b.py {{args}}\n"
-	if err := os.WriteFile(yamlPath, []byte(edited), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := r.Get(ctx, "p")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.CmdTemplate != "python b.py {{args}}" {
-		t.Fatalf("yaml edit not picked up: %q", got.CmdTemplate)
-	}
-
-	// Cache refreshed: remove the file — Get must now serve the synced copy.
-	os.Remove(yamlPath)
-	got, _ = r.Get(ctx, "p")
-	if got.CmdTemplate != "python b.py {{args}}" {
-		t.Fatalf("DB cache not refreshed: %q", got.CmdTemplate)
-	}
-
-	// Broken yaml → fall back to DB, project must not vanish.
-	os.WriteFile(yamlPath, []byte("::not yaml::"), 0o644)
-	got, err = r.Get(ctx, "p")
-	if err != nil || got.CmdTemplate != "python b.py {{args}}" {
-		t.Fatalf("broken yaml must fall back to DB: %v %+v", err, got)
-	}
-
-	// POLICY (deep-test P2 fix): a yaml declaring a DIFFERENT project_name
-	// does not sync AT ALL. Multiple projects legitimately share a
-	// working_dir (--project-file submissions), and the old behavior —
-	// adopt the file's content, force the identity back to the DB key —
-	// was exactly the cross-project config clobber. Renames go through
-	// Rename(); a mismatched file is simply not ours, so the DB copy
-	// (still python b.py from the sync above) stands untouched.
-	os.WriteFile(yamlPath, []byte("project_name: renamed\nworking_dir: "+dir+"\ncommand_template: python c.py {{args}}\n"), 0o644)
-	got, _ = r.Get(ctx, "p")
-	if got.ProjectName != "p" || got.CmdTemplate != "python b.py {{args}}" {
-		t.Fatalf("differently-named yaml must not sync: %+v", got)
-	}
-}
-
 // Archive guard: a project with live work must not be hidden — its jobs
 // would cascade out of the global lists while still holding queue slots.
 // paused counts as active (resumable = forgettable).
@@ -115,26 +62,21 @@ func TestProjectArchiveRefusesActiveJobs(t *testing.T) {
 	}
 }
 
-func TestCommandlessProjectReloads(t *testing.T) {
+// rc6 explicit upsert: the registration is the truth; a hand-edited
+// project.yaml changes nothing until `runq project <file>` registers it.
+func TestGetIgnoresProjectYAMLOnDisk(t *testing.T) {
 	r := newTestRegistry(t)
 	ctx := context.Background()
 	dir := t.TempDir()
 	if err := r.Add(ctx, Config{ProjectName: "p", Target: "local", WorkingDir: dir, CmdTemplate: "echo old"}); err != nil {
 		t.Fatal(err)
 	}
-	data := []byte("project_name: p\ntarget: local\nworking_dir: " + dir + "\nenvironment: {MARK: new}\n")
+	data := []byte("project_name: p\ntarget: local\nworking_dir: " + dir + "\ncommand: echo new\n")
 	if err := os.WriteFile(filepath.Join(dir, "project.yaml"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := r.Get(ctx, "p")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.CmdTemplate != "" || cfg.Environment["MARK"] != "new" {
-		t.Fatalf("commandless YAML ignored: %+v", cfg)
-	}
-	cached, err := r.GetCached(ctx, "p")
-	if err != nil || cached.CmdTemplate != "" {
-		t.Fatalf("cache not updated: %+v %v", cached, err)
+	if err != nil || cfg.CmdTemplate != "echo old" {
+		t.Fatalf("Get must not read project.yaml: %+v %v", cfg, err)
 	}
 }

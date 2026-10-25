@@ -31,7 +31,7 @@ import (
 
 var targetCmd = &cobra.Command{
 	Use:   "target",
-	Short: "Configure compute targets (add, show, check, connect, select)",
+	Short: "Configure compute targets (add, show, check, connect)",
 }
 
 var targetUseCmd = &cobra.Command{
@@ -162,4 +162,5 @@ func init() {
 	targetCmd.AddCommand(targetUseCmd, connectCmd, targetDisconnectCmd, targetRmCmd)
 	targetCmd.GroupID = groupManagement
 	rootCmd.AddCommand(targetCmd)
+	retire(targetUseCmd, "pass `-t <target>` to the command that needs it; the default target is default_target in ~/.runq/config.yaml")
 }

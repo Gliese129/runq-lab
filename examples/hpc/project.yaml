@@ -16,7 +16,7 @@
 #   runq connect tsubame
 #
 # Submit:
-#   runq submit job.yaml --project-file project.yaml -t tsubame --dry
+#   runq project project.yaml && runq draft job.yaml -t tsubame
 #   runq submit job.yaml --project-file project.yaml -t tsubame
 
 project_name: llm-eval

@@ -207,6 +207,6 @@ func init() {
 	resultsCmd.Flags().Bool("json", false, "output the wire response verbatim")
 	resultsCmd.Flags().StringP("target", "t", "", "Compute target (for target-scoped resolution)")
 
-	resultsCmd.GroupID = groupCore
+	defer retire(resultsCmd, "use `runq view --job <jb…>`")
 	rootCmd.AddCommand(resultsCmd)
 }

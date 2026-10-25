@@ -5,7 +5,7 @@ Conventions: job ids look like `jb…`, task ids like `tk…` — take them from
 `--fresh` (global) forces one scheduler probe before the read (rate-limited
 server-side). Errors say what is wrong and how to fix it, and exit non-zero.
 `runq <command> --help` is always the authoritative, current form.
-When the service serves the dashboard, `submit`, `ps` and `task show` JSON carry a
+When the service serves the dashboard, `submit`, `ps` and `show` JSON carry a
 `url` for each job/task page (text output prints a `dashboard:` line).
 
 ## Run an experiment
@@ -18,8 +18,6 @@ When the service serves the dashboard, `submit`, `ps` and `task show` JSON carry
 | `runq draft discard dr…` | Delete an open draft |
 | `runq submit dr… [--rev N] --json` | Freeze the draft into a job → `{"job_id", "total_tasks", "draft_id", "url"}`; submitting it again returns the same job |
 | `runq submit [job.yaml \| . \| -]` (at a terminal) | Plan the file as a draft and show it, then one key: `s` submit, `e` edit in `$EDITOR`, `p` pick the project, `q` quit keeping the draft. No argument starts from a template. Outside a terminal a job file is refused — use `runq draft` |
-| `runq submit <job.yaml \| .> --dry` | Older one-step preview; prefer `runq draft` |
-| `runq submit <job.yaml \| .> --json` | Submit → `{"job_id", "total_tasks", "url"}`. `-t <target>` overrides the target (`-t` > `job.target` > `project.target`) · `-n/--note` job name · `--project-file project.yaml` registers/updates the project first (also on `--dry`) · `--no-preflight` skips submit-time checks |
 | `runq kill <task_id \| job_id>` | Cancel a task, or every task of a job |
 
 ## Watch it
@@ -30,22 +28,20 @@ When the service serves the dashboard, `submit`, `ps` and `task show` JSON carry
 | `runq ps <job_id> --json` | That job's tasks: run name, status, scheduler state, queue, step, elapsed, params |
 | `runq ps <job_id> --fresh --json` | Same, after forcing a scheduler probe |
 | `runq export <jb…> [-o file]` | The job as job.yaml `tasks:` rows (fixed_params = baseline, rows = differences); submitting it reproduces the plan |
-| `runq task show <task_id>` | One task as JSON: command, dirs, external id, status source, links |
+| `runq show <jb… \| tk… \| cs… \| dr… \| pj… \| project>` | One thing by id (unique prefix is enough): a job with its run table, a task as JSON (command, dirs, external id, status source, links), a consumer, a draft, a project |
 | `runq logs <task_id> --no-follow -n 200` | Last 200 log lines, then exit |
 | `runq logs <task_id> --grep '<regex>' -n 20` | Last 20 lines matching an extended regex, grepped on the target |
 | `runq logs <task_id>` | Tail **and follow** (blocks — interactive use only) |
-| `runq results <job_id> --json` | Result rows written by `runq.record(...)` |
-| `runq open [job_id \| task_id]` | Print the dashboard page URL and open it in the browser (no id → dashboard home) |
+| `runq view --job <job_id> --json` | Result rows written by `runq.record(...)` |
+| `runq dashboard` | Print the dashboard URL and open it in the browser; job, task and draft pages are linked from `show`, `ps` and `draft` |
 
 ## Projects (one per code base)
 
 | Command | What it does |
 |---|---|
-| `runq project add -f project.yaml` | Register a project (`project add .` reads `./project.yaml`; `--dir`/`--cmd`/`-t` for a flag-only project) |
-| `runq submit job.yaml --project-file project.yaml` | Update an existing project from its YAML (upsert), then submit |
-| `runq project ls` / `runq project show <id\|name>` | List (with `pj…` ids) / inspect (alias `list`) |
-| `runq project archive <name>` / `runq project unarchive <name>` | Hide a project and its jobs from default lists — reversible |
-| `runq job archive <job_id>` / `runq job unarchive <job_id>` | Same, for one job |
+| `runq project [project.yaml]` | Register or update the project the file names (default `./project.yaml`); prints its `pj…` id or what changed. runq never re-reads the file on its own |
+| `runq project ls` / `runq show <pj… \| name>` | List (with `pj…` ids) / inspect |
+| `runq archive <pj… \| name \| jb…> [--restore]` | Hide a project (and its jobs) or one job from default lists — reversible |
 | `runq rename <jb… \| pj… \| project-name> <new-name>` | Rename a job or a project; ids (and directories) never change |
 
 ## Sections (how a project's jobs are grouped)
@@ -74,7 +70,6 @@ a job may carry its own `command`, `target` and `preflight`.
 | `runq target disconnect <name>` | Stop the forward |
 | `runq target rm <name>` | Remove a target (refused while a project uses it; running tasks finish, old jobs stay readable) |
 | `runq target show [<name>]` | Current definition (alias `ls`) |
-| `runq target use <name> [-p]` | Scope *queries* to a target (`-p` persists); never changes where a submit goes |
 
 To change a target, edit `~/.runq/config.yaml` and run `runq target check <name>`;
 the service hot-reloads the file.
@@ -88,8 +83,9 @@ the service hot-reloads the file.
 | `runq serve restart` / `runq serve stop` | Restart (always backgrounds) / stop |
 | `runq doctor` | Self-check of this machine's setup, with fixes |
 | `runq skill install [--dir <root>]` | Install the agent skill into `~/.codex/skills/runq` and `~/.claude/skills/runq` (re-run after upgrading); `runq skill show [file]` prints it |
-| `runq config list` / `runq config get <key>` / `runq config set <key>=<value>` | Global keys such as `data_path`, `default_target` |
-| `runq version` | Build version |
+| `runq --version` | Build version |
+
+Global settings (`default_target`, targets and their `data_path`) live in `~/.runq/config.yaml`; edit the file (`runq doctor` prints its path, `runq target check` validates it).
 
 `runq serve` is not `runqd`: runqd is the Linux GPU executor installed
 separately on GPU machines. With no targets configured the service still
@@ -125,8 +121,8 @@ walks project → job → confirmation.
 | `runq view ls --json` | List saved views |
 | `runq view rm <name> --project <project>` | Remove a view |
 | `runq consumer add <job_id> <name> -- python score.py` | Prepare a manually started scorer |
-| `runq consumer ls <job_id>` | Consumer states (JSON) |
-| `runq consumer show <consumer_id>` | Identity, status and run.sh path (JSON) |
+| `runq ps <job_id>` | Lists the job's consumers under its tasks |
+| `runq show <consumer_id>` | Identity, status and run.sh path (JSON) |
 | `runq kill <consumer_id>` | Cancel a consumer independently of tasks |
 
 Each task executes once; fix a failed task and submit a new task.

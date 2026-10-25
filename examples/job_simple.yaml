@@ -1,5 +1,5 @@
 # Minimal job.yaml — single grid sweep, no overrides.
-# Preview: runq submit job_simple.yaml --dry   → lr(3) × batch_size(2) = 6 tasks
+# Preview: runq draft job_simple.yaml   → lr(3) × batch_size(2) = 6 tasks
 project: resnet50
 sweep:
   - method: grid

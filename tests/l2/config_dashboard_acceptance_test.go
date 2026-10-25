@@ -24,67 +24,6 @@ type cliFixture struct {
 	env         []string
 }
 
-func TestConfigKeysDefaultsAndRoundTrips(t *testing.T) {
-	fx := newCLIFixture(t)
-
-	// mode is dead (D9): the surviving keys are data_path + default_target.
-	if got := strings.TrimSpace(fx.run("config", "get", "default_target")); got != "" {
-		t.Fatalf("missing config should be unconfigured, got default %q", got)
-	}
-
-	fx.run("target", "add", "my-lab", "--gpus=0")
-	fx.run("config", "set", "default_target=my-lab")
-	if got := strings.TrimSpace(fx.run("config", "get", "default_target")); got != "my-lab" {
-		t.Fatalf("default_target should round-trip, got %q", got)
-	}
-
-	dataPath := filepath.Join(fx.dataDir, "custom-data")
-	fx.run("config", "set", "data_path="+dataPath)
-	if got := strings.TrimSpace(fx.run("config", "get", "data_path")); got != dataPath {
-		t.Fatalf("data_path should round-trip, got %q want %q", got, dataPath)
-	}
-
-	list := fx.run("config", "list")
-	for _, want := range []string{"default_target", "my-lab", "data_path", dataPath} {
-		if !strings.Contains(list, want) {
-			t.Fatalf("config list should contain %q; output:\n%s", want, list)
-		}
-	}
-}
-
-func TestConfigSetKeepsExistingHPCSection(t *testing.T) {
-	fx := newCLIFixture(t)
-	configPath := fx.configPath()
-
-	initial := strings.Join([]string{
-		"data_path: " + filepath.ToSlash(filepath.Join(fx.dataDir, "data")),
-		"targets:",
-		"  - name: my-lab",
-		"    scheduler: slurm",
-		"hpc:",
-		"  submit_template: sbatch --wrap '{{cmd}}'",
-		"  partition: debug",
-		"",
-	}, "\n")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		t.Fatalf("create config directory: %v", err)
-	}
-	if err := os.WriteFile(configPath, []byte(initial), 0o644); err != nil {
-		t.Fatalf("write config with hpc section: %v", err)
-	}
-
-	fx.run("config", "set", "default_target=my-lab")
-	after, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("read config after set: %v", err)
-	}
-	for _, want := range []string{"hpc:", "submit_template:", "partition: debug"} {
-		if !strings.Contains(string(after), want) {
-			t.Fatalf("config set removed hpc section content %q; file:\n%s", want, string(after))
-		}
-	}
-}
-
 func TestDashboardConfigAPIUsesDashboardNamespace(t *testing.T) {
 	fx := newCLIFixture(t)
 	dataPath := filepath.Join(fx.dataDir, "configured-data")

@@ -45,7 +45,7 @@ func TestWriteYAMLScaffoldsPreflight(t *testing.T) {
 	if pf == nil {
 		t.Fatal("scaffold block not parsed into Preflight")
 	}
-	if !pf.EnabledOrDefault() || !pf.ImportsOrDefault() || pf.WandbOrDefault() || pf.ExtraRunOrEmpty() != "" {
+	if !pf.EnabledOrDefault() || !pf.ImportsOrDefault() || pf.ExtraRunOrEmpty() != "" {
 		t.Fatalf("scaffold semantics differ from defaults: %+v", pf)
 	}
 	if len(pf.HF) != 1 || pf.HF[0] != "{{param.model_name}}" {

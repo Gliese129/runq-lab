@@ -16,8 +16,8 @@ Quick start:
 
 ```bash
 cp project.yaml job_simple.yaml ~/my-code/ && cd ~/my-code   # edit both
-runq project add -f project.yaml
-runq submit job_simple.yaml --dry   # preview the exact expansion — free
+runq project project.yaml
+runq draft job_simple.yaml          # preview the exact expansion — free
 runq submit job_simple.yaml --json
 ```
 

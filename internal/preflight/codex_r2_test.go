@@ -3,7 +3,6 @@ package preflight
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -99,54 +98,6 @@ func TestSysPathMirrorsScriptDir(t *testing.T) {
 		}
 	}
 	t.Fatal("no imports result")
-}
-
-// Codex r2 #4: a python3-only host (no `python` alias) must still run
-// contract checks for pure-shell entries — the probe picks the
-// interpreter at runtime instead of hardcoding "python".
-func TestPython3OnlyHost(t *testing.T) {
-	real := probePython(t)
-	realPath, err := exec.LookPath(real)
-	if err != nil {
-		t.Skip("no python")
-	}
-	bin := t.TempDir()
-	link := func(name, target string) {
-		if err := os.Symlink(target, filepath.Join(bin, name)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// A PATH with ONLY python3 (never `python`) + the shell utilities the
-	// probe chain needs.
-	link("python3", realPath)
-	for _, tool := range []string{"bash", "sh", "rm", "tr"} {
-		if p, err := exec.LookPath(tool); err == nil {
-			link(tool, p)
-		}
-	}
-	t.Setenv("PATH", bin)
-	if _, err := exec.LookPath("python"); err == nil {
-		t.Skip("python still on PATH; cannot simulate python3-only host")
-	}
-
-	dir := t.TempDir()
-	wandbOn := true
-	proj := &project.Config{ProjectName: "p", WorkingDir: dir, CmdTemplate: "echo hi",
-		Preflight: &project.PreflightConfig{Wandb: &wandbOn}}
-
-	pf := DefaultPreflight()
-	pf.Env = map[string]string{"WANDB_API_KEY": "k"}
-	var report Report
-	results := pf.probeChecks(context.Background(), proj, "echo hi", &report)
-	for _, c := range results {
-		if c.Name == "wandb" {
-			if c.Status != "passed" {
-				t.Fatalf("wandb on python3-only host: %+v", c)
-			}
-			return
-		}
-	}
-	t.Fatalf("no wandb result on python3-only host: %+v", results)
 }
 
 // The single remaining Go-side read is ctx-bounded (Codex r3): a slow

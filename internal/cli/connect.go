@@ -53,6 +53,7 @@ func init() {
 		cmd.Flags().String("remote-binary", "", "Matching remote-platform binary for unpublished/development versions")
 		cmd.Flags().Duration("timeout", 2*time.Minute, "Total timeout per target, including forward readiness")
 	}
+	retire(connectAliasCmd, "use `runq target connect`")
 }
 
 var connectAliasCmd = &cobra.Command{
@@ -287,7 +288,7 @@ func setupRemoteCLI(ctx context.Context, fsys *rfs.SSHFS, targetName, controller
 	if err := fsys.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
-	stdout, _, exit, err := fsys.Exec(ctx, utils.ShellQuote(binPath)+" version")
+	stdout, _, exit, err := fsys.Exec(ctx, utils.ShellQuote(binPath)+" --version")
 	if binary != "" || err != nil || exit != 0 || strings.TrimSpace(string(stdout)) != version.Version || version.Version == "dev" {
 		if err := installRemoteBinary(ctx, fsys, binPath, binary); err != nil {
 			return "", err
@@ -385,7 +386,7 @@ func installRemoteBinaryData(ctx context.Context, fsys remoteBinaryInstaller, bi
 	}
 	// Executing only the temporary file validates platform and exact version;
 	// the current executable stays intact on every failure.
-	out, se, exit, err := fsys.Exec(ctx, utils.ShellQuote(tmp)+" version")
+	out, se, exit, err := fsys.Exec(ctx, utils.ShellQuote(tmp)+" --version")
 	if err != nil {
 		return fmt.Errorf("verify temporary executable: %w", err)
 	}

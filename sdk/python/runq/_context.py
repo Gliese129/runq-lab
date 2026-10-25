@@ -68,7 +68,7 @@ class Context:
 
     Populated from `RUNQ_*` env vars (daemon-injected) plus a local
     `params.json`. Lazy users mostly interact via module-level helpers
-    (`runq.log_metric`, `runq.report`, ...) which pull state from the
+    (`runq.report`, `runq.record`, ...) which pull state from the
     singleton; this struct is the canonical home of all SDK state.
 
     Fields are kept descriptive on purpose — debugging from `print(ctx)`
@@ -102,11 +102,9 @@ class Context:
     # ---- step bookkeeping (step 6) ----
     #
     # Single source of truth for "what step is this?". Maintained by:
-    # - ``report(metrics, step=N)`` — explicit step writes back here.
-    # - ``log_metric(..., step=N)`` — explicit step writes back here too,
-    #   so the two helpers stay in sync.
+    # - ``report(metrics, step=N)`` — an explicit step writes back here.
     #
-    # When None, log_metric / report write step=None to jsonl. There is
+    # When None, report writes step=None to jsonl. There is
     # NO auto-increment counter: pass step explicitly when you want one.
     current_step: int | None = None
 
@@ -131,14 +129,6 @@ class Context:
             raise ValueError("invalid job task snapshot")
         return snapshot
 
-    def get(self, name: str, default: Any = _NO_DEFAULT) -> Any:
-        """Look up a param; the default must be given (see ParamDict.get).
-
-        Equivalent to ``ctx.params.get(name, default)``.
-        """
-        params = self.params if isinstance(self.params, ParamDict) else ParamDict(self.params)
-        return params.get(name, default)
-
     # ---- wandb-like shape helpers (F9) ----
     #
     # SDK never imports wandb. These properties produce dicts shaped to
@@ -146,8 +136,7 @@ class Context:
     # ``wandb.log(...)``. User owns the wandb calls themselves.
     #
     # Kept inline (rather than delegated to a sibling module) so the
-    # only lazy import is the one ``wandb_like_metric`` needs for
-    # ``_report.latest_report_metrics``. No ``wandb`` import anywhere.
+    # SDK has no ``wandb`` import anywhere.
 
     @property
     def wandb_like_cfg(self) -> dict:
@@ -228,26 +217,6 @@ class Context:
             from ._link import link
             link("wandb", url)
 
-    @property
-    def wandb_like_metric(self) -> dict:
-        """Latest reported metrics for ``wandb.log({**ctx.wandb_like_metric, ...})``.
-
-        Empty dict if no report has happened yet. Caller merges their
-        own extras at the call site::
-
-            wandb.log({**ctx.wandb_like_metric, "lr": lr}, step=epoch)
-
-        The returned dict is a copy — runq's internal history is not
-        exposed to mutation.
-        """
-        # Lazy import to avoid context ↔ report cycle (_report imports
-        # from _context at module load).
-        from . import _report
-        return _report.latest_report_metrics()
-
-
-# ---- wandb helpers ----
-
 def _load_wandb_project_cfg() -> dict:
     """Project-level ``wandb:`` block (runq writes it per task); {} if absent."""
     path = os.environ.get("RUNQ_WANDB_CONFIG_FILE")
@@ -325,8 +294,8 @@ def context() -> Context:
     modules to consume.
 
     Returns the :class:`Context`. Lazy users usually do not need to keep
-    the return value because module-level helpers (``runq.log_metric``,
-    ``runq.report``) read the singleton themselves.
+    the return value because module-level helpers (``runq.report``,
+    ``runq.record``) read the singleton themselves.
 
     Modes:
 

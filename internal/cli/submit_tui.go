@@ -29,6 +29,7 @@ type submitTUI struct {
 	projects      func() ([]string, error) // candidates, best first
 	req           backend.DraftRequest
 	skipPreflight bool
+	fileWarning   func(project string) string // project.yaml changed since registration
 
 	draft   *backend.DraftResult
 	planErr error
@@ -79,6 +80,11 @@ func (t *submitTUI) plan() {
 	}
 	t.draft = res
 	t.req.Project = res.Draft.Project
+	if t.fileWarning != nil {
+		if w := t.fileWarning(res.Draft.Project); w != "" {
+			res.Warnings = append(res.Warnings, strings.TrimPrefix(w, "warning: "))
+		}
+	}
 }
 
 func (t *submitTUI) render() {

@@ -49,6 +49,14 @@ func init() {
 		})
 	}})
 	rootCmd.AddCommand(command)
+	for _, sub := range command.Commands() {
+		switch sub.Name() {
+		case "ls":
+			retire(sub, "`runq ps <jb…>` lists a job's consumers under its tasks")
+		case "show":
+			retire(sub, "use `runq show <cs…>`")
+		}
+	}
 }
 func consumerLogs(cmd *cobra.Command, be backend.Backend, id string, noFollow bool) error {
 	b := be.(backend.Consumers)

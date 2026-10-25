@@ -29,3 +29,17 @@ func TestNormalizeLegacyName(t *testing.T) {
 		t.Fatalf("a plain name needs no warning: %v", warns)
 	}
 }
+
+func TestNormalizeLegacyJobPreflight(t *testing.T) {
+	off := false
+	c := JobConfig{Name: "x", Preflight: &PreflightOverride{Imports: &off}}
+	if warns := c.NormalizeLegacy(); len(warns) != 1 || c.Preflight != nil || !strings.Contains(warns[0], "--no-preflight") {
+		t.Fatalf("job-level preflight must be dropped with a warning: %v %+v", warns, c.Preflight)
+	}
+	run := "test -f x"
+	c = JobConfig{Name: "x", Preflight: &PreflightOverride{ExtraRun: &run}}
+	c.NormalizeLegacy()
+	if _, err := Rows(&c); err == nil || !strings.Contains(err.Error(), "extra_run") {
+		t.Fatalf("job-level extra_run must be refused, got %v", err)
+	}
+}
