@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/gliese129/runq-lab/internal/utils"
 )
 
 // placeholderRe matches {{name}} style placeholders in command templates.
@@ -38,13 +40,7 @@ func RenderExcluding(template string, params TaskParams, exclude map[string]bool
 
 // TruthyFlag reports whether a flag-style param value means "the switch
 // is on". Anything else — false/0/no/None/empty — means off.
-func TruthyFlag(v any) bool {
-	switch strings.ToLower(FormatValue(v)) {
-	case "true", "1", "yes", "y", "on":
-		return true
-	}
-	return false
-}
+func TruthyFlag(v any) bool { return utils.Truthy(FormatValue(v)) }
 
 // RenderWithFlags is RenderExcluding plus store_true semantics:
 // `flagParams` names params declared `style: flag` (argparse store_true

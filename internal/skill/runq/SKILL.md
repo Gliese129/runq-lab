@@ -118,7 +118,8 @@ Give every referenced `{{x}}` a value in the job — otherwise submit reports
 `template references unknown parameter(s)`.
 
 For scheduler knobs, annotate `{ name: h_rt, scope: scheduler }` in the project and
-use `{{param.h_rt}}` in the target's `submit_template`. `choices`, when present, are
+use `{{param.h_rt}}` in the target's `submit_template`; wrap a flag that only some jobs
+need in `[[...]]` (e.g. `[[-ar {{param.ar_id}}]]` for a reservation). `choices`, when present, are
 enforced. Keep each param in one sweep block. Target precedence: `-t` > `job.target` >
 `project.target`; `target use` and `RUNQ_TARGET` scope queries only.
 

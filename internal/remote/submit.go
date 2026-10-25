@@ -54,9 +54,13 @@ func renderSubmitCmd(tmpl string, t submitplan.PlannedTask, plan submitplan.Plan
 		"log_path": t.LogPath,
 	}
 	for name, value := range t.Params {
+		if value == nil {
+			vars["param."+name] = "" // YAML null counts as unset for [[...]] segments
+			continue
+		}
 		vars["param."+name] = fmt.Sprintf("%v", value)
 	}
-	return utils.Render(tmpl, vars)
+	return utils.RenderSubmit(tmpl, vars)
 }
 
 // envPrelude assembles this lane's execution environment through THE
@@ -219,7 +223,7 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	if len(plan.Tasks) > 0 {
 		if _, err := renderSubmitCmd(b.Cfg.SubmitTemplate, plan.Tasks[0], plan, "<run_sh>"); err != nil {
 			return "", nil, fmt.Errorf(
-				"%w\nHint: every {{param.NAME}} in submit_template must exist as a task param — add it to fixed_params (same value for all tasks) or as a sweep column (per-task values). Try `runq hpc submit --dry-run` to preview",
+				"%w\nHint: every {{param.NAME}} in submit_template must exist as a task param — add it to fixed_params (same value for all tasks) or as a sweep column (per-task values), or wrap the flag in [[...]] (e.g. [[-ar {{param.ar_id}}]]) to make it optional. Preview with `runq submit job.yaml --dry`",
 				err)
 		}
 	}

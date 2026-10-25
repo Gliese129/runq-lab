@@ -508,3 +508,41 @@ func TestSingleTaskKillResolutionRejectsAnotherGeneration(t *testing.T) {
 		t.Fatalf("cross-generation point resolution error = %v", err)
 	}
 }
+
+// Optional [[...]] segments end to end: with ar_id/no-requeue set the flags
+// reach the submit command; unset, they vanish. Either way the params stay
+// out of the training command (a reservation id is for the scheduler).
+func TestSubmitCommandOptionalSegments(t *testing.T) {
+	cfg := &config.TargetConfig{
+		SubmitTemplate: "qsub [[-ar {{param.ar_id}}]] [[--no-requeue]] -N {{name}} {{run_sh}}",
+		SubmitIDRegex:  `job ([0-9]+)`,
+		KillTemplate:   "cancel {{ext_id}}",
+	}
+	runner := func(ctx context.Context, command string) (string, error) { return "", nil }
+	b, proj, jobCfg := newTestBackend(t, cfg, runner)
+	proj.CmdTemplate = "python x.py {{args}}"
+
+	jobCfg.FixedParams = map[string]any{"ar_id": 9245, "no-requeue": true}
+	_, rows := prepareTasks(t, b, proj, jobCfg)
+	captured := readSubmitCommand(t, b, rows[0])
+	if !strings.Contains(captured, "qsub -ar '9245' --no-requeue -N ") {
+		t.Errorf("segments not rendered: %q", captured)
+	}
+	if strings.Contains(rows[0].Command, "ar_id") || strings.Contains(rows[0].Command, "requeue") {
+		t.Errorf("scheduler params leaked into the task command: %q", rows[0].Command)
+	}
+
+	jobCfg.FixedParams = map[string]any{"ar_id": "", "no-requeue": false}
+	_, rows = prepareTasks(t, b, proj, jobCfg)
+	captured = readSubmitCommand(t, b, rows[0])
+	if !strings.Contains(captured, "qsub -N ") {
+		t.Errorf("empty/falsy segments not dropped: %q", captured)
+	}
+
+	jobCfg.FixedParams = nil
+	_, rows = prepareTasks(t, b, proj, jobCfg)
+	captured = readSubmitCommand(t, b, rows[0])
+	if !strings.Contains(captured, "qsub -N ") {
+		t.Errorf("unset segments not dropped: %q", captured)
+	}
+}

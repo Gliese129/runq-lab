@@ -93,15 +93,38 @@ runq kill <job_id|task_id>       # cancels via your kill_template
 
 ## Advance reservations (SGE `qsub -ar`)
 
-A reservation is modelled as its own target, not as a runq feature:
+A reservation is a scheduler param on the same target, so code, sync and
+target stay as they are. Wrap the flag in an optional segment:
 
-1. In `~/.runq/config.yaml`, copy the base target under a new name (e.g.
-   `tsubame-reservation`), keep host/user/status/kill templates, and add
-   `-ar <id>` plus the reservation's resource shape to `submit_template`
-   (check it with `qrstat -ar <id>`).
-2. `runq target check tsubame-reservation`, and list it in the project's `targets:`.
-3. Point the job at it — `target: tsubame-reservation` in job.yaml or
-   `-t tsubame-reservation` — and confirm `-ar <id>` appears in the `--dry` submit line.
+```yaml
+# ~/.runq/config.yaml (the TSUBAME preset already has it)
+submit_template: "qsub -g {{param.group}} [[-ar {{param.ar_id}}]] -l {{param.node_kind}}=1 ..."
+```
+
+```yaml
+# job.yaml — check the reservation's resource shape with `qrstat -ar <id>`
+fixed_params: { group: your-group, ar_id: "9245", node_kind: node_f, h_rt: "4:00:00" }
+```
+
+Leave `ar_id` out (or set it to `""`) and `-ar` is not passed. Confirm `-ar '9245'`
+appears in the `--dry` submit line.
+
+## Optional segments in `submit_template`
+
+`[[...]]` is kept or dropped as a whole:
+
+| Segment | Kept when | Renders |
+|---|---|---|
+| `[[-ar {{param.ar_id}}]]` | `ar_id` is set and not empty | `-ar '9245'` |
+| `[[--no-requeue]]` | `no-requeue` is truthy (`true/1/yes/y/on`) | `--no-requeue` |
+
+- One `{{param.*}}` per segment: write `[[-l h_rt={{param.h_rt}}]] [[-l gpu={{param.g}}]]`,
+  not both in one.
+- A switch segment's param is the flag name without its leading dashes, inner
+  dashes kept (`[[--no-requeue]]` → `no-requeue`).
+- Params in segments are scheduler params: they never reach `{{args}}`.
+  A param also used outside a segment is still required.
+- No nesting or escaping; `runq target check` previews every segment as kept.
 
 Code is mirrored automatically when a job runs on a target other than the
 project's source target (`targets:` + `<working_dir>/.rsync`, see
@@ -122,7 +145,8 @@ params:
 
 ```yaml
 # job.yaml — pair each benchmark with ITS walltime via zip. Every param a
-# template references needs an explicit job value; defaults belong in code.
+# template references outside [[...]] needs an explicit job value; defaults
+# belong in code.
 fixed_params: { node_kind: node_q }
 sweep:
   - method: grid

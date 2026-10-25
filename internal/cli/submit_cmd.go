@@ -31,7 +31,7 @@ var submitCmd = &cobra.Command{
   project: my-code-base
   note: kl-ablation
   command: python train.py            # optional; overrides the project's command
-  target: tsubame-reservation         # optional; must be in the project's targets
+  target: abci                        # optional; must be in the project's targets
   fixed_params: { model: qwen3-8b }   # same value in every task
   sweep:                              # grid = cross product, list = zip rows
     - method: grid
@@ -44,7 +44,7 @@ the command line. Target precedence: -t > job.target > project.target.
 	Example: `  runq submit job.yaml --dry                         # tasks, target, rendered command
   runq submit job.yaml --json                        # {"job_id": ..., "total_tasks": ...}
   runq submit job.yaml --project-file project.yaml   # register/update the project, then submit
-  runq submit job.yaml -t tsubame-reservation --dry  # same job on another declared target`,
+  runq submit job.yaml -t abci --dry                 # same job on another declared target`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		file := args[0]

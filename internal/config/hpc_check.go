@@ -27,11 +27,15 @@ func hpcSampleVars(field string) map[string]string {
 	return vars
 }
 
-// hpcAddParamSamples synthesizes a sample for every {{param.x}} reference.
+// hpcAddParamSamples synthesizes a sample for every {{param.x}} reference and
+// turns every [[--flag]] switch on, so the preview shows each optional segment.
 func hpcAddParamSamples(vars map[string]string, tmpl string) {
 	for _, m := range hpcParamRefRe.FindAllStringSubmatch(tmpl, -1) {
 		key := m[1] // "param.h_rt"
 		vars[key] = "<" + strings.TrimPrefix(key, "param.") + ">"
+	}
+	for _, n := range utils.SegmentSwitchParams(tmpl) {
+		vars["param."+n] = "true"
 	}
 }
 
@@ -55,10 +59,12 @@ func (tc *TargetConfig) CheckHPC() []HPCCheckResult {
 			return HPCCheckResult{name, "skip", "not set"}
 		}
 		vars := hpcSampleVars(field)
+		render := utils.Render
 		if field == "submit_template" {
 			hpcAddParamSamples(vars, tmpl)
+			render = utils.RenderSubmit
 		}
-		out, err := utils.Render(tmpl, vars)
+		out, err := render(tmpl, vars)
 		if err != nil {
 			return HPCCheckResult{name, "fail", fmt.Sprintf("%v (valid: {{%s}} + {{param.*}} on submit_template)", err, strings.Join(HPCPlaceholders[field], "}} {{"))}
 		}

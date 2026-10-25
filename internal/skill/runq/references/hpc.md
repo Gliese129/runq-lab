@@ -65,7 +65,7 @@ params:
   - { name: node_kind, type: str, scope: scheduler, choices: [node_q, node_h, node_f] }
 ```
 ```yaml
-# job.yaml — every referenced param needs a value here (defaults are not injected)
+# job.yaml — every param referenced outside [[...]] needs a value here (defaults are not injected)
 fixed_params: { node_kind: node_q, model: qwen3-8b }
 sweep:
   - method: list
@@ -76,21 +76,26 @@ sweep:
 the submit command, so `$TSUBAME_GROUP`-style references in templates resolve.
 Secrets belong in `<working_dir>/.env`, not `environment:`.
 
-## Advance reservations (SGE `qsub -ar`)
+## Advance reservations (SGE `qsub -ar`) and optional flags
 
-Reservations are not a runq concept — model one as its own target:
+A reservation works best as a param on the same target — code, sync and target
+stay unchanged. The TSUBAME preset carries `[[-ar {{param.ar_id}}]]`; for other
+targets, add that segment to `submit_template`. Then set it per job:
 
-1. In `~/.runq/config.yaml`, copy the base target to a new name
-   (e.g. `tsubame-reservation`), keep host/user/status/kill templates, and add
-   `-ar <id>` plus the reservation's resource shape to `submit_template`
-   (check the shape with `qrstat -ar <id>` or a job already in the reservation).
-2. `runq target check tsubame-reservation`.
-3. `runq submit job.yaml -t tsubame-reservation --dry` and confirm `-ar <id>` is in
-   the rendered submit line. Then submit with the same `-t`.
-4. Confirm placement with `qstat -j <ext_id>` (runq only shows what it sent).
+```yaml
+fixed_params: { ar_id: "9245", node_kind: node_f, h_rt: "4:00:00" }  # shape: qrstat -ar <id>
+```
 
-If the project pins one `target`, a reservation target must be listed in the
-project's `targets:` to be allowed (see below).
+Leave `ar_id` out (or `""`) and `-ar` is not passed. Confirm `-ar '9245'` in the
+`--dry` submit line, and placement with `qstat -j <ext_id>`.
+
+`[[...]]` segments are kept or dropped as a whole:
+- `[[-ar {{param.ar_id}}]]` — kept when the param is set and not empty. One
+  `{{param.*}}` per segment: `[[-l h_rt={{param.h_rt}}]] [[-l gpu={{param.g}}]]`.
+- `[[--no-requeue]]` — a switch; its param is the flag name without leading
+  dashes (`no-requeue`), kept when truthy (`true/1/yes/y/on`).
+- Segment params are scheduler params (never in `{{args}}`); one also used
+  outside a segment stays required.
 
 ## Project home and cross-target sync
 

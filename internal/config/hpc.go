@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/gliese129/runq-lab/internal/utils"
 	"gopkg.in/yaml.v3"
 )
 
@@ -49,17 +50,23 @@ var HPCPlaceholders = map[string][]string{
 // hpcParamRefRe finds {{param.x}} references.
 var hpcParamRefRe = regexp.MustCompile(`\{\{\s*(param\.[\w\-]+)\s*}}`)
 
-// HPCTemplateParamRefs returns the param names referenced as {{param.X}} in a
-// template — these are consumed by the scheduler layer.
+// HPCTemplateParamRefs returns the param names referenced as {{param.X}} or
+// bound by a [[--flag]] switch segment in a template — these are consumed by
+// the scheduler layer.
 func HPCTemplateParamRefs(tmpl string) []string {
 	var names []string
 	seen := map[string]bool{}
-	for _, m := range hpcParamRefRe.FindAllStringSubmatch(tmpl, -1) {
-		n := strings.TrimPrefix(m[1], "param.")
+	add := func(n string) {
 		if !seen[n] {
 			seen[n] = true
 			names = append(names, n)
 		}
+	}
+	for _, m := range hpcParamRefRe.FindAllStringSubmatch(tmpl, -1) {
+		add(strings.TrimPrefix(m[1], "param."))
+	}
+	for _, n := range utils.SegmentSwitchParams(tmpl) {
+		add(n)
 	}
 	return names
 }
@@ -197,7 +204,9 @@ hpc:
   # TSUBAME (UGE). Per-task scheduler knobs live in the sweep and are
   # referenced as {{param.*}} — zip node_kind / h_rt columns with your tasks.
   # Set fixed_params.group in job.yaml to the charged TSUBAME group.
-  submit_template: "qsub -g {{param.group}} -l {{param.node_kind}}=1 -l h_rt={{param.h_rt}} -N {{name}} -o {{task_dir}} -e {{task_dir}} {{run_sh}}"
+  # [[...]] is optional: set fixed_params.ar_id to run inside an advance
+  # reservation; leave it out (or empty) and -ar is not passed.
+  submit_template: "qsub -g {{param.group}} [[-ar {{param.ar_id}}]] -l {{param.node_kind}}=1 -l h_rt={{param.h_rt}} -N {{name}} -o {{task_dir}} -e {{task_dir}} {{run_sh}}"
   submit_id_regex: "Your job ([0-9]+)"
 
   status_template: "qstat"

@@ -4,6 +4,11 @@
 
 ### Changes
 
+- `submit_template` supports optional `[[...]]` segments: `[[-ar {{param.ar_id}}]]`
+  is dropped when `ar_id` is unset or empty, and `[[--no-requeue]]` is emitted
+  only when the `no-requeue` param is truthy. One `{{param.*}}` per segment.
+  Advance reservations now live on the same target as a param (the TSUBAME
+  preset carries `[[-ar {{param.ar_id}}]]`) instead of a separate target.
 - Skill: parameters reach code as command-line flags by default (argparse +
   `{{args}}`), so released code runs without runq; `ctx.params` is the shortcut
   for one-off ablations the researcher calls temporary.
