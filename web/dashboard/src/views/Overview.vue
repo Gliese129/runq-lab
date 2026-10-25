@@ -1,5 +1,6 @@
 <template>
-  <div class="overview">
+  <div class="overview" :class="{ wide }">
+    <div class="main-col">
     <!-- Connection error: the one thing worth interrupting for -->
     <v-slide-y-transition>
       <v-card v-if="!conn.connected.value" color="error" variant="tonal" class="mb-4 pa-3">
@@ -17,6 +18,21 @@
         </div>
       </v-card>
     </v-slide-y-transition>
+
+    <!-- Open drafts: plans waiting for review / submit (runq draft …) -->
+    <section v-if="drafts.length" class="mb-4">
+      <div class="bucket-title">{{ t('drafts.open', { n: drafts.length }) }}</div>
+      <router-link
+        v-for="d in drafts" :key="d.id" class="draft-row"
+        :to="{ name: 'draft', params: { draftId: d.id } }"
+      >
+        <code class="job-id">{{ d.id.slice(0, 10) }}</code>
+        <span class="draft-name text-truncate">{{ d.name || t('drafts.unnamed') }}</span>
+        <span class="text-caption text-on-surface-variant text-truncate">{{ d.project }}</span>
+        <span class="text-caption text-on-surface-variant">{{ t('drafts.runs', d.rows) }}</span>
+        <span class="text-caption text-on-surface-variant">rev {{ d.rev }}<template v-if="d.edited"> · {{ t('drafts.edited') }}</template></span>
+      </router-link>
+    </section>
 
     <!-- Find a job: one search box, then colour chips per project -->
     <v-text-field
@@ -54,7 +70,7 @@
     <template v-else-if="groups.length">
       <section v-for="g in shownGroups" :key="g.bucket" class="mb-4">
         <div class="bucket-title">{{ t('overview.bucket_' + g.bucket) }}</div>
-        <JobList :jobs="g.jobs" :common="common" @open="openJob" />
+        <JobList :jobs="g.jobs" :common="common" :selected-id="wide ? selectedId : ''" @open="openJob" />
       </section>
       <div v-if="hiddenCount > 0" class="text-center mb-4">
         <v-btn variant="text" size="small" @click="showAll = true">
@@ -71,7 +87,7 @@
       <div class="text-h6 mb-1">{{ t('overview.no_projects') }}</div>
       <div class="text-body-2 text-on-surface-variant">{{ t('overview.no_projects_hint') }}</div>
       <div class="mt-4 text-caption text-on-surface-variant">
-        <code>runq submit job.yaml --project-file project.yaml</code>
+        <code>runq project project.yaml</code> · <code>runq draft job.yaml</code>
       </div>
     </v-card>
 
@@ -103,6 +119,12 @@
         />
       </div>
     </div>
+    </div>
+    <!-- Wide screens: the picked job stays visible next to the list -->
+    <div v-if="wide" class="side-col">
+      <JobPreview v-if="selectedId" :key="selectedId" :job-id="selectedId" />
+      <div v-else class="side-empty text-body-2">{{ t('preview.pick') }}</div>
+    </div>
   </div>
 </template>
 
@@ -110,6 +132,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useDisplay } from 'vuetify'
+import { useDraftsQuery } from '@/queries/useDraftQueries'
+import JobPreview from '@/components/JobPreview.vue'
 import { useProjectStore } from '@/stores/projects'
 import { useConnection } from '@/composables/useConnection'
 import { useJobsListQuery } from '@/queries/useJobQueries'
@@ -170,7 +195,23 @@ const shownGroups = computed(() => {
 const hiddenCount = computed(() =>
   filtered.value.length - shownGroups.value.reduce((n, g) => n + g.jobs.length, 0))
 
+// ≥1280px: list + preview side by side (with the nav drawer, three columns);
+// narrower: one column, a click opens the job page.
+const { width } = useDisplay()
+const wide = computed(() => width.value >= 1280)
+const selectedId = ref('')
+watch(jobList, (list) => {
+  if (!selectedId.value && list.length) selectedId.value = list[0].id
+}, { immediate: true })
+
+const draftsQuery = useDraftsQuery()
+const drafts = computed(() => draftsQuery.data.value ?? [])
+
 function openJob(j: JobSummary) {
+  if (wide.value && selectedId.value !== j.id) {
+    selectedId.value = j.id
+    return
+  }
   router.push({ name: 'job-detail', params: { project: j.project, jobId: j.id } })
 }
 
@@ -208,6 +249,25 @@ function sessionStorageSet(k: string, v: string) {
 
 <style scoped>
 .overview { max-width: 1040px; margin: 0 auto; }
+.overview.wide {
+  max-width: none;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 40%); gap: 20px; align-items: start;
+}
+.main-col { min-width: 0; }
+.side-empty { color: rgb(var(--v-theme-on-surface-variant)); padding: 24px; }
+.draft-row {
+  display: grid; grid-template-columns: 100px minmax(0, 1fr) minmax(0, 160px) 64px 110px; gap: 12px; align-items: center;
+  padding: 8px 14px; margin-bottom: 6px; border-radius: 8px; text-decoration: none; color: inherit;
+  background: rgb(var(--v-theme-surface));
+  border: 0.5px dashed rgb(var(--v-theme-outline-variant));
+}
+.draft-row:hover { border-color: rgb(var(--v-theme-on-surface), 0.3); }
+.draft-name { font-size: 14px; }
+.job-id { font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); background: none; padding: 0; }
+@media (max-width: 640px) {
+  .draft-row { grid-template-columns: minmax(0, 1fr) 64px; }
+  .draft-row .job-id, .draft-row > span:nth-child(3), .draft-row > span:nth-child(5) { display: none; }
+}
 .bucket-title {
   font-size: 12px;
   color: rgb(var(--v-theme-on-surface-variant));

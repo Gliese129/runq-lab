@@ -4,7 +4,9 @@
       v-for="j in jobs"
       :key="j.id"
       class="job-row"
-      :class="{ 'with-project': showProject }"
+      :class="{ 'with-project': showProject, selected: j.id === selectedId }"
+      :draggable="draggable ? 'true' : undefined"
+      @dragstart="draggable && onDragStart(j, $event)"
       :style="showProject ? { '--project': color(j.project) } : undefined"
       role="listitem"
       tabindex="0"
@@ -45,10 +47,22 @@ withDefaults(defineProps<{
   /** Per-project words to show muted (see utils/noteTokens). */
   common?: Map<string, Set<string>>
   showProject?: boolean
-}>(), { common: () => new Map(), showProject: true })
+  /** highlighted row (the one shown in the side panel) */
+  selectedId?: string
+  /** rows can be dragged onto a section */
+  draggable?: boolean
+}>(), { common: () => new Map(), showProject: true, selectedId: '', draggable: false })
 const emit = defineEmits<{ open: [job: JobSummary] }>()
 const { t } = useI18n()
 const color = useProjectColors()
+
+/** MIME type of a dragged job id (sections read it on drop). */
+const JOB_DRAG_TYPE = 'application/x-runq-job'
+function onDragStart(j: JobSummary, e: DragEvent) {
+  e.dataTransfer?.setData(JOB_DRAG_TYPE, j.id)
+  e.dataTransfer?.setData('text/plain', j.id)
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
 </script>
 
 <style scoped>
@@ -78,6 +92,8 @@ const color = useProjectColors()
 }
 .job-row:hover,
 .job-row:focus-visible { border-color: rgb(var(--v-theme-on-surface), 0.25); outline: none; }
+.job-row.selected { border-color: rgb(var(--v-theme-primary), 0.7); background: rgb(var(--v-theme-primary), 0.04); }
+.job-row[draggable='true'] { cursor: grab; }
 .job-id { font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); background: none; padding: 0; }
 .job-text { min-width: 0; }
 .job-note { font-size: 14px; }

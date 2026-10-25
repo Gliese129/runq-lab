@@ -284,3 +284,38 @@ func labelValue(v any) string {
 	}
 	return s
 }
+
+// LegacyRunNames names tasks submitted before rc6 (no stored run name):
+// each task takes the name of the planned row with the same params when
+// the stored config still plans one, else its difference from the first
+// task. Returned in the order of params.
+func LegacyRunNames(cfg *JobConfig, params []TaskParams) []string {
+	planned := map[string]string{}
+	if rows, err := Rows(cfg); err == nil {
+		for _, r := range rows {
+			planned[paramsKey(r.Params)] = r.Run
+		}
+	}
+	out := make([]string, len(params))
+	for i, p := range params {
+		if name, ok := planned[paramsKey(p)]; ok {
+			out[i] = name
+		} else if len(params) > 0 {
+			out[i] = DiffName(params[0], p)
+		}
+	}
+	return out
+}
+
+func paramsKey(p TaskParams) string {
+	keys := make([]string, 0, len(p))
+	for k := range p {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k + "\x00" + FormatValue(p[k]) + "\x00")
+	}
+	return b.String()
+}

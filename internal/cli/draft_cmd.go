@@ -82,6 +82,7 @@ its newest 5 open drafts; creating a 6th discards the oldest.`,
 				fmt.Printf("discarded oldest draft %s (5 open drafts per project)\n", id)
 			}
 			printDraftLine(res.Draft)
+			printDashboardLink(os.Stdout, dashboard.DraftURL(dashboardBase(cmd.Context(), d.(backend.Backend)), res.Draft.ID))
 			fmt.Printf("next: runq submit %s\n", res.Draft.ID)
 			return nil
 		})

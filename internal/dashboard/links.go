@@ -38,6 +38,14 @@ func TaskURL(base, project, jobID, taskID string) string {
 	return pageURL(base, "projects", project, jobID, taskID)
 }
 
+// DraftURL is a draft's editor page. Empty base → "".
+func DraftURL(base, draftID string) string {
+	if base == "" || draftID == "" {
+		return ""
+	}
+	return pageURL(base, "drafts", draftID)
+}
+
 // ViewURL is a project view page. Empty base → "".
 func ViewURL(base, project, name string) string {
 	if base == "" || project == "" || name == "" {
@@ -51,5 +59,7 @@ func pageURL(base string, segments ...string) string {
 	for i, s := range segments {
 		escaped[i] = url.PathEscape(s)
 	}
-	return strings.TrimRight(base, "/") + "/" + strings.Join(escaped, "/")
+	// The SPA uses hash routing (createWebHashHistory): a plain path would
+	// load index.html and land on the Overview.
+	return strings.TrimRight(base, "/") + "/#/" + strings.Join(escaped, "/")
 }

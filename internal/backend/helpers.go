@@ -16,6 +16,7 @@ import (
 
 	"github.com/gliese129/runq-lab/internal/logfile"
 
+	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/rfs"
 	"github.com/gliese129/runq-lab/internal/scheduler"
 	"github.com/gliese129/runq-lab/internal/store"
@@ -79,6 +80,7 @@ func BuildJobDetail(job store.JobRow, tasks []store.TaskRow, metricKeys []string
 	for _, task := range tasks {
 		views = append(views, buildTaskView(task, false))
 	}
+	fillLegacyRunNames(job.ConfigJSON, views)
 	return JobDetail{
 		Job:        BuildJobSummary(job, tasks),
 		Tasks:      views,
@@ -846,4 +848,31 @@ func sectionOrUnsorted(name string) string {
 		return store.SectionUnsorted
 	}
 	return name
+}
+
+// fillLegacyRunNames gives pre-rc6 tasks the run names their stored config
+// plans (the same names `runq export` writes), so every view agrees.
+func fillLegacyRunNames(configJSON string, views []TaskView) {
+	missing := false
+	for _, v := range views {
+		if v.RunName == "" {
+			missing = true
+			break
+		}
+	}
+	if !missing {
+		return
+	}
+	var cfg job.JobConfig
+	_ = json.Unmarshal([]byte(configJSON), &cfg)
+	params := make([]job.TaskParams, len(views))
+	for i, v := range views {
+		params[i] = job.TaskParams(v.Params)
+	}
+	names := job.LegacyRunNames(&cfg, params)
+	for i := range views {
+		if views[i].RunName == "" {
+			views[i].RunName = names[i]
+		}
+	}
 }

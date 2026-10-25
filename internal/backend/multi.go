@@ -799,6 +799,7 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 	for i, row := range tasks {
 		detail.Tasks[i] = m.storedTaskView(ctx, row)
 	}
+	fillLegacyRunNames(j.ConfigJSON, detail.Tasks)
 	if len(detail.Tasks) > 0 {
 		detail.Capabilities = detail.Tasks[0].Capabilities
 	}

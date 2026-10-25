@@ -60,7 +60,9 @@ type DraftView struct {
 
 type DraftResult struct {
 	Draft     DraftView `json:"draft"`
-	Table     string    `json:"table"`             // plan table (run × varying params)
+	Table     string    `json:"table"` // plan table (run × varying params)
+	Rows      []job.Row `json:"rows"`  // the same plan, structured (dashboard)
+	Baseline  string    `json:"baseline"`
 	Preview   string    `json:"preview,omitempty"` // full rendered preview (create/edit)
 	Warnings  []string  `json:"warnings,omitempty"`
 	Discarded []string  `json:"discarded,omitempty"`
@@ -172,7 +174,11 @@ func (m *MultiBackend) draftResult(ctx context.Context, d *store.DraftRow) (*Dra
 			order = append(order, p.Name)
 		}
 	}
-	return &DraftResult{Draft: view, Table: job.PlanTable(rows, cfg.Baseline, order)}, nil
+	res := &DraftResult{Draft: view, Table: job.PlanTable(rows, cfg.Baseline, order), Rows: rows}
+	if len(rows) > 0 {
+		res.Baseline = rows[job.BaselineIndex(rows, cfg.Baseline)].Run
+	}
+	return res, nil
 }
 
 func draftView(d *store.DraftRow, cfg job.JobConfig, rows []job.Row) DraftView {

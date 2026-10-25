@@ -76,6 +76,7 @@
 | rc6 第 4 段：草稿表和 API、runq draft、draft ps/show/edit/discard、runq submit dr…（幂等、rev 校验）、每 project 最多 5 个 open 草稿 | verified | run: `go test ./internal/backend/ ./internal/store/ ./internal/dashboard/ ./internal/cli/ ./internal/remote/ ./internal/job/` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-25 04:57) |
 | rc6 第 5 段：人用 TUI（终端里 runq submit job.yaml / - / 无参数从模板开始，先建草稿，计划表加预览，选 project，e 编辑、s 提交、q 退出保留草稿；非终端报错并提示 draft） | verified | run: `go test ./internal/cli/ ./internal/backend/` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-25 05:55) |
 | rc6 第 6 段：CLI 收束（删除/合并命令并给迁移报错、runq show/archive/dashboard、删 --dry 和 config get/set）、旧配置键、SDK 删除、skill 与 CHANGELOG Breaking | verified | human: accepted, "Drop them as planned: preflight.wandb warns and is ignored; job-level preflight: warns and is ignored, extra_run there is an error. Then merge.", covers 研究员确认第 6 段的最后两项（preflight.wandb、job 级 preflight:）按原计划处理并合并；全部 Go/SDK/前端测试通过，本机已安装验证 (2026-10-25 09:36) |
+| rc6 前端：Overview/project 多栏布局、section（可拖拽移动 job）、job 页计划表、草稿编辑页 #/drafts/dr…、删掉网页 project group | verified | run: `cd web/dashboard && /opt/homebrew/opt/node@22/bin/node node_modules/vue-tsc/bin/vue-tsc.js --noEmit && /opt/homebrew/opt/node@22/bin/node node_modules/vitest/vitest.mjs run && cd ../.. && go test ./internal/dashboard/ ./internal/backend/ ./internal/job/` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-25 12:42) |
 
 ## Change history
 

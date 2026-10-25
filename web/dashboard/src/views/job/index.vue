@@ -20,6 +20,7 @@
       <v-tab value="tasks" size="small">
         {{ t('job.tab_tasks') }} ({{ detail.tasks.length }})
       </v-tab>
+      <v-tab value="plan" size="small">{{ t('job.tab_plan') }}</v-tab>
       <v-tab value="results" size="small">{{ t('job.tab_results') }}</v-tab>
       <v-tab value="data" size="small">{{ t('job.tab_data') }}</v-tab>
     </v-tabs>
@@ -72,6 +73,21 @@
     <!-- Results = this job's views (each project view rendered against this
          job alone, when it has data); the raw record table stays as the last
          choice and is the whole tab when no view applies. -->
+    <!-- Plan: run × what each run changes vs the baseline (same table as
+         `runq show jb…` / the draft page). Rows open their task. -->
+    <div v-else-if="tab === 'plan'">
+      <PlanTable
+        :rows="planRows"
+        :baseline="detail.config?.baseline"
+        :statuses="detail.tasks.map((x) => x.status)"
+        :row-links="detail.tasks.map(() => true)"
+        @open="(i) => onClickTask(detail!.tasks[i].id)"
+      />
+      <div v-if="detail.job.draft_id" class="text-caption text-on-surface-variant mt-3">
+        {{ t('plan.from_draft', { id: detail.job.draft_id }) }}
+      </div>
+    </div>
+
     <div v-else-if="tab === 'results'">
       <div v-if="jobViews.length" class="d-flex flex-wrap align-center ga-2 mb-3">
         <button
@@ -162,6 +178,8 @@ import ViewPanel from '@/components/views/ViewPanel.vue'
 import ViewCharts from '@/components/views/ViewCharts.vue'
 import CustomView from '@/components/views/CustomView.vue'
 import ResultsEmpty from './ResultsEmpty.vue'
+import PlanTable from '@/components/PlanTable.vue'
+import type { PlanRow } from '@/types/api'
 import { wandbProjectUrl } from '@/utils/wandbUrl'
 
 const props = defineProps<{ project: string; jobId: string }>()
@@ -225,7 +243,17 @@ watch(() => detail.value?.tasks, (tasks) => { if (tasks) prune(tasks) })
 
 // ── Tabs (RQ2-4 ②): ?tab= is the shareable truth; replace (not push) so
 // tab flips don't pollute back-button history. ──
-const TABS = new Set(['tasks', 'results', 'data'])
+const TABS = new Set(['tasks', 'plan', 'results', 'data'])
+// Pre-rc6 tasks have no run name: fall back to the short task id.
+const planRows = computed<PlanRow[]>(() => {
+  const notes = new Map<string, string[]>()
+  for (const r of detail.value?.config?.tasks ?? []) if (r.run && r.needs_code) notes.set(String(r.run), r.needs_code)
+  return (detail.value?.tasks ?? []).map((x) => ({
+    run: x.run_name || x.id.slice(0, 8),
+    params: x.params ?? {},
+    needs_code: x.run_name ? notes.get(x.run_name) : undefined,
+  }))
+})
 const tab = ref(TABS.has(String(route.query.tab)) ? String(route.query.tab) : 'tasks')
 
 // The job's views (see useJobViewsQuery); the first is preselected, raw

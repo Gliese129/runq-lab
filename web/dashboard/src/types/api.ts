@@ -31,6 +31,8 @@ export interface JobSummary {
   name: string
   /** section within the project; "unsorted" when none */
   section?: string
+  /** the draft it was submitted from (absent for older jobs) */
+  draft_id?: string
   /** job.yaml description — the long sentence behind the short name */
   description?: string
   /**
@@ -77,6 +79,10 @@ export interface RawJobConfig {
   note?: string
   fixed_params?: Record<string, any>
   sweep: Array<{ method: string; parameters: Record<string, { values: any[] }> }>
+  /** named rows (alternative to sweep): `run` + params, flat */
+  tasks?: Array<Record<string, any>>
+  /** reference run name (default: the first row) */
+  baseline?: string
   overrides?: JobOverrides
 }
 
@@ -97,6 +103,8 @@ export interface TaskView {
   stale?: boolean
 
   id: string
+  /** row name within the job (tasks: run, or derived from the baseline) */
+  run_name?: string
   status: string
   params: Record<string, any>
   metrics?: Record<string, number>
@@ -466,4 +474,63 @@ export interface JobLogSearchResponse {
   matches: SearchMatch[]
   next_offset: number
   truncated: boolean
+}
+
+// ── rc6: sections and drafts ──
+
+export interface SectionRule {
+  id: number
+  section: string
+  kind: 'name' | 'path'
+  pattern: string
+}
+
+/** GET /projects/{name}/sections — "unsorted" first (id ""), then the rest. */
+export interface Section {
+  id?: string
+  name: string
+  builtin: boolean
+  jobs: number
+  rules?: SectionRule[]
+}
+
+/** One planned row of a draft: run name, full params, code-change note. */
+export interface PlanRow {
+  run: string
+  params: Record<string, any>
+  needs_code?: string[]
+}
+
+export interface DraftView {
+  id: string
+  project: string
+  name: string
+  description?: string
+  section?: string
+  target: string
+  rows: number
+  needs_code: number
+  rev: number
+  edited: boolean
+  status: 'open' | 'submitted'
+  job_id?: string
+  source_path?: string
+  created_at: number
+  updated_at: number
+}
+
+export interface DraftResult {
+  draft: DraftView
+  table: string
+  rows: PlanRow[]
+  baseline: string
+  preview?: string
+  warnings?: string[]
+}
+
+export interface DraftSubmitResult {
+  job_id: string
+  total_tasks: number
+  draft_id: string
+  already_submitted?: boolean
 }

@@ -56,6 +56,19 @@
 
 ### Changes
 
+- Dashboard: Overview and project pages use the width they have — on wide
+  screens the job list sits next to a preview of the picked job (its plan
+  table and progress); the project page adds a sections column (click to
+  filter, drag a job onto a section to move it, add a section inline).
+  Narrow screens keep one column. The job page has a Plan tab (run × what each
+  run changes vs the baseline), and open drafts are listed on the Overview and
+  edited on `#/drafts/<id>` (plan table, YAML editor with rev-checked save,
+  submit, discard). The web-only project groups are gone.
+- Dashboard links printed by the CLI (`dashboard:` lines, `--json` `url`) now
+  open the page they name; they used to land on the Overview. `runq draft`
+  prints its draft page.
+- Jobs submitted before rc6 get run names derived from their stored plan in
+  the dashboard, the same names `runq export` writes.
 - One verb per thing: `runq show <jb…|tk…|cs…|dr…|pj…|name>` (a job prints its
   run table), `runq archive <id> [--restore]`, `runq dashboard`,
   `runq project [file]` (prints the `pj…` id or the keys that changed),

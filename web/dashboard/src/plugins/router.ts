@@ -5,8 +5,9 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     component: () => import('../layouts/DefaultLayout.vue'),
     children: [
-      { path: '', name: 'overview', component: () => import('../views/Overview.vue') },
-      { path: 'projects/:project', name: 'project', component: () => import('../views/ProjectJobs.vue'), props: true },
+      { path: '', name: 'overview', component: () => import('../views/Overview.vue'), meta: { wide: true } },
+      { path: 'drafts/:draftId', name: 'draft', component: () => import('../views/DraftPage.vue'), props: true, meta: { wide: true } },
+      { path: 'projects/:project', name: 'project', component: () => import('../views/ProjectJobs.vue'), props: true, meta: { wide: true } },
       { path: 'projects/:project/views/:name', name: 'view', component: () => import('../views/ViewPage.vue'), props: true },
       { path: 'projects/:project/:jobId', name: 'job-detail', component: () => import('../views/job/index.vue'), props: true },
       { path: 'projects/:project/:jobId/:taskId', name: 'task-detail', component: () => import('../views/job/TaskDetail.vue'), props: true },

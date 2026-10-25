@@ -30,14 +30,17 @@ func TestBaseURL(t *testing.T) {
 // Paths must match web/dashboard/src/plugins/router.ts.
 func TestPageURLs(t *testing.T) {
 	base := "http://127.0.0.1:8077/"
-	if got, want := JobURL(base, "grpo", "jb1a2b3c4d"), "http://127.0.0.1:8077/projects/grpo/jb1a2b3c4d"; got != want {
+	if got, want := JobURL(base, "grpo", "jb1a2b3c4d"), "http://127.0.0.1:8077/#/projects/grpo/jb1a2b3c4d"; got != want {
 		t.Errorf("JobURL = %q, want %q", got, want)
 	}
-	if got, want := TaskURL(base, "my proj", "jb1", "tk2"), "http://127.0.0.1:8077/projects/my%20proj/jb1/tk2"; got != want {
+	if got, want := TaskURL(base, "my proj", "jb1", "tk2"), "http://127.0.0.1:8077/#/projects/my%20proj/jb1/tk2"; got != want {
 		t.Errorf("TaskURL = %q, want %q", got, want)
 	}
-	if got, want := ViewURL(base, "grpo", "paper"), "http://127.0.0.1:8077/projects/grpo/views/paper"; got != want {
+	if got, want := ViewURL(base, "grpo", "paper"), "http://127.0.0.1:8077/#/projects/grpo/views/paper"; got != want {
 		t.Errorf("ViewURL = %q, want %q", got, want)
+	}
+	if got, want := DraftURL(base, "dr8f2k1c00"), "http://127.0.0.1:8077/#/drafts/dr8f2k1c00"; got != want {
+		t.Errorf("DraftURL = %q, want %q", got, want)
 	}
 	if got := JobURL("", "grpo", "jb1"); got != "" {
 		t.Errorf("JobURL without base = %q, want empty", got)

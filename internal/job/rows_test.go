@@ -128,3 +128,11 @@ sweep:
 		t.Fatalf("zip followers are left out and long values cut: %q", got)
 	}
 }
+
+func TestLegacyRunNamesFollowTheStoredPlan(t *testing.T) {
+	c := parseJob(t, "sweep: [{method: grid, parameters: {kl: [0.0, 0.1]}}]")
+	got := LegacyRunNames(&c, []TaskParams{{"kl": 0.1}, {"kl": 0.0}, {"kl": 0.5}})
+	if strings.Join(got, "|") != "kl=0.1|base|kl=0.5" {
+		t.Fatalf("names = %v (planned rows by params, else diff from the first task)", got)
+	}
+}

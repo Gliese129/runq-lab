@@ -1,5 +1,37 @@
 <template>
-  <div class="project-page">
+  <div class="project-page" :class="layoutClass">
+    <!-- Sections: how this project's jobs are grouped. Click filters the
+         list; drop a job row here to move it (nothing moves on disk). -->
+    <!-- Kept in the grid while sections load, so the columns never jump. -->
+    <nav v-if="sections.length || layoutClass !== 'cols-1'" class="sections-col" :aria-label="t('sections.title')">
+      <div class="col-title">{{ t('sections.title') }}</div>
+      <button
+        type="button" class="section-row" :class="{ on: picked === '' }"
+        @click="picked = ''"
+      >
+        <span class="flex-grow-1 text-truncate">{{ t('sections.all') }}</span>
+        <span class="count">{{ projectJobs.length }}</span>
+      </button>
+      <button
+        v-for="s in sections" :key="s.name" type="button"
+        class="section-row" :class="{ on: picked === s.name, over: dragOver === s.name }"
+        :title="ruleHint(s)"
+        @click="picked = picked === s.name ? '' : s.name"
+        @dragover.prevent="dragOver = s.name"
+        @dragleave="dragOver = dragOver === s.name ? '' : dragOver"
+        @drop.prevent="onDrop(s.name, $event)"
+      >
+        <v-icon v-if="s.builtin" size="12" class="mr-1 text-on-surface-variant">{{ s.name === 'smoke' ? 'mdi-flask-outline' : 'mdi-tray' }}</v-icon>
+        <span class="flex-grow-1 text-truncate">{{ sectionLabel(s.name) }}</span>
+        <span class="count">{{ s.jobs }}</span>
+      </button>
+      <form v-if="sections.length" class="new-section" @submit.prevent="createSection">
+        <input v-model="newSection" :placeholder="t('sections.new_placeholder')" :aria-label="t('sections.new_placeholder')">
+      </form>
+      <div class="hint">{{ t('sections.drag_hint') }}</div>
+    </nav>
+
+    <div class="main-col">
     <div class="d-flex align-center ga-3 mb-4">
       <ProjectDot :project="project" :size="12" />
       <div class="text-h6 font-weight-medium text-truncate">{{ project }}</div>
@@ -39,7 +71,10 @@
     <template v-if="groups.length">
       <section v-for="g in groups" :key="g.bucket" class="mb-4">
         <div class="bucket-title">{{ t('overview.bucket_' + g.bucket) }}</div>
-        <JobList :jobs="g.jobs" :common="common" :show-project="false" @open="openJob" />
+        <JobList
+          :jobs="g.jobs" :common="common" :show-project="false" :draggable="sections.length > 0"
+          :selected-id="threeCol ? selectedId : ''" @open="openJob"
+        />
       </section>
     </template>
     <div v-else-if="projectJobs.length" class="empty text-body-2">{{ t('overview.no_match') }}</div>
@@ -72,6 +107,12 @@
           v-model="archivedPage" :length="Math.ceil((archivedQuery.data.value?.total ?? 0) / 25)" density="compact" />
       </div>
     </div>
+    </div>
+
+    <div v-if="threeCol" class="side-col">
+      <JobPreview v-if="selectedId" :key="selectedId" :job-id="selectedId" />
+      <div v-else class="side-empty text-body-2">{{ t('preview.pick') }}</div>
+    </div>
   </div>
 </template>
 
@@ -88,6 +129,13 @@ import ProjectDot from '@/components/ProjectDot.vue'
 import type { JobSummary } from '@/types/api'
 import { commonWordsByProject, filterJobs, groupJobs } from './jobListView'
 import { useViewsQuery } from '@/queries/useViewQueries'
+import { useDisplay } from 'vuetify'
+import { useQueryClient } from '@tanstack/vue-query'
+import { useSectionsQuery } from '@/queries/useDraftQueries'
+import { sectionsApi } from '@/apis/sections'
+import { qk } from '@/queries/keys'
+import type { Section } from '@/types/api'
+import JobPreview from '@/components/JobPreview.vue'
 
 const props = defineProps<{ project: string }>()
 const { t } = useI18n()
@@ -149,16 +197,94 @@ const projectJobs = computed(() =>
     ? scopedJobs.value
     : (listQuery.data.value ?? []).filter(j => j.project === props.project))
 
+// ── Layout: ≥1600px sections | jobs | preview; ≥1100px sections | jobs;
+// narrower, one column (sections on top). ──
+const { width } = useDisplay()
+const threeCol = computed(() => width.value >= 1600)
+const layoutClass = computed(() => (threeCol.value ? 'cols-3' : width.value >= 1100 ? 'cols-2' : 'cols-1'))
+const selectedId = ref('')
+
+// ── Sections ──
+const qc = useQueryClient()
+const sectionsQuery = useSectionsQuery(() => props.project)
+const sections = computed<Section[]>(() => sectionsQuery.data.value ?? [])
+const picked = ref('')
+const dragOver = ref('')
+const newSection = ref('')
+watch(() => props.project, () => { picked.value = ''; selectedId.value = '' })
+
+function sectionLabel(name: string) {
+  return name === 'unsorted' ? t('sections.unsorted') : name
+}
+function ruleHint(s: Section) {
+  return (s.rules ?? []).map((r) => `${r.kind} ${r.pattern}`).join('\n') || undefined
+}
+async function onDrop(section: string, e: DragEvent) {
+  dragOver.value = ''
+  const id = e.dataTransfer?.getData('application/x-runq-job') || e.dataTransfer?.getData('text/plain')
+  if (!id) return
+  try {
+    await sectionsApi.moveJob(id, section)
+    snack.success(t('sections.moved', { section: sectionLabel(section) }))
+    void qc.invalidateQueries({ queryKey: qk.jobs })
+    void qc.invalidateQueries({ queryKey: qk.sections(props.project) })
+  } catch (err: any) { snack.error(err?.message || t('common.error')) }
+}
+async function createSection() {
+  const name = newSection.value.trim()
+  if (!name) return
+  try {
+    await sectionsApi.create(props.project, name)
+    newSection.value = ''
+    void qc.invalidateQueries({ queryKey: qk.sections(props.project) })
+  } catch (err: any) { snack.error(err?.message || t('common.error')) }
+}
+
+const inSection = computed(() => {
+  if (!picked.value) return projectJobs.value
+  return projectJobs.value.filter((j) => (j.section || 'unsorted') === picked.value)
+})
 const common = computed(() => commonWordsByProject(projectJobs.value))
-const groups = computed(() => groupJobs(filterJobs(projectJobs.value, searchQuery.value ?? '', new Set()), new Date()))
+const groups = computed(() => groupJobs(filterJobs(inSection.value, searchQuery.value ?? '', new Set()), new Date()))
+watch(inSection, (list) => {
+  if (list.length && !list.some((j) => j.id === selectedId.value)) selectedId.value = list[0].id
+}, { immediate: true })
 
 function openJob(j: JobSummary) {
+  if (threeCol.value && selectedId.value !== j.id) {
+    selectedId.value = j.id
+    return
+  }
   router.push({ name: 'job-detail', params: { project: j.project || props.project, jobId: j.id } })
 }
 </script>
 
 <style scoped>
 .project-page { max-width: 1040px; margin: 0 auto; }
+.project-page.cols-2, .project-page.cols-3 { display: grid; gap: 20px; align-items: start; max-width: none; }
+.project-page.cols-2 { grid-template-columns: 200px minmax(0, 1fr); max-width: 1320px; }
+.project-page.cols-3 { grid-template-columns: 200px minmax(0, 1fr) minmax(380px, 36%); }
+.main-col { min-width: 0; }
+.sections-col { position: sticky; top: 16px; }
+.cols-1 .sections-col { position: static; display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.cols-1 .sections-col .col-title, .cols-1 .sections-col .hint, .cols-1 .new-section { display: none; }
+.cols-1 .section-row { width: auto; border: 0.5px solid rgb(var(--v-theme-outline-variant)); border-radius: 999px; padding: 2px 10px; }
+.col-title { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); padding: 0 8px 6px; }
+.section-row {
+  display: flex; align-items: center; width: 100%; gap: 4px; padding: 5px 8px; border-radius: 6px;
+  font-size: 13px; text-align: left; background: none; border: none; color: rgb(var(--v-theme-on-surface)); cursor: pointer;
+}
+.section-row:hover { background: rgb(var(--v-theme-on-surface), 0.05); }
+.section-row.on { background: rgb(var(--v-theme-on-surface), 0.08); font-weight: 500; }
+.section-row.over { background: rgb(var(--v-theme-primary), 0.12); outline: 1px dashed rgb(var(--v-theme-primary), 0.5); }
+.section-row .count { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
+.new-section input {
+  width: 100%; margin-top: 6px; font-size: 12px; padding: 4px 8px; border-radius: 6px; font-family: inherit;
+  border: 0.5px dashed rgb(var(--v-theme-outline-variant)); background: transparent; color: rgb(var(--v-theme-on-surface)); outline: none;
+}
+.new-section input:focus { border-style: solid; border-color: rgb(var(--v-theme-primary)); }
+.hint { font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); padding: 8px; }
+.side-empty { color: rgb(var(--v-theme-on-surface-variant)); padding: 24px; }
 .bucket-title { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); padding: 0 14px 4px; }
 .empty { color: rgb(var(--v-theme-on-surface-variant)); padding: 24px 14px; }
 .archived-toggle {
