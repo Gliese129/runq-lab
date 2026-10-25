@@ -31,6 +31,9 @@ If `runq serve status` says "stopped", run `runq serve -d`. A socket error
 (`dial unix … no such file`, `connection refused`) points at the local service,
 so start or restart it before looking at the cluster or the network.
 
+If this turn is a scheduled heartbeat (a `<heartbeat>` message, `/loop`, a cron
+agent) or you are about to set one up, read `references/heartbeat.md` first.
+
 ## 1. Commands
 
 | Goal | Command |
@@ -266,6 +269,7 @@ the dashboard. Rank gating, offline runs, directories: `references/sdk.md`.
 
 ## 11. More
 
+- Heartbeats: priorities, setup questions, fault vs deviation, quiet ticks → `references/heartbeat.md`
 - HPC targets, templates, SSH, reservations (`qsub -ar`) → `references/hpc.md`
 - Views, paper tables, charts and consumers → `references/views.md`
 - SDK: params, metrics, results, directories, W&B → `references/sdk.md`
