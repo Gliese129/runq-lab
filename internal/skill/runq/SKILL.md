@@ -47,6 +47,7 @@ agent) or you are about to set one up, read `references/heartbeat.md` first.
 | Result rows from `runq.record` | `runq results <job_id> --json` |
 | Kill | `runq kill <task_id\|job_id\|consumer_id>` |
 | Rename a job or project (ids never change) | `runq rename <jb…\|pj…\|project-name> "<new name>"` |
+| Sections of a project / file a job | `runq section ls <project>` · `runq submit job.yaml -s <section>` · `runq section move <section> <jb…>` |
 | Register a project / update it | `runq project add -f project.yaml` · `runq submit job.yaml --project-file project.yaml` (upsert, also on `--dry`) |
 | Targets | `runq target show [name]` · `runq target check <name>` · `runq target connect <name>` |
 | Service | `runq serve -d` · `runq serve status` · `runq serve restart` |
@@ -82,6 +83,10 @@ For reusable progress and paper tables: `runq view <file.yaml|name>` — see `re
   `target`, `preflight`, `overrides{gpus_per_task,timeout,env}`,
   `fixed_params` (same in every task) and `sweep` (`grid` = cross product,
   `list` = zip rows; blocks multiply).
+- **section** = how a project's jobs are grouped (an ablation, an experiment, smoke
+  tests); organization only, no config. Every project has `unsorted` and `smoke`.
+  A job lands in the section given by `runq submit -s <section>` or job.yaml
+  `section:` (it must exist), else the first matching rule, else `unsorted`.
 - **task** = one cell, with its own workspace
   `<data>/<project_id>/<job_id>/<task_id>/`: log, `params.json`, `outputs/`,
   `checkpoints/`, metrics, results. `<data>` is the target's `data_path`, or
@@ -98,8 +103,11 @@ For reusable progress and paper tables: `runq view <file.yaml|name>` — see `re
 
 Express variations of an experiment — a smoke test, a resume, another script, a
 reservation — as job files under the existing project; a job can carry its own
-`command`, `target` and `overrides`. Create a separate project when the code base
-or its environment genuinely differs. When `project add` says `project "x" already
+`command`, `target` and `overrides`. Group them with sections rather than new
+projects (`-tmp`, `-smoke`, `-a1` projects scatter one study): file smoke runs with
+`-s smoke` (a name containing "smoke" lands there anyway), and ask the researcher
+before creating a new section — they usually have one in mind. Create a separate
+project when the code base or its Python environment genuinely differs. When `project add` says `project "x" already
 exists`, update it with `--project-file` and keep the name.
 
 One directory can hold several projects — e.g. training and evaluation with

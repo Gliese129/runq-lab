@@ -58,6 +58,7 @@ func BuildJobSummary(job store.JobRow, tasks []store.TaskRow) JobSummary {
 		ID:           job.ID,
 		Project:      job.ProjectName,
 		Name:         job.Name,
+		Section:      sectionOrUnsorted(job.Section),
 		Description:  job.Description,
 		Status:       job.Status,
 		Target:       job.Target,
@@ -836,4 +837,11 @@ func attachStoredMetrics(ctx context.Context, st *store.Store, jobID string, vie
 			views[i].Metrics = metrics
 		}
 	}
+}
+
+func sectionOrUnsorted(name string) string {
+	if name == "" {
+		return store.SectionUnsorted
+	}
+	return name
 }

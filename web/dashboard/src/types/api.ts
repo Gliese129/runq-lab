@@ -29,6 +29,8 @@ export interface JobSummary {
   project: string
   /** renamable display name (`runq rename`); the id never changes */
   name: string
+  /** section within the project; "unsorted" when none */
+  section?: string
   /** job.yaml description — the long sentence behind the short name */
   description?: string
   /**

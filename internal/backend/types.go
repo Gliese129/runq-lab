@@ -38,6 +38,8 @@ type JobSummary struct {
 	ID        string         `json:"id"`
 	Project   string         `json:"project"`
 	Name      string         `json:"name"`
+	// Section is the job's section within its project ("unsorted" when none).
+	Section string `json:"section"`
 	// Description is the job.yaml sentence behind the short note.
 	Description string `json:"description,omitempty"`
 	// Status: pending / running / paused while live; done / failed /

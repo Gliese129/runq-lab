@@ -146,6 +146,8 @@ project: resnet50
 description: "LR × optimizer sweep with tied batch/worker configs"
 name: lr × optimizer           # display name, free text; `runq rename` changes it
                                 # (pre-rc6 `note:` is read as name, with a warning)
+section: lr ablation            # optional; an existing section (`runq section ls`).
+                                # Omitted: the project's rules decide, else unsorted
 
 fixed_params:                   # constants for every task (a sweep value of the
   seed: 42                      # same name overrides). A job with fixed_params

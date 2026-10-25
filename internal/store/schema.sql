@@ -228,3 +228,17 @@ CREATE TABLE IF NOT EXISTS source_observations (
  source_id TEXT PRIMARY KEY, observed_at INTEGER NOT NULL, step REAL,
  last_output_at INTEGER, last_heartbeat_at INTEGER
 );
+
+-- rc6 sections: how a project's jobs are organized (no execution config).
+-- Keyed by the immutable project id, so project renames never touch them.
+-- A job with no section_id is "unsorted"; "smoke" is created per project.
+CREATE TABLE IF NOT EXISTS sections (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL,
+ builtin TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+ UNIQUE(project_id, name)
+);
+CREATE TABLE IF NOT EXISTS section_rules (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL,
+ section_id TEXT NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
+ kind TEXT NOT NULL, pattern TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0
+);

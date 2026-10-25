@@ -250,7 +250,7 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	}
 	jobRow := store.JobRow{
 		ID: plan.JobID, ProjectName: plan.Project, Description: plan.Description,
-		Name: plan.Name, ConfigJSON: string(cfgJSON), Status: "pending",
+		Name: plan.Name, SectionID: jobCfg.SectionID, ConfigJSON: string(cfgJSON), Status: "pending",
 		TotalTasks: len(plan.Tasks), Target: b.Cfg.Name, CreatedAt: now,
 	}
 

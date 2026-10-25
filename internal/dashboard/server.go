@@ -210,6 +210,13 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/kill", s.handleKillJob)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/archive", s.handleArchiveJob)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/rename", s.handleRenameJob)
+	s.mux.HandleFunc("POST /api/v1/jobs/{id}/section", s.handleMoveJob)
+	s.mux.HandleFunc("GET /api/v1/projects/{name}/sections", s.handleListSections)
+	s.mux.HandleFunc("POST /api/v1/projects/{name}/sections", s.handleCreateSection)
+	s.mux.HandleFunc("DELETE /api/v1/projects/{name}/sections/{section}", s.handleRemoveSection)
+	s.mux.HandleFunc("POST /api/v1/projects/{name}/sections/sort", s.handleSortSections)
+	s.mux.HandleFunc("POST /api/v1/projects/{name}/section-rules", s.handleAddSectionRule)
+	s.mux.HandleFunc("DELETE /api/v1/projects/{name}/section-rules/{id}", s.handleRemoveSectionRule)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/unarchive", s.handleUnarchiveJob)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/refresh", s.handleRefreshJob)
 

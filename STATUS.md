@@ -70,6 +70,7 @@
 | 宣传文案：README 首屏改写和异议应对卡（面向课题组研究者） | todo | not verified |
 | submit_template 支持可选 {{param.*}} 片段，预约改成同一 target 的参数（预设 + docs/hpc.md + skill） | verified | run: `go test ./internal/utils ./internal/config ./internal/remote ./internal/job ./internal/cli` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-24 08:23) |
 | rc6 第 1 段：project id、job name、存储约定与自动迁移 | verified | run: `go test ./internal/project/ ./internal/store/ ./internal/job/ ./internal/remote/ ./internal/backend/ ./internal/preflight/ ./internal/workspace/ ./internal/submitplan/ ./internal/config/ ./internal/cli/` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-25 03:29) |
+| rc6 第 2 段：section（数据表、runq section 命令、-s / job.yaml section:、归类规则、内置 smoke 和未分类） | verified | run: `go test ./internal/store/ ./internal/backend/ ./internal/dashboard/ ./internal/cli/ ./internal/remote/` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-25 03:45) |
 
 ## Change history
 

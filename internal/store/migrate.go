@@ -211,6 +211,10 @@ func (s *Store) addMissingColumns(ctx context.Context) error {
 	if err := s.backfillProjectIDs(ctx); err != nil {
 		return err
 	}
+	// rc6 sections: NULL = unsorted.
+	if err := addColumnIfMissing(ctx, s.db, "jobs", "section_id", "TEXT"); err != nil {
+		return fmt.Errorf("add jobs.section_id: %w", err)
+	}
 	return nil
 }
 

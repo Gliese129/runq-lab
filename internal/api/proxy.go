@@ -14,6 +14,7 @@ import (
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/logfile"
 	"github.com/gliese129/runq-lab/internal/project"
+	"github.com/gliese129/runq-lab/internal/store"
 	"github.com/gliese129/runq-lab/internal/workspace"
 )
 
@@ -650,3 +651,59 @@ func (p *Proxy) doWithTimeout(ctx context.Context, method, path string, body any
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
+
+// ── Sections (rc6) ──
+
+func (p *Proxy) ListSections(ctx context.Context, ref string) ([]store.Section, error) {
+	var out struct {
+		Sections []store.Section `json:"sections"`
+	}
+	err := p.do(ctx, "GET", "/api/v1/projects/"+url.PathEscape(ref)+"/sections", nil, &out)
+	return out.Sections, err
+}
+
+func (p *Proxy) CreateSection(ctx context.Context, ref, name string) (*store.Section, error) {
+	var out store.Section
+	err := p.do(ctx, "POST", "/api/v1/projects/"+url.PathEscape(ref)+"/sections", map[string]string{"name": name}, &out)
+	return &out, err
+}
+
+func (p *Proxy) RemoveSection(ctx context.Context, ref, name string) (int, error) {
+	var out struct {
+		Unsorted int `json:"unsorted"`
+	}
+	err := p.do(ctx, "DELETE", "/api/v1/projects/"+url.PathEscape(ref)+"/sections/"+url.PathEscape(name), nil, &out)
+	return out.Unsorted, err
+}
+
+func (p *Proxy) AddSectionRule(ctx context.Context, ref, section, kind, pattern string) (*store.SectionRule, error) {
+	var out store.SectionRule
+	err := p.do(ctx, "POST", "/api/v1/projects/"+url.PathEscape(ref)+"/section-rules",
+		map[string]string{"section": section, "kind": kind, "pattern": pattern}, &out)
+	return &out, err
+}
+
+func (p *Proxy) RemoveSectionRule(ctx context.Context, ref string, ruleID int64) error {
+	return p.do(ctx, "DELETE", fmt.Sprintf("/api/v1/projects/%s/section-rules/%d", url.PathEscape(ref), ruleID), nil, nil)
+}
+
+func (p *Proxy) SortSections(ctx context.Context, ref string) (int, error) {
+	var out struct {
+		Moved int `json:"moved"`
+	}
+	err := p.do(ctx, "POST", "/api/v1/projects/"+url.PathEscape(ref)+"/sections/sort", nil, &out)
+	return out.Moved, err
+}
+
+func (p *Proxy) MoveJob(ctx context.Context, jobRef, section string) (string, error) {
+	var out struct {
+		ID string `json:"id"`
+	}
+	err := p.do(ctx, "POST", "/api/v1/jobs/"+url.PathEscape(jobRef)+"/section", map[string]string{"section": section}, &out)
+	return out.ID, err
+}
+
+var (
+	_ backend.Sectioner  = (*Proxy)(nil)
+	_ backend.JobRenamer = (*Proxy)(nil)
+)

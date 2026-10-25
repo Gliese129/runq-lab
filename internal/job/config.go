@@ -22,6 +22,13 @@ type JobConfig struct {
 	// Name is the job's renamable display name (the id never changes):
 	// what this experiment is, readable at a glance. Free text.
 	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// Section names an existing section of the project; empty = the
+	// project's rules decide (no match = unsorted).
+	Section string `yaml:"section,omitempty" json:"section,omitempty"`
+	// SectionID is the resolved section (set by the service, "" = unsorted);
+	// SourcePath is the job file as passed to submit (for path rules).
+	SectionID  string `yaml:"-" json:"section_id,omitempty"`
+	SourcePath string `yaml:"-" json:"source_path,omitempty"`
 	// Note is the pre-rc6 key for Name; NormalizeLegacy folds it in.
 	Note        string         `yaml:"note,omitempty" json:"note,omitempty"`
 	FixedParams map[string]any `yaml:"fixed_params,omitempty" json:"fixed_params,omitempty"` // params with fixed values (not swept)

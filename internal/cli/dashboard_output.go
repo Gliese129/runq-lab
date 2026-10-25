@@ -15,14 +15,14 @@ func printDashboardJobs(jobs []backend.JobSummary) error {
 		return nil
 	}
 	w := newTable()
-	fmt.Fprintf(w, "NAME\tJOB_ID\tPROJECT\tSTATUS\tRUN\tPEND\tFAIL\tOK\n")
+	fmt.Fprintf(w, "NAME\tJOB_ID\tPROJECT\tSECTION\tSTATUS\tRUN\tPEND\tFAIL\tOK\n")
 	for _, job := range jobs {
 		name := job.Name
 		if name == "" {
 			name = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\n",
-			name, utils.IDColor(job.ID), job.Project, utils.StatusColor(job.Status),
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\n",
+			name, utils.IDColor(job.ID), job.Project, job.Section, utils.StatusColor(job.Status),
 			job.Tasks.Running, job.Tasks.Pending, job.Tasks.Failed, job.Tasks.Completed)
 	}
 	return w.Flush()

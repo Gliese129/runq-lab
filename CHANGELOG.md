@@ -33,6 +33,12 @@
 - Preflight warns (never blocks) when a script defines an output flag such as
   `--output_dir` that the command does not pass.
 - `runq target check` reports the target's `data_path`.
+- Sections group a project's jobs: `runq section ls/create/rm/move/sort` and
+  `runq section rule add/rm`. Every project has `unsorted` and `smoke` (default
+  rule `name *smoke*`). `runq submit -s <section>` or job.yaml `section:` files a
+  new job under an existing section; otherwise the first matching rule (by name
+  or job-file path) decides, else unsorted. The preview says which, and
+  `runq ps` shows a SECTION column. Sections hold no execution config.
 
 - `submit_template` supports optional `[[...]]` segments: `[[-ar {{param.ar_id}}]]`
   is dropped when `ar_id` is unset or empty, and `[[--no-requeue]]` is emitted

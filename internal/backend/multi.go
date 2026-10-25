@@ -1272,6 +1272,9 @@ func (m *MultiBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts Su
 	cfg.Target, cfg.TargetSource = target, source
 	cfg.EffectiveConfig = projectCfg
 	cfg.Project = projectCfg.ProjectName // job.yaml may name the project by id
+	if _, err := m.resolveJobSection(ctx, &cfg); err != nil {
+		return "", 0, err
+	}
 	sourceTarget := projectSourceTarget(projectCfg)
 	if target != sourceTarget {
 		m.projectSyncMu.Lock()
@@ -1463,9 +1466,13 @@ func (m *MultiBackend) PreviewSubmitForTarget(ctx context.Context, explicit stri
 	cfg.Target, cfg.TargetSource = target, source
 	cfg.EffectiveConfig = proj
 	cfg.Project = proj.ProjectName // job.yaml may name the project by id
+	sectionLine, err := m.resolveJobSection(ctx, &cfg)
+	if err != nil {
+		return PreviewResult{}, err
+	}
 	out, err := be.PreviewSubmit(ctx, cfg, skipPreflight)
 	out.Target, out.TargetSource = target, source
-	out.Preview = fmt.Sprintf("target: %s (%s)\n", target, source) + out.Preview
+	out.Preview = fmt.Sprintf("target: %s (%s)\n%s\n", target, source, sectionLine) + out.Preview
 	if target != projectSourceTarget(proj) {
 		out.SyncPending = true
 		out.Preview = "code sync pending: preview checks current destination files; submit will sync source first\n" + out.Preview
@@ -1619,6 +1626,87 @@ func (m *MultiBackend) RenameJob(ctx context.Context, ref, newName string) (stri
 	return id, nil
 }
 
+func (m *MultiBackend) ListSections(ctx context.Context, ref string) ([]store.Section, error) {
+	name, err := m.registry.Resolve(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return m.store.ListSections(ctx, name)
+}
+
+func (m *MultiBackend) CreateSection(ctx context.Context, ref, section string) (*store.Section, error) {
+	name, err := m.registry.Resolve(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return m.store.CreateSection(ctx, name, section)
+}
+
+func (m *MultiBackend) RemoveSection(ctx context.Context, ref, section string) (int, error) {
+	name, err := m.registry.Resolve(ctx, ref)
+	if err != nil {
+		return 0, err
+	}
+	return m.store.RemoveSection(ctx, name, section)
+}
+
+func (m *MultiBackend) AddSectionRule(ctx context.Context, ref, section, kind, pattern string) (*store.SectionRule, error) {
+	name, err := m.registry.Resolve(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return m.store.AddRule(ctx, name, section, kind, pattern)
+}
+
+func (m *MultiBackend) RemoveSectionRule(ctx context.Context, ref string, ruleID int64) error {
+	name, err := m.registry.Resolve(ctx, ref)
+	if err != nil {
+		return err
+	}
+	return m.store.RemoveRule(ctx, name, ruleID)
+}
+
+func (m *MultiBackend) SortSections(ctx context.Context, ref string) (int, error) {
+	name, err := m.registry.Resolve(ctx, ref)
+	if err != nil {
+		return 0, err
+	}
+	return m.store.SortUnsorted(ctx, name)
+}
+
+func (m *MultiBackend) MoveJob(ctx context.Context, jobRef, section string) (string, error) {
+	ids, err := m.store.SetJobSection(ctx, section, []string{jobRef})
+	if err != nil {
+		return "", err
+	}
+	return ids[0], nil
+}
+
+// resolveJobSection fills cfg.SectionID: an explicit section must exist;
+// otherwise the project's rules decide, and no match means unsorted. The
+// returned line says which, for the preview.
+func (m *MultiBackend) resolveJobSection(ctx context.Context, cfg *job.JobConfig) (string, error) {
+	if strings.TrimSpace(cfg.Section) != "" {
+		id, err := m.store.ResolveSection(ctx, cfg.Project, cfg.Section)
+		if err != nil {
+			return "", err
+		}
+		cfg.SectionID = id
+		return fmt.Sprintf("section: %s (job.yaml / -s)", strings.TrimSpace(cfg.Section)), nil
+	}
+	named := *cfg
+	named.NormalizeLegacy()
+	id, rule, err := m.store.MatchSection(ctx, cfg.Project, named.Name, cfg.SourcePath)
+	if err != nil {
+		return "", err
+	}
+	cfg.SectionID = id
+	if rule == nil {
+		return "section: unsorted (no rule matched; set one with -s or `section:`)", nil
+	}
+	return fmt.Sprintf("section: %s (rule #%d: %s %s)", rule.Section, rule.ID, rule.Kind, rule.Pattern), nil
+}
+
 // rewriteMarkers rewrites the 0-<name> marker in each distinct directory
 // dirOf derives from a task dir ("" = no id-named directory to mark).
 func (m *MultiBackend) rewriteMarkers(ctx context.Context, refs []store.TaskDirRef, dirOf func(string) string, name string) {
@@ -1638,4 +1726,8 @@ func (m *MultiBackend) rewriteMarkers(ctx context.Context, refs []store.TaskDirR
 }
 
 // compile-time interface check
-var _ Backend = (*MultiBackend)(nil)
+var (
+	_ Backend    = (*MultiBackend)(nil)
+	_ Sectioner  = (*MultiBackend)(nil)
+	_ JobRenamer = (*MultiBackend)(nil)
+)

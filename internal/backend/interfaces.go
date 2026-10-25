@@ -6,6 +6,7 @@ import (
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/logfile"
 	"github.com/gliese129/runq-lab/internal/project"
+	"github.com/gliese129/runq-lab/internal/store"
 	"github.com/gliese129/runq-lab/internal/workspace"
 )
 
@@ -169,4 +170,18 @@ type SubmitOptions struct {
 // and returns the resolved job id. Implemented by the service and its proxy.
 type JobRenamer interface {
 	RenameJob(ctx context.Context, ref, newName string) (string, error)
+}
+
+// Sectioner manages a project's sections (rc6): organization only, no
+// execution config. projectRef is a name, id or unique id prefix.
+type Sectioner interface {
+	ListSections(ctx context.Context, projectRef string) ([]store.Section, error)
+	CreateSection(ctx context.Context, projectRef, name string) (*store.Section, error)
+	RemoveSection(ctx context.Context, projectRef, name string) (int, error)
+	AddSectionRule(ctx context.Context, projectRef, section, kind, pattern string) (*store.SectionRule, error)
+	RemoveSectionRule(ctx context.Context, projectRef string, ruleID int64) error
+	SortSections(ctx context.Context, projectRef string) (int, error)
+	// MoveJob files one job (id or unique prefix) under a section of its
+	// own project ("unsorted" clears it) and returns the resolved job id.
+	MoveJob(ctx context.Context, jobRef, section string) (string, error)
 }

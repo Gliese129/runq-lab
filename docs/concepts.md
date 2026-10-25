@@ -72,6 +72,16 @@ YAML to run on several targets.
 update it with `submit --project-file`. Dashboard pages read the service's
 database snapshot, labelled with when each value was observed.
 
+## Sections
+
+A project's jobs are grouped into sections — an ablation, an experiment, smoke
+tests. Sections are organization only: they carry no config and moving a job
+changes nothing on disk. Every project has `unsorted` and `smoke` (which starts
+with the rule `name *smoke*`). A new job goes to the section named by
+`runq submit -s` or job.yaml `section:` (it must exist), else to the first
+section whose rule matches its name or job-file path, else to `unsorted`.
+Sections live in runq's database, so project.yaml stays the same.
+
 ## Workspace and storage
 
 Each task gets a workspace under `<data>/<project_id>/<job_id>/<task_id>/`, where

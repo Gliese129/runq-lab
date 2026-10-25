@@ -20,7 +20,7 @@ When the service serves the dashboard, `submit`, `ps` and `task show` JSON carry
 
 | Command | What it does |
 |---|---|
-| `runq ps --json` | Jobs: name, id, status, counts (alias `ls`; `-t` filters by target) |
+| `runq ps --json` | Jobs: name, id, project, section, status, counts (alias `ls`; `-t` filters by target) |
 | `runq ps <job_id> --json` | That job's tasks: status, scheduler state, queue, step, elapsed, params |
 | `runq ps <job_id> --fresh --json` | Same, after forcing a scheduler probe |
 | `runq task show <task_id>` | One task as JSON: command, dirs, external id, status source, links |
@@ -40,6 +40,18 @@ When the service serves the dashboard, `submit`, `ps` and `task show` JSON carry
 | `runq project archive <name>` / `runq project unarchive <name>` | Hide a project and its jobs from default lists — reversible |
 | `runq job archive <job_id>` / `runq job unarchive <job_id>` | Same, for one job |
 | `runq rename <jb… \| pj… \| project-name> <new-name>` | Rename a job or a project; ids (and directories) never change |
+
+## Sections (how a project's jobs are grouped)
+
+| Command | What it does |
+|---|---|
+| `runq section ls <project> [--json]` | Sections with job counts and rules; always `unsorted` and `smoke` |
+| `runq section create <project> <name>` / `runq section rm <project> <name>` | Add a section / remove one (its jobs become unsorted) |
+| `runq submit job.yaml -s <section>` | File the new job under an existing section (same as job.yaml `section:`) |
+| `runq section move <section> <jb…> [jb…]` | Move jobs; `unsorted` clears the section. Nothing moves on disk |
+| `runq section rule add <project> <section> --name GLOB \| --path GLOB` | File new jobs by name or job-file path; first matching rule wins (`smoke` starts with `--name '*smoke*'`) |
+| `runq section rule rm <project> <rule-id>` | Remove a rule (ids from `section ls`) |
+| `runq section sort <project>` | Apply the rules to the project's unsorted jobs |
 
 A new project must declare `target`. Experiments differ by job, not by project:
 a job may carry its own `command`, `target` and `preflight`.

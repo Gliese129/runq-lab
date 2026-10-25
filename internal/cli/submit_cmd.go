@@ -56,6 +56,7 @@ the command line. Target precedence: -t > job.target > project.target.
 		watch, _ := cmd.Flags().GetBool("watch")
 		projectOverride, _ := cmd.Flags().GetString("project")
 		noteOverride, _ := cmd.Flags().GetString("note")
+		sectionOverride, _ := cmd.Flags().GetString("section")
 		noPreflight, _ := cmd.Flags().GetBool("no-preflight")
 		jsonOut, _ := cmd.Flags().GetBool("json")
 
@@ -78,6 +79,13 @@ the command line. Target precedence: -t > job.target > project.target.
 		}
 		if noteOverride != "" {
 			jobCfg.Name, jobCfg.Note = noteOverride, ""
+		}
+		if sectionOverride != "" {
+			jobCfg.Section = sectionOverride
+		}
+		jobCfg.SourcePath = args[0]
+		if jobCfg.SourcePath == "." {
+			jobCfg.SourcePath = "job.yaml"
 		}
 		for _, w := range jobCfg.NormalizeLegacy() {
 			fmt.Fprintf(os.Stderr, "%s: %s\n", filepath.Base(file), w)
@@ -254,6 +262,7 @@ func init() {
 	submitCmd.Flags().Bool("watch", false, "Block and show live progress after submit")
 	submitCmd.Flags().String("project", "", "Override the project name in the YAML")
 	submitCmd.Flags().StringP("note", "n", "", "Job name (overrides the YAML name: field)")
+	submitCmd.Flags().StringP("section", "s", "", "Section to file the job under (must exist; default: the project's rules, else unsorted)")
 	submitCmd.Flags().String("project-file", "", "Upsert project config from a YAML file (also writes on --dry)")
 	submitCmd.Flags().Bool("json", false, "output raw JSON")
 	submitCmd.Flags().Bool(
