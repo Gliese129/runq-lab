@@ -750,7 +750,9 @@ func (b *Backend) probeBatch(ctx context.Context) (map[string]ProbeResult, error
 // hook) and maps the result to a semantic SchedulerSignal. It is deliberately
 // dialect-agnostic:
 //   - no status_template / no ext id / any command error → SchedUnknown (no new fact)
-//   - with a status_parser hook → its normalized token via ParseSignal
+//   - with a status_parser hook → its normalized token via ParseSignal; a
+//     non-zero exit is handed to the parser only when the query names the
+//     job ({{ext_id}}) — a failed listing query is SchedUnknown
 //   - without a hook → empty output = SchedGone, recognized token = that signal,
 //     present-but-unrecognized = SchedActive (alive)
 func (b *Backend) probeScheduler(ctx context.Context, extID string) ProbeResult {
@@ -792,6 +794,15 @@ func (b *Backend) probeSchedulerObservedWith(ctx context.Context, run runner, ex
 	// ERROR once the job leaves the queue, and that exit IS the "gone"
 	// signal. We hand the (often empty) output to the parser and let it
 	// decide — the parser is contracted to emit `gone` for absence.
+	//
+	// That exemption only holds for a query that NAMES the job. A listing
+	// query without {{ext_id}} (SGE/UGE bare `qstat`) cannot fail because
+	// one job left; its non-zero exit means the scheduler did not answer
+	// (e.g. "failed receiving gdi request response ... timeout"), and any
+	// partial output must not be read as the job's absence.
+	if exitCode != 0 && cmd == b.Cfg.StatusTemplate {
+		return none, fmt.Errorf("status_template exited with code %d", exitCode)
+	}
 	if len(b.Cfg.StatusParser) > 0 {
 		stages := make([]string, 0, len(b.Cfg.StatusParser))
 		for _, s := range b.Cfg.StatusParser {
