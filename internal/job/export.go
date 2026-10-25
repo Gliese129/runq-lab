@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gliese129/runq-lab/internal/consumer"
@@ -16,6 +17,8 @@ import (
 // left out.
 type ExportInput struct {
 	JobID       string
+	DraftID     string // set: the file is a draft's editable form (draft/rev header)
+	Rev         int
 	ExportedAt  time.Time
 	Project     string
 	Name        string
@@ -55,7 +58,12 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 	}
 	str := func(s string) *yaml.Node { return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: s} }
 
-	add("from_job", str(in.JobID))
+	if in.DraftID != "" {
+		add("draft", str(in.DraftID))
+		add("rev", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: fmt.Sprint(in.Rev)})
+	} else {
+		add("from_job", str(in.JobID))
+	}
 	add("project", str(in.Project))
 	if in.Name != "" {
 		add("name", str(in.Name))
@@ -129,8 +137,12 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 	add("tasks", tasks)
 
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "# exported from %s at %s — a snapshot; editing it does not change the job\n",
-		in.JobID, in.ExportedAt.UTC().Format(time.RFC3339))
+	if in.DraftID != "" {
+		fmt.Fprintf(&buf, "# draft %s rev %d — save your edits with: runq draft edit %s -f <this file>\n", in.DraftID, in.Rev, in.DraftID)
+	} else {
+		fmt.Fprintf(&buf, "# exported from %s at %s — a snapshot; editing it does not change the job\n",
+			in.JobID, in.ExportedAt.UTC().Format(time.RFC3339))
+	}
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
 	if err := enc.Encode(&yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{doc}}); err != nil {
@@ -213,4 +225,81 @@ func NameRows(rows []Row) {
 			return
 		}
 	}
+}
+
+// PlanTable renders rows as a table of run × the params that vary, with
+// cells equal to the baseline left blank, and a "fixed:" line for the rest.
+func PlanTable(rows []Row, baseline string, declared []string) string {
+	if len(rows) == 0 {
+		return "(no rows)\n"
+	}
+	b := BaselineIndex(rows, baseline)
+	base := rows[b].Params
+	order := paramOrder(rows, declared)
+	var cols, fixedParts []string
+	for _, k := range order {
+		if inEveryRow(rows, k) && !varies(rows, k) {
+			fixedParts = append(fixedParts, k+"="+FormatValue(base[k]))
+		} else {
+			cols = append(cols, k)
+		}
+	}
+	header := append([]string{"RUN"}, cols...)
+	header = append(header, "NOTE")
+	table := [][]string{header}
+	for i, r := range rows {
+		run := r.Run
+		if i == b {
+			run += " (baseline)"
+		}
+		line := []string{run}
+		for _, k := range cols {
+			v, ok := r.Params[k]
+			switch {
+			case !ok:
+				line = append(line, "∅")
+			case i != b && FormatValue(v) == FormatValue(base[k]):
+				line = append(line, "")
+			default:
+				line = append(line, FormatValue(v))
+			}
+		}
+		note := ""
+		if len(r.NeedsCode) > 0 {
+			note = "needs code: " + strings.Join(r.NeedsCode, ", ")
+		}
+		table = append(table, append(line, note))
+	}
+	widths := make([]int, len(header))
+	for _, line := range table {
+		for i, c := range line {
+			if n := len([]rune(c)); n > widths[i] {
+				widths[i] = n
+			}
+		}
+	}
+	var out strings.Builder
+	for _, line := range table {
+		for i, c := range line {
+			out.WriteString(c)
+			if i < len(line)-1 {
+				out.WriteString(strings.Repeat(" ", widths[i]-len([]rune(c))+2))
+			}
+		}
+		out.WriteString("\n")
+	}
+	if len(fixedParts) > 0 {
+		out.WriteString("fixed: " + strings.Join(fixedParts, ", ") + "\n")
+	}
+	return out.String()
+}
+
+func varies(rows []Row, k string) bool {
+	first := FormatValue(rows[0].Params[k])
+	for _, r := range rows[1:] {
+		if FormatValue(r.Params[k]) != first {
+			return true
+		}
+	}
+	return false
 }

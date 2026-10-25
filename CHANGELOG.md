@@ -33,6 +33,15 @@
 - Preflight warns (never blocks) when a script defines an output flag such as
   `--output_dir` that the command does not pass.
 - `runq target check` reports the target's `data_path`.
+- Drafts: `runq draft <job.yaml|->` plans and validates without side effects
+  (no sync, preflight, scheduler or repo writes) and keeps the plan as `dr…`;
+  its output is the full preview plus a run table. `runq submit dr…` freezes it
+  into a job — repeat-safe (the same draft never makes a second job), `--rev N`
+  refuses if it was edited since. `runq draft ps / show [--yaml] / edit [-f] /
+  discard`; edits are rev-checked, project and target stay fixed, `edit`
+  without `-f` opens `$EDITOR`. Each project keeps its newest 5 open drafts.
+  New `/api/v1/drafts` endpoints; jobs record their `draft_id`. Submitting a
+  job.yaml directly still works for now and prints a note outside a terminal.
 - job.yaml `tasks:` lists named runs instead of a `sweep:` (one or the other):
   `{run: R1 lr, lr: 2e-6}` per row, overriding `fixed_params`; `needs_code:
   [param]` flags rows that need a code change (listed in the preview, not

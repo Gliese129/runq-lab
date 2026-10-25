@@ -104,7 +104,7 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	// {{project}}/{{log_path}} vars the runq preset requires).
 	cmd, err := renderSubmitCmd(b.Cfg.SubmitTemplate, t, plan, runsh)
 	if err != nil {
-		return "", submitplan.Plan{}, fmt.Errorf("render submit_template: %w", err)
+		return "", submitplan.Plan{}, fmt.Errorf("render submit_template: %w\n%s", err, submitTemplateParamHint)
 	}
 
 	fmt.Fprintf(&s, "\n── submit command (task 1 of %d) ──\n%s%s\n", len(plan.Tasks), b.envPrelude(plan.Env).Render(), cmd)

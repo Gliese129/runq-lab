@@ -713,7 +713,57 @@ func (p *Proxy) ExportJob(ctx context.Context, ref string) ([]byte, error) {
 	return out, err
 }
 
+// ── Drafts (rc6) ──
+
+func (p *Proxy) CreateDraft(ctx context.Context, req backend.DraftRequest) (*backend.DraftResult, error) {
+	var out backend.DraftResult
+	err := p.do(ctx, "POST", "/api/v1/drafts", req, &out)
+	return &out, err
+}
+
+func (p *Proxy) ListDrafts(ctx context.Context, project string) ([]backend.DraftView, error) {
+	var out struct {
+		Drafts []backend.DraftView `json:"drafts"`
+	}
+	path := "/api/v1/drafts"
+	if project != "" {
+		path += "?project=" + url.QueryEscape(project)
+	}
+	err := p.do(ctx, "GET", path, nil, &out)
+	return out.Drafts, err
+}
+
+func (p *Proxy) GetDraft(ctx context.Context, ref string) (*backend.DraftResult, error) {
+	var out backend.DraftResult
+	err := p.do(ctx, "GET", "/api/v1/drafts/"+url.PathEscape(ref), nil, &out)
+	return &out, err
+}
+
+func (p *Proxy) DraftYAML(ctx context.Context, ref string) ([]byte, error) {
+	var out []byte
+	err := p.do(ctx, "GET", "/api/v1/drafts/"+url.PathEscape(ref)+"?format=yaml", nil, &out)
+	return out, err
+}
+
+func (p *Proxy) EditDraft(ctx context.Context, ref, yamlText string) (*backend.DraftResult, error) {
+	var out backend.DraftResult
+	err := p.do(ctx, "PUT", "/api/v1/drafts/"+url.PathEscape(ref), map[string]string{"yaml": yamlText}, &out)
+	return &out, err
+}
+
+func (p *Proxy) SubmitDraft(ctx context.Context, ref string, rev int, skipPreflight bool) (*backend.DraftSubmitResult, error) {
+	var out backend.DraftSubmitResult
+	err := p.doWithTimeout(ctx, "POST", "/api/v1/drafts/"+url.PathEscape(ref)+"/submit",
+		map[string]any{"rev": rev, "no_preflight": skipPreflight}, &out, proxySubmitTimeout)
+	return &out, err
+}
+
+func (p *Proxy) DiscardDraft(ctx context.Context, ref string) error {
+	return p.do(ctx, "DELETE", "/api/v1/drafts/"+url.PathEscape(ref), nil, nil)
+}
+
 var (
+	_ backend.Drafter     = (*Proxy)(nil)
 	_ backend.JobExporter = (*Proxy)(nil)
 	_ backend.Sectioner   = (*Proxy)(nil)
 	_ backend.JobRenamer  = (*Proxy)(nil)

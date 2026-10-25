@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/gosuri/uilive"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
@@ -25,7 +27,7 @@ import (
 
 var submitCmd = &cobra.Command{
 	Use:   "submit [job.yaml | .]",
-	Short: "Submit a job.yaml (one experiment) — preview first with --dry",
+	Short: "Submit a draft (dr… from runq draft) — or, for now, a job.yaml",
 	Long: `Submit a job.yaml. A job is one experiment of a registered project:
 
   project: my-code-base
@@ -50,6 +52,17 @@ the command line. Target precedence: -t > job.target > project.target.
 		file := args[0]
 		if file == "" {
 			return fmt.Errorf("no job file")
+		}
+		if strings.HasPrefix(file, "dr") {
+			if _, err := os.Stat(file); err != nil {
+				rev, _ := cmd.Flags().GetInt("rev")
+				noPreflight, _ := cmd.Flags().GetBool("no-preflight")
+				jsonOut, _ := cmd.Flags().GetBool("json")
+				return submitDraft(cmd, file, rev, noPreflight, jsonOut)
+			}
+		}
+		if !term.IsTerminal(int(os.Stdout.Fd())) {
+			fmt.Fprintf(os.Stderr, "note: submitting a job file directly is going away; plan it with `runq draft %s`, then `runq submit dr…`\n", file)
 		}
 		dryRun, _ := cmd.Flags().GetBool("dry")
 		dryRunAlias, _ := cmd.Flags().GetBool("dry-run")
@@ -262,6 +275,7 @@ func init() {
 	submitCmd.Flags().Bool("watch", false, "Block and show live progress after submit")
 	submitCmd.Flags().String("project", "", "Override the project name in the YAML")
 	submitCmd.Flags().StringP("note", "n", "", "Job name (overrides the YAML name: field)")
+	submitCmd.Flags().Int("rev", 0, "with dr…: refuse unless the draft is still at this rev")
 	submitCmd.Flags().StringP("section", "s", "", "Section to file the job under (must exist; default: the project's rules, else unsorted)")
 	submitCmd.Flags().String("project-file", "", "Upsert project config from a YAML file (also writes on --dry)")
 	submitCmd.Flags().Bool("json", false, "output raw JSON")

@@ -54,8 +54,8 @@ var rootCmd = &cobra.Command{
 
   Typical loop:
     runq project add -f project.yaml        register the code base (once)
-    runq submit job.yaml --dry              preview tasks + rendered command
-    runq submit job.yaml --json             submit -> {job_id, total_tasks}
+    runq draft job.yaml                     plan: tasks, target, rendered command -> dr…
+    runq submit dr… --json                  submit -> {job_id, total_tasks}
     runq ps <job_id> --json --fresh         task states
     runq logs <task_id> --grep 'loss' -n 20 last matching log lines
     runq kill <job_id|task_id>

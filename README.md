@@ -22,7 +22,7 @@ a dashboard; the agent drives the CLI.
   directories, retries, cross-machine code sync and scheduler resources are
   declared in YAML, so the command stays `python train.py`.
 - **Cheap for agents.** One way to do each thing, `--json` everywhere,
-  `--dry` previews for free, `runq logs --grep` returns only matching lines,
+  `runq draft` previews for free, `runq logs --grep` returns only matching lines,
   and a built-in skill (`runq skill install`) teaches the rules.
 
 runq works on top of SGE/UGE, Slurm and PBS (presets for TSUBAME and ABCI);
@@ -79,8 +79,8 @@ sweep:
 
 ```bash
 runq project add -f project.yaml
-runq submit job.yaml --dry             # tasks, target, rendered command — nothing submitted
-runq submit job.yaml --json            # {"job_id": "jb…", "total_tasks": 6}
+runq draft job.yaml                    # the plan: tasks, target, rendered command → dr… (nothing submitted)
+runq submit dr… --json                 # {"job_id": "jb…", "total_tasks": 6}
 runq ps <job_id> --json --fresh        # task states
 runq logs <task_id> --grep 'loss' -n 20
 runq kill <job_id>
@@ -103,14 +103,14 @@ HPC details (templates, reservations, sync): [docs/hpc.md](./docs/hpc.md)
 ## Everyday commands
 
 ```bash
-runq submit job.yaml --dry | --json   # preview / submit
+runq draft job.yaml · runq submit dr…  # plan / submit
 runq ps [job_id] --json [--fresh]     # jobs, or one job's tasks
 runq task show <task_id>              # command, dirs, status evidence (JSON)
 runq logs <task_id> --no-follow -n 200
 runq logs <task_id> --grep '<regex>' -n 20
 runq results <job_id> --json          # rows written by runq.record
 runq kill <task_id|job_id>
-runq submit job.yaml --dry           # after fixing a failed task, submit a new one
+runq draft job.yaml                  # after fixing a failed task, plan and submit a new one
 runq clean --job <job_id> --show      # preview; deletion is irreversible
 ```
 
@@ -122,7 +122,7 @@ Full reference: [docs/cli.md](./docs/cli.md)
 
 Run `runq skill install` once per machine. The short version:
 
-- Preview with `submit --dry`, then submit when it matches the plan.
+- Plan with `runq draft`, then `runq submit dr…` when it matches.
 - Express variations of an experiment as job files under the existing project.
 - Check state with one `runq ps <job> --json` when there is a reason to look.
 - From tool calls, read logs with `--no-follow` or `--grep`.

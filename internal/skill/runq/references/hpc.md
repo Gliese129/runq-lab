@@ -87,7 +87,7 @@ fixed_params: { ar_id: "9245", node_kind: node_f, h_rt: "4:00:00" }  # shape: qr
 ```
 
 Leave `ar_id` out (or `""`) and `-ar` is not passed. Confirm `-ar '9245'` in the
-`--dry` submit line, and placement with `qstat -j <ext_id>`.
+submit line of the `runq draft` preview, and placement with `qstat -j <ext_id>`.
 
 `[[...]]` segments are kept or dropped as a whole:
 - `[[-ar {{param.ar_id}}]]` — kept when the param is set and not empty. One

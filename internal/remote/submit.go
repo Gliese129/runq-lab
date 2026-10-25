@@ -226,9 +226,7 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	// mid-loop with the job row already inserted.
 	if len(plan.Tasks) > 0 {
 		if _, err := renderSubmitCmd(b.Cfg.SubmitTemplate, plan.Tasks[0], plan, "<run_sh>"); err != nil {
-			return "", nil, fmt.Errorf(
-				"%w\nHint: every {{param.NAME}} in submit_template must exist as a task param — add it to fixed_params (same value for all tasks) or as a sweep column (per-task values), or wrap the flag in [[...]] (e.g. [[-ar {{param.ar_id}}]]) to make it optional. Preview with `runq submit job.yaml --dry`",
-				err)
+			return "", nil, fmt.Errorf("%w\n%s", err, submitTemplateParamHint)
 		}
 	}
 
@@ -250,7 +248,7 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	}
 	jobRow := store.JobRow{
 		ID: plan.JobID, ProjectName: plan.Project, Description: plan.Description,
-		Name: plan.Name, SectionID: jobCfg.SectionID, ConfigJSON: string(cfgJSON), Status: "pending",
+		Name: plan.Name, SectionID: jobCfg.SectionID, DraftID: jobCfg.DraftID, ConfigJSON: string(cfgJSON), Status: "pending",
 		TotalTasks: len(plan.Tasks), Target: b.Cfg.Name, CreatedAt: now,
 	}
 
@@ -474,3 +472,7 @@ func planToTaskRow(t submitplan.PlannedTask, plan submitplan.Plan, now time.Time
 		TargetGeneration: generation,
 	}
 }
+
+// submitTemplateParamHint follows a missing-{{param.*}} render error,
+// wherever the plan is rendered (draft preview or submit).
+const submitTemplateParamHint = "Hint: every {{param.NAME}} in submit_template must exist as a task param — add it to fixed_params (same value for all tasks) or to each row, or wrap the flag in [[...]] (e.g. [[-ar {{param.ar_id}}]]) to make it optional. Check with `runq draft <job.yaml>`"

@@ -82,18 +82,19 @@ A smoke test, a resume, or the same sweep on a reservation is another job
 file — it may set its own `command:`, `target:` or `overrides:` — not
 another project.
 
-## 6. Preview, then submit
+## 6. Draft, then submit
 
 ```bash
-runq submit job.yaml --dry
+runq draft job.yaml
 ```
 
-`--dry` shows `kl(3) × seed(2) = 6 tasks`, the target, the generated `run.sh`
-and the exact `qsub` line, and which params reach the code only via
-`ctx.params`. It submits nothing. When it looks right:
+The draft is the plan itself: `kl(3) × seed(2) = 6 tasks`, the target, a table
+of the runs, the generated `run.sh` and the exact `qsub` line, and which params
+reach the code only via `ctx.params`. It submits nothing and is kept as `dr…`.
+Change it with `runq draft edit dr…` (opens `$EDITOR`). When it looks right:
 
 ```bash
-runq submit job.yaml --json      # {"job_id": "jb…", "total_tasks": 6}
+runq submit dr… --json      # {"job_id": "jb…", "total_tasks": 6}
 ```
 
 ## 7. Watch
@@ -111,7 +112,7 @@ the cluster is queueing the task.
 ## 8. When something goes wrong
 
 ```bash
-runq submit job.yaml --dry  # fix the cause, preview, then submit a new task
+runq draft job.yaml         # fix the cause, draft again, then submit the new draft
 runq kill <job_id>            # stop a whole job
 ```
 

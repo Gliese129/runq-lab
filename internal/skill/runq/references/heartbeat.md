@@ -79,7 +79,8 @@ does not need rewriting at every submit.
    its detached form (TSUBAME: `iqrsh` with a command; other sites differ —
    check their docs or `references/hpc.md`).
 4. **Before a submit:** list in-flight tasks (`runq ps -t <target> --json`),
-   preview with `--dry`, then submit once.
+   plan it with `runq draft`, then `runq submit dr…` once (repeating it is safe:
+   the same draft never makes a second job).
 5. **A failed probe is unconfirmed.** Report both observations with times, try
    again next tick, and keep the task as it is.
 6. **The runq service belongs outside the agent.** On `connection refused`, run

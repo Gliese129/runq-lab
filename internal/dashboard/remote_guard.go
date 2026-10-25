@@ -100,6 +100,26 @@ func (s *Server) guardAllows(w http.ResponseWriter, r *http.Request, target stri
 		}
 		return deny(r.Method + " " + path)
 
+	case "drafts":
+		switch {
+		case len(seg) == 1 && get:
+			return true
+		case len(seg) == 1 && r.Method == http.MethodPost: // create: pinned to this target
+			return s.forceBodyField(w, r, "target", target)
+		}
+		resolver, ok := s.backend.(interface {
+			DraftTarget(context.Context, string) (string, error)
+		})
+		if !ok {
+			return deny("draft ownership unavailable")
+		}
+		got, err := resolver.DraftTarget(r.Context(), seg[1])
+		if err != nil {
+			writeDraftError(w, err)
+			return false
+		}
+		return got == target || deny("draft belongs to another target")
+
 	case "consumers":
 		if len(seg) < 2 {
 			return deny("consumer listing requires job scope")

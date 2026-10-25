@@ -215,6 +215,10 @@ func (s *Store) addMissingColumns(ctx context.Context) error {
 	if err := addColumnIfMissing(ctx, s.db, "tasks", "run_name", "TEXT"); err != nil {
 		return fmt.Errorf("add tasks.run_name: %w", err)
 	}
+	// rc6 drafts: the draft a job was submitted from.
+	if err := addColumnIfMissing(ctx, s.db, "jobs", "draft_id", "TEXT"); err != nil {
+		return fmt.Errorf("add jobs.draft_id: %w", err)
+	}
 	// rc6 sections: NULL = unsorted.
 	if err := addColumnIfMissing(ctx, s.db, "jobs", "section_id", "TEXT"); err != nil {
 		return fmt.Errorf("add jobs.section_id: %w", err)

@@ -17,6 +17,7 @@ type JobRow struct {
 	// SectionID is the job's section ("" = unsorted); Section is its name.
 	SectionID  string
 	Section    string
+	DraftID    string // the draft it was submitted from ("" = direct submit)
 	ConfigJSON string // serialized job.JobConfig (kept for UI to display original sweep config)
 	Status     string // pending / running / paused | done / failed / partial / killed (terminal)
 	TotalTasks int
@@ -44,22 +45,22 @@ func (s *Store) TouchJobRefreshedAt(ctx context.Context, jobID string, at time.T
 
 // InsertJob inserts a single job row.
 func (s *Store) InsertJob(ctx context.Context, j *JobRow) error {
-	query := `INSERT INTO jobs (id, project_name, description, note, config_json, status, total_tasks, target, created_at, section_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO jobs (id, project_name, description, note, config_json, status, total_tasks, target, created_at, section_id, draft_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
 		j.ID, j.ProjectName, j.Description, j.Name, j.ConfigJSON,
-		j.Status, j.TotalTasks, targetOrDefault(j.Target), j.CreatedAt.Unix(), nullIfEmpty(j.SectionID),
+		j.Status, j.TotalTasks, targetOrDefault(j.Target), j.CreatedAt.Unix(), nullIfEmpty(j.SectionID), nullIfEmpty(j.DraftID),
 	)
 	return err
 }
 
 // InsertJobTx inserts a job row within an existing transaction.
 func (s *Store) InsertJobTx(ctx context.Context, tx *sql.Tx, j *JobRow) error {
-	query := `INSERT INTO jobs (id, project_name, description, note, config_json, status, total_tasks, target, created_at, section_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO jobs (id, project_name, description, note, config_json, status, total_tasks, target, created_at, section_id, draft_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := tx.ExecContext(ctx, query,
 		j.ID, j.ProjectName, j.Description, j.Name, j.ConfigJSON,
-		j.Status, j.TotalTasks, targetOrDefault(j.Target), j.CreatedAt.Unix(), nullIfEmpty(j.SectionID),
+		j.Status, j.TotalTasks, targetOrDefault(j.Target), j.CreatedAt.Unix(), nullIfEmpty(j.SectionID), nullIfEmpty(j.DraftID),
 	)
 	return err
 }
@@ -190,7 +191,7 @@ func (s *Store) DeleteJob(ctx context.Context, jobID string) error {
 
 // allJobColumns lists every column in the jobs table.
 // Defined once so SELECT and Scan stay in sync.
-const allJobColumns = `id, project_name, description, note, config_json, status, total_tasks, target, created_at, finished_at, refreshed_at, archived_at, section_id, (SELECT name FROM sections WHERE sections.id = jobs.section_id)`
+const allJobColumns = `id, project_name, description, note, config_json, status, total_tasks, target, created_at, finished_at, refreshed_at, archived_at, section_id, (SELECT name FROM sections WHERE sections.id = jobs.section_id), draft_id`
 
 // scanJob reads one result row into a JobRow.
 // Column order must match allJobColumns.
@@ -209,12 +210,13 @@ func scanJob(scanner interface{ Scan(dest ...any) error }) (*JobRow, error) {
 		archivedAt  sql.NullInt64
 		sectionID   sql.NullString
 		section     sql.NullString
+		draftID     sql.NullString
 	)
 
 	err := scanner.Scan(
 		&j.ID, &j.ProjectName, &description, &note, &j.ConfigJSON,
 		&j.Status, &j.TotalTasks, &target, &createdAt, &finishedAt, &refreshedAt, &archivedAt,
-		&sectionID, &section,
+		&sectionID, &section, &draftID,
 	)
 	if err != nil {
 		return nil, err
@@ -222,7 +224,7 @@ func scanJob(scanner interface{ Scan(dest ...any) error }) (*JobRow, error) {
 
 	j.Description = description.String
 	j.Name = note.String
-	j.SectionID, j.Section = sectionID.String, section.String
+	j.SectionID, j.Section, j.DraftID = sectionID.String, section.String, draftID.String
 	j.Target = target.String
 	if j.Target == "" {
 		j.Target = "local"
@@ -399,7 +401,7 @@ func (s *Store) UnarchiveJob(ctx context.Context, jobID string) error {
 // Inside an explicit project scope the cascade does not apply — you navigated
 // there on purpose. target filters by compute target; empty = no filter.
 func (s *Store) ListJobsVisible(ctx context.Context, projectName, target string) ([]JobRow, error) {
-	query := `SELECT j.id, j.project_name, j.description, j.note, j.config_json, j.status, j.total_tasks, j.target, j.created_at, j.finished_at, j.refreshed_at, j.archived_at, j.section_id, (SELECT name FROM sections WHERE sections.id = j.section_id)
+	query := `SELECT j.id, j.project_name, j.description, j.note, j.config_json, j.status, j.total_tasks, j.target, j.created_at, j.finished_at, j.refreshed_at, j.archived_at, j.section_id, (SELECT name FROM sections WHERE sections.id = j.section_id), j.draft_id
 		FROM jobs j`
 	var where []string
 	var args []any

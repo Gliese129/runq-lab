@@ -78,6 +78,11 @@ func runPs(cmd *cobra.Command, args []string) error {
 		if err := printDashboardJobs(jobs); err != nil {
 			return err
 		}
+		if d, ok := be.(backend.Drafter); ok {
+			if drafts, err := d.ListDrafts(cmd.Context(), ""); err == nil && len(drafts) > 0 {
+				fmt.Println(utils.Dimf("%d open draft(s) (runq draft ps)", len(drafts)))
+			}
+		}
 		printDashboardLink(os.Stdout, base)
 		return nil
 	})

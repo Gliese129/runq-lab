@@ -242,3 +242,12 @@ CREATE TABLE IF NOT EXISTS section_rules (
  section_id TEXT NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
  kind TEXT NOT NULL, pattern TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0
 );
+
+-- rc6 drafts: an editable plan, frozen into a job by `runq submit dr…`.
+-- updated_at is in nanoseconds (retention orders by it).
+CREATE TABLE IF NOT EXISTS drafts (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL, rev INTEGER NOT NULL,
+ status TEXT NOT NULL, job_id TEXT, target TEXT NOT NULL DEFAULT '',
+ config_json TEXT NOT NULL, source_path TEXT NOT NULL DEFAULT '', source_sha TEXT NOT NULL DEFAULT '',
+ created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);

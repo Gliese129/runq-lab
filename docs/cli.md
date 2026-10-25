@@ -12,7 +12,12 @@ When the service serves the dashboard, `submit`, `ps` and `task show` JSON carry
 
 | Command | What it does |
 |---|---|
-| `runq submit <job.yaml \| .> --dry` | Preview: expanded tasks, chosen target, rendered command (HPC: run.sh + submit line), params that reach the code only via `ctx.params`. Submits nothing |
+| `runq draft <job.yaml \| . \| -> [-p project] [-s section] [-t target]` | Plan: expanded tasks, run table, chosen target and section, rendered command (HPC: run.sh + submit line), params that reach the code only via `ctx.params`. Submits nothing; keeps the plan as draft `dr…` (5 open per project) |
+| `runq draft ps` / `runq draft show dr… [--yaml]` | Open drafts / one draft's run table (`--yaml`: its editable form) |
+| `runq draft edit dr… [-f file]` | Replace the plan from the edited YAML (rev-checked) or in `$EDITOR` |
+| `runq draft discard dr…` | Delete an open draft |
+| `runq submit dr… [--rev N] --json` | Freeze the draft into a job → `{"job_id", "total_tasks", "draft_id", "url"}`; submitting it again returns the same job |
+| `runq submit <job.yaml \| .> --dry` | Older one-step preview; prefer `runq draft` |
 | `runq submit <job.yaml \| .> --json` | Submit → `{"job_id", "total_tasks", "url"}`. `-t <target>` overrides the target (`-t` > `job.target` > `project.target`) · `-n/--note` job name · `--project-file project.yaml` registers/updates the project first (also on `--dry`) · `--no-preflight` skips submit-time checks |
 | `runq kill <task_id \| job_id>` | Cancel a task, or every task of a job |
 
@@ -102,7 +107,7 @@ walks project → job → confirmation.
 
 ## Notes for scripts and agents
 
-- `runq submit` without `--dry` queues real cluster jobs — never use it to explore.
+- `runq submit` queues real cluster jobs — explore with `runq draft`, which submits nothing.
 - `runq logs` follows by default and blocks; pass `--no-follow` or `--grep`.
 - Check progress with one `runq ps <job_id> --json`; don't loop.
 - When reporting to the researcher, include the `url` of the job or task.

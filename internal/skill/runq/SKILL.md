@@ -38,8 +38,9 @@ agent) or you are about to set one up, read `references/heartbeat.md` first.
 
 | Goal | Command |
 |---|---|
-| Preview (submits nothing) | `runq submit job.yaml --dry` |
-| Submit | `runq submit job.yaml --json` → `{job_id,total_tasks}` |
+| Plan (the preview; submits nothing) | `runq draft job.yaml` → draft `dr…` (`--json` for the full plan) |
+| Submit the draft | `runq submit dr… --json` → `{job_id,total_tasks,draft_id}` (repeat-safe: same job) |
+| Change a draft | `runq draft show dr… --yaml > plan.yaml`, edit, `runq draft edit dr… -f plan.yaml` · `runq draft ps` |
 | Jobs / one job's tasks | `runq ps --json` · `runq ps <job_id> --json` (add `--fresh` to probe the scheduler first) |
 | A submitted job back as job.yaml (`tasks:` rows) | `runq export <jb…> [-o file]` |
 | One task (command, dirs, scheduler id, times, links) | `runq task show <task_id>` |
@@ -149,15 +150,19 @@ need in `[[...]]` (e.g. `[[-ar {{param.ar_id}}]]` for a reservation). `choices`,
 enforced. Keep each param in one sweep block. Target precedence: `-t` > `job.target` >
 `project.target`; `target use` and `RUNQ_TARGET` scope queries only.
 
-Read the `--dry` output before each real submit — task count, target, generated
-run.sh / submit line, how each param reaches the code (flag or `ctx.params`), pending code
-sync — and tell the user the arithmetic (`kl(3) × seed(2) = 6`).
+Read the `runq draft` output before submitting — task count, target, section, the run
+table, generated run.sh / submit line, how each param reaches the code (flag or
+`ctx.params`), rows that need code, pending code sync — and tell the user the arithmetic
+(`kl(3) × seed(2) = 6`). Give the researcher the draft id when they should look before
+it runs; they may edit it. Submit with `runq submit dr…` (add `--rev N` to refuse if
+someone edited it since you read rev N). After the researcher edits a plan you
+submitted, `runq export jb… -o <job.yaml>` brings it back into the repo.
 
 ## 3. Let runq carry the setup
 
 A wrapper script around the command is usually doing things runq can declare.
 Moving them into YAML keeps the command a plain `python train.py`, makes each
-setting visible in `--dry`, and applies it the same way to every task:
+setting visible in the draft's preview, and applies it the same way to every task:
 
 | Typical wrapper line | Declare it in runq |
 |---|---|
@@ -262,8 +267,8 @@ Each file you add is one more thing the researcher reads or cleans up later. Goo
 
 ## 8. Working agreements
 
-1. **Preview with `--dry`; submit for real when the preview matches the plan** — a
-   submit queues real cluster jobs.
+1. **Draft first; submit the draft when its plan matches** — `runq submit dr…` queues
+   real cluster jobs.
 2. **Check state when there is a reason** — one `runq ps <job> --json`; the researcher
    follows progress on the dashboard.
 3. **Put the dashboard link in your reports.** `submit --json`, `ps --json` and

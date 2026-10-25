@@ -39,6 +39,12 @@ type JobConfig struct {
 	// Baseline names the reference run (default: the first row). Run names
 	// of sweep rows and the plan table describe rows relative to it.
 	Baseline string `yaml:"baseline,omitempty" json:"baseline,omitempty"`
+	// DraftID is set by the service when a draft is submitted (provenance).
+	DraftID string `yaml:"-" json:"draft_id,omitempty"`
+	// Draft and Rev head a draft's editable YAML: `runq draft edit` checks
+	// them; as input to `runq draft` they are ignored.
+	Draft string `yaml:"draft,omitempty" json:"-"`
+	Rev   int    `yaml:"rev,omitempty" json:"-"`
 	// FromJob is written by `runq export` for provenance; ignored as input.
 	FromJob   string     `yaml:"from_job,omitempty" json:"from_job,omitempty"`
 	Overrides *Overrides `yaml:"overrides,omitempty" json:"overrides,omitempty"`
