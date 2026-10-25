@@ -18,7 +18,7 @@ func newTestRegistry(t *testing.T) *Registry {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if _, err := db.Exec(`CREATE TABLE projects (name TEXT PRIMARY KEY, config_json TEXT)`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE projects (name TEXT PRIMARY KEY, id TEXT, config_json TEXT)`); err != nil {
 		t.Fatal(err)
 	}
 	return NewRegistry(db)

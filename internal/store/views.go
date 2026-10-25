@@ -158,7 +158,7 @@ func (s *Store) ViewJobs(ctx context.Context, spec views.Spec, override []string
 		return all[i].CreatedAt.After(all[j].CreatedAt)
 	})
 	for _, j := range all {
-		ok, err := path.Match(note, j.Note)
+		ok, err := path.Match(note, j.Name)
 		if err != nil {
 			return nil, &views.Invalid{Errors: []string{"invalid jobs.note glob"}}
 		}
@@ -206,7 +206,7 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 			return in, err
 		}
 		params := map[string]map[string]any{}
-		source := views.Source{JobID: j.ID, Note: j.Note, Status: j.Status, Tasks: len(tasks), Attention: []map[string]any{}, ObservationState: "never"}
+		source := views.Source{JobID: j.ID, Note: j.Name, Status: j.Status, Tasks: len(tasks), Attention: []map[string]any{}, ObservationState: "never"}
 		source.ObservedAt, source.ObservationState, err = s.JobObservation(ctx, tasks)
 		if err != nil {
 			return in, err

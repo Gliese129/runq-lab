@@ -198,12 +198,10 @@ func TestSubmitEnvPrefixResolvesSameLineReferences(t *testing.T) {
 	}
 }
 
-// End-to-end pin for the {{name}} chain: project.job_name (default template)
-// → job.Name (per-submit override) → render+sanitize → {{name}} in the
-// ACTUAL submit command the scheduler receives. Plan-level coverage exists
-// (TestPlannedTaskName); this asserts the last hop — renderSubmitCmd's vars
-// table actually carries the name, and the override beats the project
-// template.
+// End-to-end pin for the {{name}} chain: project.job_name → render+sanitize
+// → {{name}} in the ACTUAL submit command the scheduler receives. Plan-level
+// coverage exists (TestPlannedTaskName); this asserts the last hop, and that
+// the job's free-text display name stays out of it.
 func TestSubmitCommandReceivesRenderedJobName(t *testing.T) {
 
 	cfg := &config.TargetConfig{
@@ -222,12 +220,12 @@ func TestSubmitCommandReceivesRenderedJobName(t *testing.T) {
 		t.Errorf("project job_name not rendered into -N: %q", captured)
 	}
 
-	// 2. job.yaml name: override wins over the project template
-	jobCfg.Name = "override-{{lr}}"
+	// 2. the job's display name is free text and never reaches -N
+	jobCfg.Name = "A1 原始基线"
 	_, rows = prepareTasks(t, b, proj, jobCfg)
 	captured = readSubmitCommand(t, b, rows[0])
-	if !strings.Contains(captured, "-N 'override-0.1'") {
-		t.Errorf("job name override not rendered into -N: %q", captured)
+	if !strings.Contains(captured, "-N 'eval-0.1'") {
+		t.Errorf("display name must not change -N: %q", captured)
 	}
 }
 

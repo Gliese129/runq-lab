@@ -9,6 +9,7 @@ import (
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/preflight"
 	"github.com/gliese129/runq-lab/internal/project"
+	"github.com/gliese129/runq-lab/internal/store"
 	"github.com/gliese129/runq-lab/internal/submitplan"
 	"github.com/gliese129/runq-lab/internal/utils"
 	"github.com/gliese129/runq-lab/internal/workspace"
@@ -24,11 +25,8 @@ func (b *Backend) Preview(ctx context.Context, jobCfg job.JobConfig, proj *proje
 }
 
 func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj *project.Config, skipPreflight bool) (string, submitplan.Plan, error) {
-	resolved, err := resolveNote(ctx, b.Store, jobCfg)
-	if err != nil {
-		return "", submitplan.Plan{}, err
-	}
-	jobCfg.Note = resolved
+	warns := jobCfg.NormalizeLegacy()
+	warns = append(warns, duplicateNameWarnings(ctx, b.Store, jobCfg)...)
 	deps := b.planDeps(skipPreflight)
 	deps.JobID = utils.GenerateJobID()
 	// Use the same root and layout as Prepare without materializing it.
@@ -36,7 +34,7 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	if err != nil {
 		return "", submitplan.Plan{}, err
 	}
-	jobRoot := path.Join(root, workspace.JobDirName(resolved, deps.JobID))
+	jobRoot := path.Join(root, workspace.JobDirName(jobCfg.Name, deps.JobID))
 	deps.Paths = submitplan.Paths{WorkspaceRoot: jobRoot, LogRoot: jobRoot}
 	plan, err := submitplan.Build(ctx, jobCfg, proj, deps)
 	if err != nil {
@@ -65,7 +63,10 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	}
 
 	var s strings.Builder
-	fmt.Fprintf(&s, "note: %s\n", plan.Note)
+	fmt.Fprintf(&s, "name: %s\n", plan.Name)
+	for _, w := range warns {
+		fmt.Fprintf(&s, "warning: %s\n", w)
+	}
 	if len(plan.UnconsumedParams) > 0 {
 		fmt.Fprintf(&s, "params via ctx.params: %s\n", strings.Join(plan.UnconsumedParams, ", "))
 	}
@@ -104,4 +105,22 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	fmt.Fprintf(&s, "\n── submit command (task 1 of %d) ──\n%s%s\n", len(plan.Tasks), b.envPrelude(plan.Env).Render(), cmd)
 	fmt.Fprintf(&s, "\n── run.sh (task 1 of %d) ──\n%s", len(plan.Tasks), b.buildRunScript(t, plan))
 	return s.String(), plan, nil
+}
+
+// duplicateNameWarnings flags a name already used in the project, pointing
+// a retry at the existing job instead of a same-named sibling.
+func duplicateNameWarnings(ctx context.Context, st *store.Store, cfg job.JobConfig) []string {
+	if cfg.Name == "" || st == nil {
+		return nil
+	}
+	rows, err := st.ListJobs(ctx, cfg.Project, "")
+	if err != nil {
+		return nil
+	}
+	for _, r := range rows {
+		if r.Name == cfg.Name {
+			return []string{fmt.Sprintf("name %q is already used by %s (%s); to retry or add cells, extend that job instead of a same-named one (or pick a distinct name)", cfg.Name, r.ID, r.Status)}
+		}
+	}
+	return nil
 }

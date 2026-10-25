@@ -65,7 +65,7 @@
           @keydown.enter="openJob(j)"
         >
           <code class="archived-id">{{ j.id.slice(0, 8) }}</code>
-          <JobNote class="text-body-2 flex-grow-1" :note="j.note" :description="j.description" />
+          <JobNote class="text-body-2 flex-grow-1" :note="j.name" :description="j.description" />
           <v-btn size="x-small" variant="text" @click.stop="unarchiveJob(j.id)">{{ t('archive.unarchive') }}</v-btn>
         </div>
         <v-pagination v-if="(archivedQuery.data.value?.total ?? 0) > 25"

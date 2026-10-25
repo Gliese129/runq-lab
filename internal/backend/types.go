@@ -37,7 +37,7 @@ type JobSummary struct {
 	Stale     bool           `json:"stale"`
 	ID        string         `json:"id"`
 	Project   string         `json:"project"`
-	Note      string         `json:"note"`
+	Name      string         `json:"name"`
 	// Description is the job.yaml sentence behind the short note.
 	Description string `json:"description,omitempty"`
 	// Status: pending / running / paused while live; done / failed /
@@ -557,6 +557,7 @@ func (e *GenerationChangedError) Error() string {
 // Project summary for sidebar.
 
 type ProjectSummary struct {
+	ID       string `json:"id"`
 	Name     string `json:"name"`
 	WorkDir  string `json:"work_dir,omitempty"`
 	JobCount int    `json:"job_count"`

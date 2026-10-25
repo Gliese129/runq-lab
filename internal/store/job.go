@@ -13,7 +13,7 @@ type JobRow struct {
 	ID          string
 	ProjectName string
 	Description string
-	Note        string
+	Name        string // display name; stored in the legacy `note` column
 	ConfigJSON  string // serialized job.JobConfig (kept for UI to display original sweep config)
 	Status      string // pending / running / paused | done / failed / partial / killed (terminal)
 	TotalTasks  int
@@ -44,7 +44,7 @@ func (s *Store) InsertJob(ctx context.Context, j *JobRow) error {
 	query := `INSERT INTO jobs (id, project_name, description, note, config_json, status, total_tasks, target, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
-		j.ID, j.ProjectName, j.Description, j.Note, j.ConfigJSON,
+		j.ID, j.ProjectName, j.Description, j.Name, j.ConfigJSON,
 		j.Status, j.TotalTasks, targetOrDefault(j.Target), j.CreatedAt.Unix(),
 	)
 	return err
@@ -55,7 +55,7 @@ func (s *Store) InsertJobTx(ctx context.Context, tx *sql.Tx, j *JobRow) error {
 	query := `INSERT INTO jobs (id, project_name, description, note, config_json, status, total_tasks, target, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := tx.ExecContext(ctx, query,
-		j.ID, j.ProjectName, j.Description, j.Note, j.ConfigJSON,
+		j.ID, j.ProjectName, j.Description, j.Name, j.ConfigJSON,
 		j.Status, j.TotalTasks, targetOrDefault(j.Target), j.CreatedAt.Unix(),
 	)
 	return err
@@ -215,7 +215,7 @@ func scanJob(scanner interface{ Scan(dest ...any) error }) (*JobRow, error) {
 	}
 
 	j.Description = description.String
-	j.Note = note.String
+	j.Name = note.String
 	j.Target = target.String
 	if j.Target == "" {
 		j.Target = "local"
@@ -447,4 +447,42 @@ func (s *Store) queryJobs(ctx context.Context, query string, args ...any) ([]Job
 		result = append(result, *j)
 	}
 	return result, rows.Err()
+}
+
+// RenameJob sets a job's display name. ref is a job id or a unique id
+// prefix; the resolved id is returned. The id (and its directory) never
+// change — the name is a label.
+func (s *Store) RenameJob(ctx context.Context, ref, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("job name must not be empty")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM jobs WHERE id = ? OR id LIKE ? ORDER BY id`, ref, ref+"%")
+	if err != nil {
+		return "", err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return "", err
+		}
+		if id == ref {
+			ids = []string{id}
+			break
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	switch {
+	case len(ids) == 0:
+		return "", fmt.Errorf("job %q not found", ref)
+	case len(ids) > 1:
+		return "", fmt.Errorf("job %q is ambiguous: %s", ref, strings.Join(ids, ", "))
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE jobs SET note = ? WHERE id = ?`, name, ids[0]); err != nil {
+		return "", fmt.Errorf("rename job %s: %w", ids[0], err)
+	}
+	return ids[0], nil
 }

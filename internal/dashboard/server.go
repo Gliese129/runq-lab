@@ -209,6 +209,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/jobs/{id}/log/search", s.handleJobLogSearch)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/kill", s.handleKillJob)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/archive", s.handleArchiveJob)
+	s.mux.HandleFunc("POST /api/v1/jobs/{id}/rename", s.handleRenameJob)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/unarchive", s.handleUnarchiveJob)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/refresh", s.handleRefreshJob)
 
@@ -807,6 +808,27 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 		"job_id":      jobID,
 		"total_tasks": total,
 	})
+}
+
+func (s *Server) handleRenameJob(w http.ResponseWriter, r *http.Request) {
+	renamer, ok := s.backend.(backend.JobRenamer)
+	if !ok {
+		writeErrorStatus(w, http.StatusNotImplemented, fmt.Errorf("job rename is not supported by this backend"))
+		return
+	}
+	var body struct {
+		NewName string `json:"new_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErrorStatus(w, http.StatusBadRequest, err)
+		return
+	}
+	id, err := renamer.RenameJob(r.Context(), r.PathValue("id"), body.NewName)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "name": strings.TrimSpace(body.NewName)})
 }
 
 func (s *Server) handleArchiveJob(w http.ResponseWriter, r *http.Request) {

@@ -103,22 +103,6 @@ func printPreflight(r preflight.Report) {
 	}
 }
 
-// resolveNote renders note placeholders against this project's existing
-// job notes ({{version}} family scan needs them).
-func resolveNote(ctx context.Context, st *store.Store, cfg job.JobConfig) (string, error) {
-	rows, err := st.ListJobs(ctx, cfg.Project, "")
-	if err != nil {
-		return "", fmt.Errorf("list jobs for note rendering: %w", err)
-	}
-	notes := make([]string, 0, len(rows))
-	for _, r := range rows {
-		notes = append(notes, r.Note)
-	}
-	return job.RenderNote(&cfg, job.NoteContext{
-		Project: cfg.Project, Now: time.Now(), ExistingNotes: notes,
-	})
-}
-
 // Prepare does everything up to (but NOT including) the external submission:
 // plan, validate, one-shot setup, workspace files, run.sh, submit.cmd, then
 // one atomic job+tasks ledger transaction. The returned rows are ready
@@ -189,17 +173,10 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 		return "", nil, fmt.Errorf("resolve workspace root: %w", err)
 	}
 
-	// Resolved note for display (job row, workspace files); ConfigJSON keeps
-	// the template so re-submission keeps incrementing {{version}}.
 	planCfg := jobCfg
-	if resolved, nerr := resolveNote(ctx, b.Store, jobCfg); nerr != nil {
-		return "", nil, nerr
-	} else {
-		planCfg.Note = resolved
-	}
-	// Job dir carries the resolved note so `ls .runq/` reads like an
-	// experiment log; the DB stores full paths (never re-derived from id).
-	jobRoot := path.Join(wsRoot, workspace.JobDirName(planCfg.Note, jobID))
+	planCfg.NormalizeLegacy()
+	// The DB stores full paths (never re-derived from id).
+	jobRoot := path.Join(wsRoot, workspace.JobDirName(planCfg.Name, jobID))
 
 	deps := b.planDeps(opts.SkipPreflight)
 	deps.JobID = jobID
@@ -246,7 +223,7 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	}
 	jobRow := store.JobRow{
 		ID: plan.JobID, ProjectName: plan.Project, Description: plan.Description,
-		Note: plan.Note, ConfigJSON: string(cfgJSON), Status: "pending",
+		Name: plan.Name, ConfigJSON: string(cfgJSON), Status: "pending",
 		TotalTasks: len(plan.Tasks), Target: b.Cfg.Name, CreatedAt: now,
 	}
 
@@ -256,7 +233,7 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 		}
 		// Local prep + template render first: these have no external side effect,
 		// so a failure here aborts before any cluster job or DB row exists.
-		if err := workspace.WriteFS(b.FS, t.TaskDir, t.Params, plan.Wandb, plan.Note); err != nil {
+		if err := workspace.WriteFS(b.FS, t.TaskDir, t.Params, plan.Wandb, plan.Name); err != nil {
 			return plan.JobID, rows, fmt.Errorf("prepare workspace for %s: %w", t.TaskID, err)
 		}
 		runsh := path.Join(t.TaskDir, runScriptName)
@@ -333,7 +310,7 @@ func (b *Backend) homeDirCached() (string, error) {
 func (b *Backend) buildRunScript(t submitplan.PlannedTask, plan submitplan.Plan) string {
 	env := workspace.TaskEnv(workspace.Identity{
 		TaskID: t.TaskID, JobID: plan.JobID, Project: plan.Project, TaskDir: t.TaskDir,
-		SweepKeys: plan.SweepKeys, JobNote: plan.Note, WandbConfigured: plan.Wandb != nil,
+		SweepKeys: plan.SweepKeys, JobName: plan.Name, WandbConfigured: plan.Wandb != nil,
 	}, t.Env, t.WorkingDir)
 	// A runqd-backed target injects RUNQ_SOCKET_PATH into the child process, so
 	// its SDK calls should use that machine daemon. Traditional HPC schedulers

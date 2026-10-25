@@ -98,6 +98,9 @@ preflight:
 
 // Config represents a parsed project.yaml file.
 type Config struct {
+	// ID is the immutable "pj…" id, owned by the registry (never read from
+	// project.yaml). ProjectName is the renamable label.
+	ID          string `yaml:"-" json:"id,omitempty"`
 	ProjectName string `yaml:"project_name" json:"project_name"`
 	// Target is the project's home: the compute target whose filesystem
 	// owns WorkingDir and every other path in this config (RQ-65). All

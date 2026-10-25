@@ -11,7 +11,7 @@ const LIVE = new Set(['running', 'pending', 'paused'])
 export function matchesQuery(j: JobSummary, query: string): boolean {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
   if (!terms.length) return true
-  const hay = [j.note, j.description ?? '', j.project].join('\n').toLowerCase()
+  const hay = [j.name, j.description ?? '', j.project].join('\n').toLowerCase()
   const id = j.id.toLowerCase()
   return terms.every((t) => id.startsWith(t) || hay.includes(t))
 }
@@ -46,7 +46,7 @@ export function commonWordsByProject(jobs: readonly JobSummary[]): Map<string, S
   const notes = new Map<string, string[]>()
   for (const j of jobs) {
     if (!notes.has(j.project)) notes.set(j.project, [])
-    notes.get(j.project)!.push(j.note)
+    notes.get(j.project)!.push(j.name)
   }
   return new Map([...notes].map(([p, n]) => [p, commonWords(n)]))
 }

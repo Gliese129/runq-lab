@@ -69,6 +69,7 @@ func (b *storeQueries) configsToSummaries(ctx context.Context, configs []project
 	out := make([]ProjectSummary, 0, len(configs))
 	for _, c := range configs {
 		out = append(out, ProjectSummary{
+			ID:       c.ID,
 			Name:     c.ProjectName,
 			WorkDir:  c.WorkingDir,
 			JobCount: jobCounts[c.ProjectName],

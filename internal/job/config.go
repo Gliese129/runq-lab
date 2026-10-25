@@ -19,10 +19,11 @@ type JobConfig struct {
 
 	Project     string `yaml:"project" json:"project"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-	Note        string `yaml:"note,omitempty" json:"note,omitempty"`
-	// Name overrides the project's job_name template for this submission —
-	// the per-task scheduler job name ({{name}} in submit_template).
-	Name        string         `yaml:"name,omitempty" json:"name,omitempty"`
+	// Name is the job's renamable display name (the id never changes):
+	// what this experiment is, readable at a glance. Free text.
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// Note is the pre-rc6 key for Name; NormalizeLegacy folds it in.
+	Note        string         `yaml:"note,omitempty" json:"note,omitempty"`
 	FixedParams map[string]any `yaml:"fixed_params,omitempty" json:"fixed_params,omitempty"` // params with fixed values (not swept)
 	Sweep       []SweepBlock   `yaml:"sweep" json:"sweep"`
 	Overrides   *Overrides     `yaml:"overrides,omitempty" json:"overrides,omitempty"`

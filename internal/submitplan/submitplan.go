@@ -64,7 +64,7 @@ type Plan struct {
 	JobID       string               `json:"job_id"`
 	Project     string               `json:"project"`
 	Description string               `json:"description"`
-	Note        string               `json:"note"`
+	Name        string               `json:"name"`
 	GPUsPerTask int                  `json:"gpus_per_task"`
 	Wandb       *project.WandbConfig `json:"wandb"`
 	Tasks       []PlannedTask        `json:"tasks"`
@@ -348,13 +348,11 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 		jobID = utils.GenerateJobID()
 	}
 	callerUID := os.Getuid()
-	// Scheduler job name template: job.yaml override > project.yaml job_name
-	// > default rq-{{task_id}}. Rendered per task (params differ), always
-	// sanitized — qsub/sbatch must never reject what runq generated.
-	nameTmpl := cfg.Name
-	if strings.TrimSpace(nameTmpl) == "" {
-		nameTmpl = proj.JobName
-	}
+	// Scheduler job name template: project.yaml job_name > default
+	// rq-{{task_id}}. Rendered per task (params differ), always sanitized —
+	// qsub/sbatch must never reject what runq generated. The job's display
+	// name is free text and never feeds the scheduler.
+	nameTmpl := proj.JobName
 	flagParams := flagParamNames(proj)
 	unconsumed := map[string]bool{}
 	tasks := make([]PlannedTask, 0, len(taskParams))
@@ -403,7 +401,7 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 	sort.Strings(sweepKeys)
 	for i := range tasks {
 		task := &tasks[i]
-		task.Env = workspace.TaskEnv(workspace.Identity{TaskID: task.TaskID, JobID: jobID, Project: cfg.Project, TaskDir: task.TaskDir, SweepKeys: sweepKeys, JobNote: cfg.Note, WandbConfigured: proj.Wandb != nil}, env, task.WorkingDir)
+		task.Env = workspace.TaskEnv(workspace.Identity{TaskID: task.TaskID, JobID: jobID, Project: cfg.Project, TaskDir: task.TaskDir, SweepKeys: sweepKeys, JobName: cfg.Name, WandbConfigured: proj.Wandb != nil}, env, task.WorkingDir)
 		task.CheckpointDir = task.Env["RUNQ_CHECKPOINT_DIR"]
 		task.OutputDir = task.Env["RUNQ_OUTPUT_DIR"]
 		task.WandbDir = task.Env["WANDB_DIR"]
@@ -420,7 +418,7 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 		JobID:       jobID,
 		Project:     cfg.Project,
 		Description: cfg.Description,
-		Note:        cfg.Note,
+		Name:        cfg.Name,
 		GPUsPerTask: gpusPerTask,
 		Wandb:       proj.Wandb,
 		Tasks:       tasks,

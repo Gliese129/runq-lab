@@ -57,7 +57,7 @@ func BuildJobSummary(job store.JobRow, tasks []store.TaskRow) JobSummary {
 		Stale:        !store.IsTerminalJobStatus(job.Status) && (refreshedAt == nil || time.Now().Unix()-*refreshedAt > 90),
 		ID:           job.ID,
 		Project:      job.ProjectName,
-		Note:         job.Note,
+		Name:         job.Name,
 		Description:  job.Description,
 		Status:       job.Status,
 		Target:       job.Target,

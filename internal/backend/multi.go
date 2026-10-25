@@ -1270,6 +1270,7 @@ func (m *MultiBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts Su
 	}
 	cfg.Target, cfg.TargetSource = target, source
 	cfg.EffectiveConfig = projectCfg
+	cfg.Project = projectCfg.ProjectName // job.yaml may name the project by id
 	sourceTarget := projectSourceTarget(projectCfg)
 	if target != sourceTarget {
 		m.projectSyncMu.Lock()
@@ -1460,6 +1461,7 @@ func (m *MultiBackend) PreviewSubmitForTarget(ctx context.Context, explicit stri
 	}
 	cfg.Target, cfg.TargetSource = target, source
 	cfg.EffectiveConfig = proj
+	cfg.Project = proj.ProjectName // job.yaml may name the project by id
 	out, err := be.PreviewSubmit(ctx, cfg, skipPreflight)
 	out.Target, out.TargetSource = target, source
 	out.Preview = fmt.Sprintf("target: %s (%s)\n", target, source) + out.Preview
@@ -1583,6 +1585,10 @@ func (m *MultiBackend) UpdateProject(ctx context.Context, cfg project.Config) er
 
 func (m *MultiBackend) RenameProject(ctx context.Context, oldName, newName string) error {
 	return m.registry.Rename(ctx, oldName, newName)
+}
+
+func (m *MultiBackend) RenameJob(ctx context.Context, ref, newName string) (string, error) {
+	return m.store.RenameJob(ctx, ref, newName)
 }
 
 // compile-time interface check

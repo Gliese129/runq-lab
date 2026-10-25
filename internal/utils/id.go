@@ -13,6 +13,10 @@ func GenerateJobID() string { return "jb" + GenerateID() }
 
 func GenerateTaskID() string { return "tk" + GenerateID() }
 
+// GenerateProjectID returns a project's immutable id ("pj" + 8 hex). The
+// name is a renamable label; the id names the project's storage directory.
+func GenerateProjectID() string { return "pj" + GenerateID() }
+
 // GenerateID returns a short, human-friendly 8-hex-char ID.
 // Format: 4 bytes random -> "a3f1b20e". Collision probability is negligible
 // at lab scale (< 10k tasks): ~1 in 4 billion per pair.

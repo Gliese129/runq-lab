@@ -1,7 +1,7 @@
 <template>
   <div class="job-head mb-4" :style="{ '--project': projectColor(detail.job.project) }">
     <div class="d-flex align-center ga-3">
-      <span class="job-title text-truncate" :title="detail.job.note">{{ detail.job.note || detail.job.id }}</span>
+      <span class="job-title text-truncate" :title="detail.job.name">{{ detail.job.name || detail.job.id }}</span>
       <JobStatusBadge :status="detail.job.status" />
       <v-spacer />
       <v-btn

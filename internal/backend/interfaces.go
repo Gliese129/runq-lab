@@ -164,3 +164,9 @@ type SubmitOptions struct {
 	SkipPreflight bool
 	Target        string // compute target name; empty = job.target > project.target
 }
+
+// JobRenamer changes a job's display name (ref = id or unique id prefix)
+// and returns the resolved job id. Implemented by the service and its proxy.
+type JobRenamer interface {
+	RenameJob(ctx context.Context, ref, newName string) (string, error)
+}

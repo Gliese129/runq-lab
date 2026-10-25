@@ -77,7 +77,10 @@ the command line. Target precedence: -t > job.target > project.target.
 			jobCfg.Project = projectOverride
 		}
 		if noteOverride != "" {
-			jobCfg.Note = noteOverride
+			jobCfg.Name, jobCfg.Note = noteOverride, ""
+		}
+		for _, w := range jobCfg.NormalizeLegacy() {
+			fmt.Fprintf(os.Stderr, "%s: %s\n", filepath.Base(file), w)
 		}
 
 		return withBackend(cmd, func(be backend.Backend) error {
@@ -250,7 +253,7 @@ func init() {
 	submitCmd.Flags().Bool("dry-run", false, "Expand sweep and print tasks without submitting")
 	submitCmd.Flags().Bool("watch", false, "Block and show live progress after submit")
 	submitCmd.Flags().String("project", "", "Override the project name in the YAML")
-	submitCmd.Flags().StringP("note", "n", "", "Experiment note (overrides YAML note: field)")
+	submitCmd.Flags().StringP("note", "n", "", "Job name (overrides the YAML name: field)")
 	submitCmd.Flags().String("project-file", "", "Upsert project config from a YAML file (also writes on --dry)")
 	submitCmd.Flags().Bool("json", false, "output raw JSON")
 	submitCmd.Flags().Bool(

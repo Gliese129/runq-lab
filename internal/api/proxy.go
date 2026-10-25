@@ -222,6 +222,14 @@ func (p *Proxy) ListTasks(ctx context.Context, opts backend.TaskListOptions) ([]
 	return env.Items, total, nil
 }
 
+func (p *Proxy) RenameJob(ctx context.Context, ref, newName string) (string, error) {
+	var out struct {
+		ID string `json:"id"`
+	}
+	err := p.do(ctx, "POST", "/api/v1/jobs/"+url.PathEscape(ref)+"/rename", map[string]string{"new_name": newName}, &out)
+	return out.ID, err
+}
+
 func (p *Proxy) ArchiveJob(ctx context.Context, jobID string) error {
 	return p.do(ctx, "POST", "/api/v1/jobs/"+url.PathEscape(jobID)+"/archive", nil, nil)
 }

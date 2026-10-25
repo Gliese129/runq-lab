@@ -14,7 +14,7 @@
     >
       <code class="job-id">{{ j.id.slice(0, 8) }}</code>
       <div class="job-text">
-        <JobNote class="job-note" :note="j.note" :description="j.description" :common="common.get(j.project)" />
+        <JobNote class="job-note" :note="j.name" :description="j.description" :common="common.get(j.project)" />
         <div v-if="showProject || j.description" class="job-sub">
           <span v-if="showProject">{{ j.project }}</span>
           <span v-if="showProject && j.description"> · </span>

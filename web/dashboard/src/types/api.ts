@@ -27,8 +27,9 @@ export interface JobSummary {
   archived: boolean
   id: string
   project: string
-  note: string
-  /** job.yaml description — the long sentence behind the short note */
+  /** renamable display name (`runq rename`); the id never changes */
+  name: string
+  /** job.yaml description — the long sentence behind the short name */
   description?: string
   /**
    * pending | running | paused while live; done | failed | partial | killed
@@ -68,15 +69,16 @@ export interface RawJobConfig {
   effective_config?: Record<string, unknown>
   project: string
   description?: string
-  note?: string
-  /** scheduler job name template override ({{name}} in submit_template) */
+  /** display name */
   name?: string
+  /** pre-rc6 key for name */
+  note?: string
   fixed_params?: Record<string, any>
   sweep: Array<{ method: string; parameters: Record<string, { values: any[] }> }>
   overrides?: JobOverrides
 }
 
-/** Read alias: raw config as submitted (note keeps its {{...}} form). */
+/** Read alias: raw config as submitted. */
 
 export interface TimeEvidence {
   at: number

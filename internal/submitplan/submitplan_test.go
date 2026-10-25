@@ -272,7 +272,7 @@ func TestPlannedTaskName(t *testing.T) {
 		t.Errorf("default name: got %q want %q", plan.Tasks[0].Name, want)
 	}
 
-	// project template with params; job.yaml override wins
+	// project template with params; the job's display name never feeds it
 	proj.JobName = "eval-{{lr}}"
 	plan, err = Build(context.Background(), cfg, proj, deps)
 	if err != nil {
@@ -281,12 +281,12 @@ func TestPlannedTaskName(t *testing.T) {
 	if plan.Tasks[0].Name != "eval-0.1" {
 		t.Errorf("project template: got %q", plan.Tasks[0].Name)
 	}
-	cfg.Name = "{{project}}-x"
+	cfg.Name = "A1 原始基线"
 	plan, err = Build(context.Background(), cfg, proj, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Tasks[0].Name != "p-x" {
-		t.Errorf("job override: got %q", plan.Tasks[0].Name)
+	if plan.Tasks[0].Name != "eval-0.1" || plan.Name != "A1 原始基线" {
+		t.Errorf("display name leaked into the scheduler name: task %q, job %q", plan.Tasks[0].Name, plan.Name)
 	}
 }

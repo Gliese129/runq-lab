@@ -82,7 +82,11 @@ is also provided on the command line (CLI takes priority).`,
 			if err := be.CreateProject(cmd.Context(), cfg); err != nil {
 				return err
 			}
-			fmt.Printf("project %q registered\n", cfg.ProjectName)
+			id := ""
+			if got, err := be.GetProject(cmd.Context(), cfg.ProjectName); err == nil {
+				id = got.ID + " "
+			}
+			fmt.Printf("project %s%q registered\n", id, cfg.ProjectName)
 			return nil
 		})
 	},
@@ -108,7 +112,7 @@ func runProjectLs(cmd *cobra.Command, args []string) error {
 		}
 
 		w := newTable()
-		fmt.Fprintf(w, "NAME\tDIR\tGPUs/TASK\tJOBS\n")
+		fmt.Fprintf(w, "ID\tNAME\tDIR\tGPUs/TASK\tJOBS\n")
 		for _, s := range summaries {
 			// Fetch full config for display fields not in ProjectSummary.
 			gpus := 1
@@ -117,7 +121,7 @@ func runProjectLs(cmd *cobra.Command, args []string) error {
 					gpus = cfg.Defaults.GPUsPerTask
 				}
 			}
-			fmt.Fprintf(w, "%s\t%s\t%d\t%d\n", s.Name, s.WorkDir, gpus, s.JobCount)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\n", s.ID, s.Name, s.WorkDir, gpus, s.JobCount)
 		}
 		w.Flush()
 		return nil
@@ -125,7 +129,7 @@ func runProjectLs(cmd *cobra.Command, args []string) error {
 }
 
 var projectShowCmd = &cobra.Command{
-	Use:   "show <name>",
+	Use:   "show <id|name>",
 	Short: "Show project details",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runProjectShow,
@@ -161,14 +165,14 @@ func init() {
 // ── archive / unarchive (mode-aware) ──
 
 var projectArchiveCmd = &cobra.Command{
-	Use:   "archive <name>",
+	Use:   "archive <id|name>",
 	Short: "Hide a project (and its jobs in global lists) from default views; reversible",
 	Args:  cobra.ExactArgs(1),
 	RunE:  func(cmd *cobra.Command, args []string) error { return runProjectArchive(cmd, args[0], true) },
 }
 
 var projectUnarchiveCmd = &cobra.Command{
-	Use:   "unarchive <name>",
+	Use:   "unarchive <id|name>",
 	Short: "Bring an archived project back",
 	Args:  cobra.ExactArgs(1),
 	RunE:  func(cmd *cobra.Command, args []string) error { return runProjectArchive(cmd, args[0], false) },

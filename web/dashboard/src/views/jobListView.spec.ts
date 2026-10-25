@@ -4,8 +4,8 @@ import { filterJobs, groupJobs, matchesQuery } from './jobListView'
 
 const now = new Date(2026, 9, 14, 15, 0, 0)
 const at = (daysAgo: number) => Math.floor(new Date(2026, 9, 14 - daysAgo, 10).getTime() / 1000)
-const job = (id: string, project: string, note: string, status: string, created: number, description = ''): JobSummary => ({
-  id, project, note, status, created_at: created, description, archived: false, target: 't',
+const job = (id: string, project: string, name: string, status: string, created: number, description = ''): JobSummary => ({
+  id, project, name, status, created_at: created, description, archived: false, target: 't',
   tasks: { total: 1, pending: 0, running: 0, completed: 1, failed: 0 },
 } as JobSummary)
 

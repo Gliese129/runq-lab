@@ -27,7 +27,7 @@
         </template>
         <v-list density="compact" min-width="320">
           <v-list-item v-for="j in addable" :key="j.id" @click="add(j.id)">
-            <v-list-item-title class="text-body-2"><code class="mr-2">{{ j.id.slice(0, 8) }}</code>{{ j.note }}</v-list-item-title>
+            <v-list-item-title class="text-body-2"><code class="mr-2">{{ j.id.slice(0, 8) }}</code>{{ j.name }}</v-list-item-title>
           </v-list-item>
           <v-list-item v-if="!addable.length" disabled><v-list-item-title class="text-body-2">{{ t('views.no_more_jobs') }}</v-list-item-title></v-list-item>
         </v-list>
@@ -67,7 +67,7 @@ const jobsQuery = useJobsListQuery()
 const projectColor = useProjectColors()
 
 const projectJobs = computed(() => (jobsQuery.data.value ?? []).filter((j) => j.project === props.project))
-const jobNote = (id: string) => projectJobs.value.find((j) => j.id === id)?.note ?? ''
+const jobNote = (id: string) => projectJobs.value.find((j) => j.id === id)?.name ?? ''
 
 // Selection: ?jobs=a,b in the URL, else last time's choice for this view,
 // else the view's explicit job list. Note-pattern selectors are not used.

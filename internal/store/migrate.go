@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+
+	"github.com/gliese129/runq-lab/internal/utils"
 )
 
 //go:embed schema.sql
@@ -200,6 +202,42 @@ func (s *Store) addMissingColumns(ctx context.Context) error {
 	}
 	if err := addColumnIfMissing(ctx, s.db, "tasks", "timing_json", "TEXT"); err != nil {
 		return err
+	}
+	// rc6: immutable project ids. The name stays the join key (renames
+	// cascade it); the id names storage directories and survives renames.
+	if err := addColumnIfMissing(ctx, s.db, "projects", "id", "TEXT"); err != nil {
+		return fmt.Errorf("add projects.id: %w", err)
+	}
+	if err := s.backfillProjectIDs(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+// backfillProjectIDs gives every pre-rc6 project an id, then enforces
+// uniqueness.
+func (s *Store) backfillProjectIDs(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM projects WHERE id IS NULL OR id = ''`)
+	if err != nil {
+		return fmt.Errorf("list projects without id: %w", err)
+	}
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			rows.Close()
+			return err
+		}
+		names = append(names, n)
+	}
+	rows.Close()
+	for _, n := range names {
+		if _, err := s.db.ExecContext(ctx, `UPDATE projects SET id = ? WHERE name = ?`, utils.GenerateProjectID(), n); err != nil {
+			return fmt.Errorf("backfill id for project %q: %w", n, err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_id ON projects(id)`); err != nil {
+		return fmt.Errorf("index projects.id: %w", err)
 	}
 	return nil
 }

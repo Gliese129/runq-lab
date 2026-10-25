@@ -162,7 +162,7 @@ class Context:
                 "mode":    <project wandb.mode>; "disabled" on RANK > 0
                 "id":      task_id,  "resume": "allow",    # retries continue one run
                 "name":    "lr=0.01_bs=32" or f"{job_id}/{task_id}",
-                "group":   job note or job_id,
+                "group":   job name or job_id,
                 "config":  dict(params),
             }
 
@@ -176,7 +176,8 @@ class Context:
         """
         sweep_keys_raw = os.environ.get("RUNQ_SWEEP_KEYS", "")
         sweep_keys = [k.strip() for k in sweep_keys_raw.split(",") if k.strip()] if sweep_keys_raw else []
-        job_note = os.environ.get("RUNQ_JOB_NOTE", "")
+        # RUNQ_JOB_NOTE: tasks submitted before rc6.
+        job_name = os.environ.get("RUNQ_JOB_NAME") or os.environ.get("RUNQ_JOB_NOTE", "")
 
         if sweep_keys and self.params:
             parts = [f"{k}={self.params[k]}" for k in sweep_keys if k in self.params]
@@ -184,7 +185,7 @@ class Context:
         else:
             name = f"{self.job_id}/{self.task_id}" if self.job_id else self.task_id
 
-        group = job_note if job_note else (self.job_id or None)
+        group = job_name if job_name else (self.job_id or None)
         project_cfg = _load_wandb_project_cfg()
 
         cfg: dict[str, Any] = {

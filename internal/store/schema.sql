@@ -1,7 +1,8 @@
 -- runq SQLite schema
 
 CREATE TABLE IF NOT EXISTS projects (
-    name         TEXT PRIMARY KEY,
+    name         TEXT PRIMARY KEY,    -- renamable label; jobs/tasks/views carry it denormalized
+    id           TEXT,                -- immutable "pj…" id (unique index added by Migrate)
     config_json  TEXT NOT NULL,       -- serialized project.Config as JSON
     created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,

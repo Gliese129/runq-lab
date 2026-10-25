@@ -69,7 +69,7 @@ type Task struct {
 	// P6: W&B integration — sweep key names and job note flow through to
 	// workspace.Identity so BaseEnv() can emit WANDB_RUN_GROUP / WANDB_TAGS.
 	SweepKeys []string `json:"sweep_keys,omitempty"`
-	JobNote   string   `json:"job_note,omitempty"`
+	JobName   string   `json:"job_name,omitempty"`
 
 	// ExternalID is the remote scheduler's job id for the current attempt
 	// (empty before launch; cleared by requeue and manual retry). Purely
