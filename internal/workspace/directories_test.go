@@ -10,13 +10,16 @@ import (
 	"testing"
 )
 
-func TestTaskDirectoriesRespectOverridesAndKeepCachesOutsideContract(t *testing.T) {
+// Storage contract: runq's task directories always point into the task dir
+// (submitplan rejects env that tries to redirect them); unrelated caches pass
+// through untouched.
+func TestTaskDirectoriesStayInTaskDirAndKeepCachesOutsideContract(t *testing.T) {
 	root := t.TempDir()
 	working := filepath.Join(root, "code")
 	dir := filepath.Join(root, "task")
-	env := TaskEnv(Identity{TaskID: "task", TaskDir: dir, WandbConfigured: true}, map[string]string{"RUNQ_OUTPUT_DIR": "results", "RUNQ_CHECKPOINT_DIR": filepath.Join(root, "ckpts"), "WANDB_DIR": "tracking", "WANDB_CACHE_DIR": filepath.Join(root, "cache")}, working)
-	if env["RUNQ_OUTPUT_DIR"] != filepath.Join(working, "results") || env["WANDB_DIR"] != filepath.Join(working, "tracking") {
-		t.Fatalf("bad path resolution %+v", env)
+	env := TaskEnv(Identity{TaskID: "task", TaskDir: dir, WandbConfigured: true}, map[string]string{"RUNQ_OUTPUT_DIR": "results", "WANDB_DIR": "tracking", "WANDB_CACHE_DIR": filepath.Join(root, "cache")}, working)
+	if env["RUNQ_OUTPUT_DIR"] != OutputsDir(dir) || env["WANDB_DIR"] != dir || env["RUNQ_CHECKPOINT_DIR"] != CheckpointsDir(dir) {
+		t.Fatalf("runq directories must stay in the task dir %+v", env)
 	}
 	if err := EnsureTaskDirs(context.Background(), rfs.NewLocalFS(), env); err != nil {
 		t.Fatal(err)

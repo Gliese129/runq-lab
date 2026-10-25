@@ -249,6 +249,7 @@ func (p Preflight) RunPreflight(ctx context.Context, proj *project.Config, sampl
 	// Tier free: filesystem checks — against the TARGET's filesystem.
 	results = append(results, fold("writable", p.checkWritable(proj.WorkingDir, "working_dir"), p.Scope))
 	results = append(results, fold("paths", p.checkPathArgs(sampleCmd), p.Scope))
+	results = append(results, p.checkOutputArgs(proj, sampleCmd))
 
 	// Tier probe: one generated python file, one shell, one env
 	// activation. Skippable by cluster policy.
@@ -975,6 +976,47 @@ func (p Preflight) checkPathArgs(cmd string) []PreflightFinding {
 		}
 	}
 	return findings
+}
+
+// outputFlagRe finds argparse flags through which a script picks where it
+// writes (--output_dir, --save-dir, --ckpt_dir, --checkpoint_path, --out …).
+var outputFlagRe = regexp.MustCompile(`add_argument\(\s*["'](--(?:output|out|save|ckpt|checkpoint)(?:[_-]?(?:dir|path|root))?)["']`)
+
+// checkOutputArgs (storage contract, warning only): a script that defines an
+// output flag the command never passes falls back to its default, which is
+// usually inside the repo instead of the task directory. Scripts without such
+// flags are fine — passing runq's paths is a convention, not a requirement.
+func (p Preflight) checkOutputArgs(proj *project.Config, cmd string) CheckResult {
+	m := scriptRegex.FindStringSubmatch(cmd)
+	if m == nil {
+		return CheckResult{Name: "outputs", Status: "skipped", Detail: "no python script in the command"}
+	}
+	script := m[1]
+	if !path.IsAbs(script) {
+		script = path.Join(proj.WorkingDir, script)
+	}
+	src, err := p.fsys().ReadFile(script)
+	if err != nil {
+		return CheckResult{Name: "outputs", Status: "skipped", Detail: "script not readable here"}
+	}
+	var missing []string
+	seen := map[string]bool{}
+	for _, f := range outputFlagRe.FindAllStringSubmatch(string(src), -1) {
+		flag := f[1]
+		dashed := "--" + strings.ReplaceAll(strings.TrimPrefix(flag, "--"), "_", "-")
+		underscored := "--" + strings.ReplaceAll(strings.TrimPrefix(flag, "--"), "-", "_")
+		if seen[flag] || strings.Contains(cmd, dashed) || strings.Contains(cmd, underscored) {
+			continue
+		}
+		seen[flag] = true
+		missing = append(missing, flag)
+	}
+	if len(missing) == 0 {
+		return CheckResult{Name: "outputs", Status: "passed", Detail: "no unpassed output flags"}
+	}
+	return CheckResult{Name: "outputs", Status: "warning", Detail: fmt.Sprintf(
+		"%s defines %s but the command does not pass it, so its default (often inside the repo) is used; pass runq's task directory, e.g. %s $RUNQ_OUTPUT_DIR (checkpoints: $RUNQ_CHECKPOINT_DIR)",
+		path.Base(script), strings.Join(missing, ", "), missing[0])}
 }
 
 // ---- (3) imports ---------------------------------------------------

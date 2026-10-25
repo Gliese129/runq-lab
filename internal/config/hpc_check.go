@@ -73,6 +73,15 @@ func (tc *TargetConfig) CheckHPC() []HPCCheckResult {
 
 	results = append(results, renderCheck("submit_template", "submit_template", tc.SubmitTemplate, true))
 
+	switch {
+	case tc.DataPath == "" && tc.Workspace != "":
+		results = append(results, HPCCheckResult{"data_path", "warn", fmt.Sprintf("\"workspace\" is renamed to \"data_path\" (using %s); rename the key", tc.Workspace)})
+	case tc.DataPath != "":
+		results = append(results, HPCCheckResult{"data_path", "ok", tc.DataPath + "/<project id>/<job id>/"})
+	default:
+		results = append(results, HPCCheckResult{"data_path", "skip", "not set — data goes to <working_dir>/.runq/<project id>/"})
+	}
+
 	if strings.Contains(tc.SubmitTemplate, "{{task_id}}") && !strings.Contains(tc.SubmitTemplate, "{{name}}") {
 		results = append(results, HPCCheckResult{"job name", "skip",
 			"submit_template uses {{task_id}} but not {{name}} — raw ids can start with a digit (SGE rejects them); prefer -N {{name}} (sanitized, supports project job_name templates)"})

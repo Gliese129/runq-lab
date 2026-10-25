@@ -49,7 +49,7 @@ ctx.link_wandb(run)                      # runq shows the run on the task
 `wandb_like_cfg` = `project`/`entity`/`tags`/`mode` from the project's
 `wandb:` block (fallback project = runq project name), `id` = task id with
 `resume="allow"` (online retries continue the same run), `name` from the
-swept values, `group` = job note, `config` = params, and `mode="disabled"`
+swept values, `group` = job name at submit, `config` = params, and `mode="disabled"`
 when `RANK > 0` (one run per multi-GPU task; rank 0's system monitor covers
 every GPU on its node). Every key is a default you can override.
 `runq.link(name, url)` works with any run-id scheme; call it right after init.
@@ -66,7 +66,7 @@ every GPU on its node). Every key is a default you can override.
 - `ctx.output_dir` / `RUNQ_OUTPUT_DIR`: task `outputs/`; write training outputs there explicitly.
 - `ctx.checkpoint_dir` / `RUNQ_CHECKPOINT_DIR`: task `checkpoints/`.
 - `ctx.wandb_like_cfg["dir"]` = resolved `WANDB_DIR`, default task root. W&B creates `wandb/` under it, so pass the root (the default) rather than `task_dir/wandb`.
-- Project/job explicit path overrides win and appear in preview; relative paths resolve against the target project's `working_dir`. Submission creates/checks the selected target paths. CWD stays the code directory.
+- These directories always live in the task directory (under the target's `data_path`); submit rejects `environment`/`overrides.env` entries that redirect them. Submission creates/checks them on the target. CWD stays the code directory.
 - Set global `RANK` (not `LOCAL_RANK`) before W&B init. Without `RANK`, explicitly disable W&B on nonzero framework global ranks and pass that rank to `ctx.link_wandb`.
 - Call `ctx.link_wandb(run)` after init. It records the run's actual URL, which stays correct for custom run ids. Core SDK does not import W&B.
 - New submissions have new task and W&B IDs. Explicitly choose an old checkpoint or run ID if reuse is needed. Offline bundles use W&B's official sync.

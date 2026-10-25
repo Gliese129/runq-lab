@@ -2,7 +2,37 @@
 
 ## Unreleased
 
+### Breaking
+
+- A job's `note` is now its `name`: free text (spaces and CJK are fine), shown
+  first in `runq ps` and renamable with `runq rename <jb…> "<name>"`. `note:` is
+  read as `name:` with a warning. Note templates (`{{date}}`, `{{sweep}}`,
+  `{{version}}`, …) are gone; a name containing them is shown as written. A
+  `name:` next to `note:` (the old scheduler-name override) is ignored with a
+  warning — scheduler names come from project.yaml `job_name`. Tasks get
+  `RUNQ_JOB_NAME` (`RUNQ_JOB_NOTE` is no longer set).
+- New jobs live at `<data>/<project_id>/<job_id>/<task_id>/`, where `<data>` is
+  the target's `data_path` (pre-rc6 key: `workspace`), else
+  `<working_dir>/.runq`. Project and job directories carry an empty
+  `0-<name>` marker; with `data_path`, `<working_dir>/.runq/<project_id>` links
+  there. Existing jobs keep their directories. A top-level `data_path` now only
+  applies to local targets.
+- `RUNQ_OUTPUT_DIR`, `RUNQ_CHECKPOINT_DIR` and `WANDB_DIR` in `environment:` or
+  `overrides.env` are rejected: those directories always live in the task
+  directory. Move all task data with the target's `data_path`.
+
 ### Changes
+
+- Projects have an immutable id (`pj…`) next to their name; every command and
+  job.yaml `project:` accept the name, the id or a unique id prefix. Upgrading
+  assigns ids to existing projects. `runq rename <pj…|name> <new>` keeps the id,
+  updates jobs, tasks and views, and pins the W&B project so new runs stay next
+  to the old ones.
+- The preview warns when a job name is already used in the project, and its
+  `data:` line shows where task data will go.
+- Preflight warns (never blocks) when a script defines an output flag such as
+  `--output_dir` that the command does not pass.
+- `runq target check` reports the target's `data_path`.
 
 - `submit_template` supports optional `[[...]]` segments: `[[-ar {{param.ar_id}}]]`
   is dropped when `ar_id` is unset or empty, and `[[--no-requeue]]` is emitted

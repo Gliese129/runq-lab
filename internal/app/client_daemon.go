@@ -212,9 +212,9 @@ func newRemoteCLIForward(tc config.TargetConfig, handler http.Handler, logger *s
 
 // synthLocalRunqdTarget expands the runq preset for a local-GPUs target: the
 // templates come straight from the preset table (identical to a remote runqd
-// target); only identity and marker root are local specifics. Workspace is
-// deliberately left empty so task dirs keep the per-project layout
-// (ResolveRoot), matching pre-split local behavior.
+// target); only identity and marker root are local specifics. data_path
+// stays whatever the user set, so task dirs follow the storage contract
+// (remote.Backend.WorkspaceRoot).
 func synthLocalRunqdTarget(tc config.TargetConfig, dataDir string) (config.TargetConfig, error) {
 	pt, err := config.HPCPreset("runq")
 	if err != nil {

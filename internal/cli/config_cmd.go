@@ -245,6 +245,8 @@ func runConfigCheck(cmd *cobra.Command, args []string) error {
 			case "fail":
 				mark = "✗"
 				failed++
+			case "warn":
+				mark = "!"
 			default:
 				mark = "-"
 			}

@@ -106,7 +106,7 @@ params.json contains only supplied values.
 Legacy parameter `default/min/max/include/glob/strict` fields are ignored and no longer written.
 Project command is optional if the job provides one. Legacy project `command_template` remains
 readable; specifying both names is an error, and serialization writes only `command`.
-Labels belong in the job `note`, not in params.
+Labels belong in the job `name`, not in params.
 
 ### Python environments
 
@@ -144,10 +144,8 @@ Cross-target preview reports pending code sync; it checks destination files as t
 ```yaml
 project: resnet50
 description: "LR × optimizer sweep with tied batch/worker configs"
-note: "lr-sweep {{date}}"       # placeholders: params, {{project}} {{user}}
-                                # {{date}} {{time}} {{sweep}} {{version}} —
-                                # re-running the same named config
-                                # auto-numbers it (foo, foo-v2, foo-v3)
+name: lr × optimizer           # display name, free text; `runq rename` changes it
+                                # (pre-rc6 `note:` is read as name, with a warning)
 
 fixed_params:                   # constants for every task (a sweep value of the
   seed: 42                      # same name overrides). A job with fixed_params
@@ -185,9 +183,19 @@ DB, logs, or UIs.
 
 ## Storage layout
 
-By default task workspaces live under `<working_dir>/.runq/`. Set
-`data_path` in `~/.runq/config.yaml` to move physical storage to
-`<data_path>/<project>/` (`.runq` becomes a convenience symlink).
+Task workspaces live under `<data>/<project_id>/<job_id>/<task_id>/`. `<data>`
+is the target's `data_path` when set, else `<working_dir>/.runq`:
+
+```yaml
+# ~/.runq/config.yaml
+targets:
+  - name: tsubame
+    data_path: /gs/bs/tga-xxx/runq   # path on the target; pre-rc6 key: workspace
+```
+
+With `data_path`, `<working_dir>/.runq/<project_id>` links to the project's data
+directory. Project and job directories carry an empty `0-<name>` marker. A
+top-level `data_path` still applies to local targets, as a fallback.
 
 | Path (per task) | What |
 |---|---|
@@ -200,14 +208,13 @@ By default task workspaces live under `<working_dir>/.runq/`. Set
 | (task root) | `WANDB_DIR` / `ctx.wandb_dir` — W&B creates its own `wandb/` under it |
 | `run.sh` / `status.json` | HPC only: generated wrapper + self-reported status |
 
-To keep task workspaces on bulk storage, set `data_path` (above) — each task
-still gets its own directories. Setting `RUNQ_OUTPUT_DIR` / `RUNQ_CHECKPOINT_DIR`
-/ `WANDB_DIR` in `environment:` or `overrides.env` instead points **every task
-of the job at the same directory** (values are not templated; relative paths
-resolve against `working_dir`) — only do that for a single-task job or a
-deliberately shared directory. runq creates and permission-checks the
-directories on the target before submitting. `runq clean` deletes task
-directories only; overridden paths outside them survive.
+To keep task workspaces on bulk storage, set `data_path` on the target (above).
+`RUNQ_OUTPUT_DIR`, `RUNQ_CHECKPOINT_DIR` and `WANDB_DIR` always point into the
+task directory; setting them in `environment:` or `overrides.env` is an error.
+Pass runq's paths to scripts that take an output flag
+(`--output_dir $RUNQ_OUTPUT_DIR`); preflight warns when a script defines such a
+flag and the command leaves it at its default. runq creates and permission-checks
+the directories on the target before submitting.
 
 ## Views and consumers
 

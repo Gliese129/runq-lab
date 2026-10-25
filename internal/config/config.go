@@ -10,20 +10,16 @@
 //
 // # Storage model
 //
-// Every task's workspace (params.json, metrics.jsonl, checkpoints/, logs) lives
-// under a single root resolved by [ResolveRoot]:
+// Every task's workspace (params.json, metrics.jsonl, checkpoints/, logs)
+// lives under one root per target (the storage contract):
 //
-//	<root>/<job_id>/<task_id>/
+//	<data_path>/<pj…>/<jb…>/<tk…>/        target sets data_path
+//	<working_dir>/.runq/<pj…>/<jb…>/<tk…>/  otherwise
 //
-// Root resolution ([ResolveRoot] always returns the PHYSICAL path):
-//   - data_path configured → returns <data_path>/<project>/
-//     plus a convenience symlink: <working_dir>/.runq → <data_path>/<project>
-//   - data_path empty       → returns <working_dir>/.runq/
-//
-// The physical path is what gets persisted in the DB (task_dir), so config
-// changes never orphan running tasks. Both daemon and HPC call ResolveRoot;
-// downstream code (workspace.Write, ingest.ReapIncremental, submitplan.Build) is
-// unaware of which mode is active.
+// Project and job directories are named by id and carry a "0-<name>" marker
+// for humans. The physical path is what gets persisted in the DB (task_dir),
+// so config changes never orphan running tasks. remote.Backend.WorkspaceRoot
+// is the single decision point.
 package config
 
 import (
@@ -75,10 +71,14 @@ type DashboardConfig struct {
 //   - scheduler set  → external scheduler lane (runqd, Slurm, PBS, ...)
 //   - ssh present    → SSHFS (remote filesystem); absent → LocalFS
 type TargetConfig struct {
-	Name      string           `yaml:"name" json:"name"`
-	GPUs      []int            `yaml:"gpus,omitempty" json:"gpus,omitempty"`
-	Scheduler string           `yaml:"scheduler,omitempty" json:"scheduler,omitempty"` // e.g. "slurm", "pbs"
-	Workspace string           `yaml:"workspace,omitempty" json:"workspace,omitempty"` // HPC workspace root on the target
+	Name      string `yaml:"name" json:"name"`
+	GPUs      []int  `yaml:"gpus,omitempty" json:"gpus,omitempty"`
+	Scheduler string `yaml:"scheduler,omitempty" json:"scheduler,omitempty"` // e.g. "slurm", "pbs"
+	// DataPath is where this target keeps project data, on the target's
+	// filesystem: <data_path>/<pj…>/<jb…>/<tk…>/. Empty = <working_dir>/.runq.
+	DataPath string `yaml:"data_path,omitempty" json:"data_path,omitempty"`
+	// Workspace is the pre-rc6 key for DataPath (read as an alias).
+	Workspace string           `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	SSH       *SSHTargetConfig `yaml:"ssh,omitempty" json:"ssh,omitempty"`
 
 	// MaxInflight caps how many of this target's tasks may be in flight on
@@ -548,117 +548,6 @@ func removeMappingValue(root *yaml.Node, key string) {
 	}
 }
 
-// ResolveRoot returns the PHYSICAL workspace root for a project. Both daemon
-// and HPC use this to compute submitplan.Paths.WorkspaceRoot. The returned
-// path is what gets persisted in the DB (task_dir), so it must be stable
-// across config changes.
-//
-// When data_path is set it also creates a convenience symlink:
-//
-//	<working_dir>/.runq  →  <data_path>/<project>/
-//
-// but the returned (and persisted) path is always the physical location, not
-// the symlink. This way, if data_path changes later, old task rows still
-// point to their real directory.
-// ProspectiveRoot returns where ResolveRoot WOULD place the workspace,
-// creating NOTHING — previews must stay zero-disk. Mirrors ResolveRoot's
-// path logic only (no mkdir, no symlink, no validation side effects).
-func ProspectiveRoot(cfg *GlobalConfig, workingDir, project string) string {
-	if cfg == nil || cfg.DataPath == "" {
-		return filepath.Join(workingDir, ".runq")
-	}
-	return filepath.Join(cfg.DataPath, project)
-}
-
-func ResolveRoot(cfg *GlobalConfig, workingDir, project string) (string, error) {
-	if err := validateProjectName(project); err != nil {
-		return "", err
-	}
-
-	projectPath := filepath.Join(workingDir, ".runq")
-
-	if cfg == nil || cfg.DataPath == "" {
-		// project_path mode: no indirection; projectPath IS the physical root.
-		return projectPath, nil
-	}
-
-	// data_path mode: physical storage at <data_path>/<project>/.
-	realPath := filepath.Join(cfg.DataPath, project)
-	if err := os.MkdirAll(realPath, 0o755); err != nil {
-		return "", fmt.Errorf("create data_path dir %s: %w", realPath, err)
-	}
-
-	// Best-effort convenience symlink; a failure here is not fatal — the
-	// physical path is what matters (DB stores the physical path, not the
-	// symlink). Silent: the caller (CLI/daemon) decides whether to surface it.
-	_ = ensureSymlink(projectPath, realPath)
-
-	// Return the PHYSICAL path — this is what goes into the DB.
-	return realPath, nil
-}
-
-// validateProjectName rejects project names that would escape the intended
-// storage directory: path separators, dot-segments, absolute paths, empty.
-func validateProjectName(name string) error {
-	if name == "" {
-		return fmt.Errorf("project name must not be empty")
-	}
-	if name == "." || name == ".." {
-		return fmt.Errorf("project name %q is a dot-segment", name)
-	}
-	if filepath.IsAbs(name) {
-		return fmt.Errorf("project name %q must not be an absolute path", name)
-	}
-	if strings.ContainsAny(name, `/\`) {
-		return fmt.Errorf("project name %q must not contain path separators", name)
-	}
-	return nil
-}
-
-// ensureSymlink makes sure `link` is a symlink pointing at `target`.
-//
-// Cases:
-//   - link does not exist      → create symlink
-//   - link is already correct  → no-op
-//   - link points elsewhere    → remove and recreate (config changed)
-//   - link is a real directory → error (user must migrate manually)
-func ensureSymlink(link, target string) error {
-	// Ensure the parent directory of the symlink exists.
-	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
-		return fmt.Errorf("create parent for symlink %s: %w", link, err)
-	}
-
-	fi, err := os.Lstat(link)
-	if os.IsNotExist(err) {
-		return os.Symlink(target, link)
-	}
-	if err != nil {
-		return fmt.Errorf("stat %s: %w", link, err)
-	}
-
-	if fi.Mode()&os.ModeSymlink != 0 {
-		// Already a symlink — check if it points to the right place.
-		cur, err := os.Readlink(link)
-		if err != nil {
-			return fmt.Errorf("readlink %s: %w", link, err)
-		}
-		if cur == target {
-			return nil // correct
-		}
-		// Points elsewhere (config changed): re-point.
-		if err := os.Remove(link); err != nil {
-			return fmt.Errorf("remove stale symlink %s: %w", link, err)
-		}
-		return os.Symlink(target, link)
-	}
-
-	// It's a real directory (pre-existing data from before data_path was set).
-	return fmt.Errorf(
-		"%s is an existing directory, not a symlink — move its contents to %s manually, "+
-			"then remove the directory so runq can create the symlink",
-		link, target)
-}
-
 // RemoveTarget deletes one target from config.yaml. The write is
 // conditional on the generation just read, so a concurrent edit makes it
 // fail instead of being overwritten. Removing the default target clears
@@ -687,4 +576,13 @@ func RemoveTarget(name string) (wasDefault bool, err error) {
 		wasDefault = true
 	}
 	return wasDefault, saveGlobalWith(cfg, cfg.Generation)
+}
+
+// StorageRoot is where this target keeps project data: data_path, else the
+// pre-rc6 workspace key. Empty means <working_dir>/.runq.
+func (t TargetConfig) StorageRoot() string {
+	if t.DataPath != "" {
+		return t.DataPath
+	}
+	return t.Workspace
 }

@@ -276,6 +276,14 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 			env[k] = v
 		}
 	}
+	// Storage contract: runq owns where task data lives. Redirecting one of
+	// its directories through env silently splits a task's data across disks
+	// (and relative values land in the repo).
+	for _, k := range workspace.RunqDirVars {
+		if _, ok := env[k]; ok {
+			return Plan{}, fmt.Errorf("%s is set in environment/overrides.env, but runq owns it (it points into the task directory). Remove it: set data_path on the target to move all task data, or pass your own path to the script as a flag", k)
+		}
+	}
 
 	// working_dir existence is the TARGET filesystem's question (RQ-65) —
 	// a Mac daemon statting a TSUBAME path answers about the wrong world.

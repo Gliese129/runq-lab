@@ -46,6 +46,7 @@ agent) or you are about to set one up, read `references/heartbeat.md` first.
 | Last matching log lines | `runq logs <task_id> --grep 'loss\|step' -n 20` (ERE, runs on the target) |
 | Result rows from `runq.record` | `runq results <job_id> --json` |
 | Kill | `runq kill <task_id\|job_id\|consumer_id>` |
+| Rename a job or project (ids never change) | `runq rename <jb…\|pj…\|project-name> "<new name>"` |
 | Register a project / update it | `runq project add -f project.yaml` · `runq submit job.yaml --project-file project.yaml` (upsert, also on `--dry`) |
 | Targets | `runq target show [name]` · `runq target check <name>` · `runq target connect <name>` |
 | Service | `runq serve -d` · `runq serve status` · `runq serve restart` |
@@ -60,6 +61,8 @@ Older names you may remember, and what replaced them in v0.6:
 | `status <job>`, `job ls`, `job show` | `runq ps <job_id> --fresh --json` |
 | `job kill` | `runq kill <job_id>` |
 | `best`, `collect` | `runq results <job_id> --json` |
+| job `note:` | `name:` (free text, renamable with `runq rename`) |
+| target `workspace:` | target `data_path:` |
 | `init`, `project edit`, `target edit` | write the YAML directly, then `--project-file` / `runq target check` |
 
 `runq logs` follows the log by default, which suits a human at a terminal; from a
@@ -69,17 +72,28 @@ For reusable progress and paper tables: `runq view <file.yaml|name>` — see `re
 
 ## 2. Mental model
 
-- **project** = a code base and how it runs (`project.yaml`, registered once):
+- **project** = a code base and how it runs (`project.yaml`, registered once), with an
+  immutable id (`pj…`) and a renamable name; every command takes either:
   `project_name`, `target` (where the code lives), optional `targets` (where it may
   run), `working_dir`, default `command`, `environment`, `defaults{gpus_per_task,
   timeout}`, `preflight`, `python_env`, `wandb`, param annotations.
-- **job** = one experiment (`job.yaml`): `project`, `note`, optional `command`,
+- **job** = one experiment (`job.yaml`), also id (`jb…`) + renamable `name`:
+  `project`, `name`, optional `command`,
   `target`, `preflight`, `overrides{gpus_per_task,timeout,env}`,
   `fixed_params` (same in every task) and `sweep` (`grid` = cross product,
   `list` = zip rows; blocks multiply).
 - **task** = one cell, with its own workspace
-  `<working_dir>/.runq/<note>-<job_id>/<task_id>/`: log, `params.json`, `outputs/`,
-  `checkpoints/`, metrics, results.
+  `<data>/<project_id>/<job_id>/<task_id>/`: log, `params.json`, `outputs/`,
+  `checkpoints/`, metrics, results. `<data>` is the target's `data_path`, or
+  `<working_dir>/.runq` when unset; the preview's `data:` line shows it.
+- **storage** belongs to runq and the researcher: the researcher sets `data_path` on
+  the target once (e.g. a bulk-storage disk), and runq creates, links and cleans the
+  directories. Your code takes its paths from runq — `ctx.output_dir` /
+  `ctx.checkpoint_dir`, or `--output_dir $RUNQ_OUTPUT_DIR` for scripts without the
+  SDK — so data follows `data_path` instead of landing in the repo. Small scripts
+  that write nothing need no path flag. Leave `RUNQ_OUTPUT_DIR`,
+  `RUNQ_CHECKPOINT_DIR` and `WANDB_DIR` out of `environment`/`overrides.env`
+  (submit rejects them).
 - **target** = where tasks run (`~/.runq/config.yaml`): templates, `env_setup`, `max_inflight`.
 
 Express variations of an experiment — a smoke test, a resume, another script, a
@@ -215,13 +229,16 @@ Each file you add is one more thing the researcher reads or cleans up later. Goo
 - Prefer editing or parametrizing an existing job or script (`fixed_params` plus a
   flag, or `ctx.params` for a one-off test) over copying it into a `-v2` / `-fixed` variant; git keeps the history.
 - Make a smoke test a job: the same command with small `fixed_params`
-  (`max_steps: 2`) and `note: smoke`.
-- Give each job a short `note` that tells it apart from its neighbours — 2–4 words,
-  leading with what differs (`c0-dev-eval`, `kl-sweep`, `ar9094-resume`). The note is
-  the job's name in `runq ps`, the dashboard, the job directory and the W&B group, and
-  the researcher scans a list of them. Put the full sentence (what, why, which
-  checkpoint) in `description:`; the dashboard shows it under the note.
-- Let runq be the run record — note, params, logs, results, links, plus the git
+  (`max_steps: 2`) and `name: smoke`.
+- Give each job a `name` that says what it is compared with the baseline, in a few
+  words (`A1 原始基线`, `kl=0.1 无 std`, `c0 dev eval`). Free text is fine. It is the
+  first column of `runq ps` and the dashboard, the W&B group, and the marker in the
+  job directory, and the researcher scans a list of them. Leave out what runq
+  already records — target or reservation, date, shard number, attempt count. A
+  retry or extra cells belong in the existing job, not a same-named new one; the
+  preview warns when a name is taken. Put the full sentence (what it tests, which
+  checkpoint) in `description:`. Rename later with `runq rename <jb…> "<name>"`.
+- Let runq be the run record — name, params, logs, results, links, plus the git
   commit. Write a separate handoff or status document when the researcher asks for one.
 - Write outputs to `ctx.output_dir` and scratch files inside the task directory, so
   `runq clean` and the dashboard find them.

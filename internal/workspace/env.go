@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"github.com/gliese129/runq-lab/internal/rfs"
 	"github.com/gliese129/runq-lab/internal/utils"
-	"path"
 	"strings"
 )
 
@@ -66,9 +65,12 @@ func BaseEnv(id Identity) map[string]string {
 	return env
 }
 
-// TaskEnv is the single resolver for preview, persistence and run.sh.
-// Explicit path overrides are literal target paths; relative ones are rooted
-// at the project working directory, where the task's command executes.
+// RunqDirVars are the task directories runq owns (storage contract);
+// project/job env may not redirect them.
+var RunqDirVars = []string{"RUNQ_OUTPUT_DIR", "RUNQ_CHECKPOINT_DIR", "WANDB_DIR"}
+
+// TaskEnv is the single resolver for preview, persistence and run.sh: the
+// caller's env plus runq's own variables, which always win.
 func TaskEnv(id Identity, overrides map[string]string, workingDir string) map[string]string {
 	env := make(map[string]string, len(overrides)+16)
 	for key, value := range overrides {
@@ -77,14 +79,6 @@ func TaskEnv(id Identity, overrides map[string]string, workingDir string) map[st
 	delete(env, "RUNQ_WANDB_CONFIG_FILE")
 	for key, value := range BaseEnv(id) {
 		env[key] = value
-	}
-	for _, key := range []string{"RUNQ_OUTPUT_DIR", "RUNQ_CHECKPOINT_DIR", "WANDB_DIR"} {
-		if value := overrides[key]; value != "" {
-			if !path.IsAbs(value) {
-				value = path.Join(workingDir, value)
-			}
-			env[key] = path.Clean(value)
-		}
 	}
 	return env
 }
@@ -97,7 +91,7 @@ func EnsureTaskDirs(ctx context.Context, fsys rfs.FS, env map[string]string) err
 	}
 	fsys = rfs.WithContext(fsys, ctx)
 	seen := map[string]bool{}
-	for _, key := range []string{"RUNQ_OUTPUT_DIR", "RUNQ_CHECKPOINT_DIR", "WANDB_DIR"} {
+	for _, key := range RunqDirVars {
 		dir := env[key]
 		if dir == "" || seen[dir] {
 			continue

@@ -13,7 +13,7 @@
 #   qwen2-7b  × (mmlu, 4h) (gsm8k, 2h) (humaneval, 1h)
 
 project: llm-eval
-note: "eval sweep {{date}}: {{sweep}}"
+name: "eval: model × benchmark"
 
 fixed_params:
   group: your-tsubame-group

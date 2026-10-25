@@ -65,7 +65,7 @@ ctx.link_wandb(run)                  # runq shows the run on the task (CLI + das
 `wandb_like_cfg` fills: `project` / `entity` / `tags` / `mode` from the
 project's `wandb:` block (falling back to the runq project name), `id` =
 task id with `resume="allow"` so an online retried task continues the same run,
-`name` from the swept values, `group` from the job note, `config` = params.
+`name` from the swept values, `group` from the job name at submit, `config` = params.
 Only rank 0 reports: when `RANK > 0` it sets `mode="disabled"`, so a
 multi-GPU task is one run (W&B's system monitor on rank 0 covers every GPU
 on that node; multi-node runs only show the first node).

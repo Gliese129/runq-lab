@@ -12,7 +12,6 @@ import (
 	"github.com/gliese129/runq-lab/internal/store"
 	"github.com/gliese129/runq-lab/internal/submitplan"
 	"github.com/gliese129/runq-lab/internal/utils"
-	"github.com/gliese129/runq-lab/internal/workspace"
 )
 
 // Preview compiles the job and renders what WOULD be submitted — the
@@ -30,11 +29,11 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	deps := b.planDeps(skipPreflight)
 	deps.JobID = utils.GenerateJobID()
 	// Use the same root and layout as Prepare without materializing it.
-	root, err := b.WorkspaceRoot(proj, false)
+	root, err := b.WorkspaceRoot(ctx, proj, false)
 	if err != nil {
 		return "", submitplan.Plan{}, err
 	}
-	jobRoot := path.Join(root, workspace.JobDirName(jobCfg.Name, deps.JobID))
+	jobRoot := path.Join(root, deps.JobID)
 	deps.Paths = submitplan.Paths{WorkspaceRoot: jobRoot, LogRoot: jobRoot}
 	plan, err := submitplan.Build(ctx, jobCfg, proj, deps)
 	if err != nil {
@@ -73,7 +72,7 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	fmt.Fprintf(&s, "dry-run: %d task(s) would be submitted\n", len(plan.Tasks))
 	// Where <workspace> will actually live — shown read-only (nothing is
 	// created here); ids are regenerated at real submit.
-	fmt.Fprintf(&s, "workspace root: %s (preview IDs; regenerated at submit)\n\n", jobRoot)
+	fmt.Fprintf(&s, "data: %s/ (preview job id; regenerated at submit)\n\n", jobRoot)
 	for _, c := range plan.Preflight.Results {
 		mark := map[string]string{"passed": "✓", "failed": "✗", "warning": "!"}[c.Status]
 		if mark == "" {

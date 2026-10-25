@@ -13,14 +13,14 @@ When the service serves the dashboard, `submit`, `ps` and `task show` JSON carry
 | Command | What it does |
 |---|---|
 | `runq submit <job.yaml \| .> --dry` | Preview: expanded tasks, chosen target, rendered command (HPC: run.sh + submit line), params that reach the code only via `ctx.params`. Submits nothing |
-| `runq submit <job.yaml \| .> --json` | Submit → `{"job_id", "total_tasks", "url"}`. `-t <target>` overrides the target (`-t` > `job.target` > `project.target`) · `-n/--note` label · `--project-file project.yaml` registers/updates the project first (also on `--dry`) · `--no-preflight` skips submit-time checks |
+| `runq submit <job.yaml \| .> --json` | Submit → `{"job_id", "total_tasks", "url"}`. `-t <target>` overrides the target (`-t` > `job.target` > `project.target`) · `-n/--note` job name · `--project-file project.yaml` registers/updates the project first (also on `--dry`) · `--no-preflight` skips submit-time checks |
 | `runq kill <task_id \| job_id>` | Cancel a task, or every task of a job |
 
 ## Watch it
 
 | Command | What it does |
 |---|---|
-| `runq ps --json` | Jobs: id, status, counts, note (alias `ls`; `-t` filters by target) |
+| `runq ps --json` | Jobs: name, id, status, counts (alias `ls`; `-t` filters by target) |
 | `runq ps <job_id> --json` | That job's tasks: status, scheduler state, queue, step, elapsed, params |
 | `runq ps <job_id> --fresh --json` | Same, after forcing a scheduler probe |
 | `runq task show <task_id>` | One task as JSON: command, dirs, external id, status source, links |
@@ -36,9 +36,10 @@ When the service serves the dashboard, `submit`, `ps` and `task show` JSON carry
 |---|---|
 | `runq project add -f project.yaml` | Register a project (`project add .` reads `./project.yaml`; `--dir`/`--cmd`/`-t` for a flag-only project) |
 | `runq submit job.yaml --project-file project.yaml` | Update an existing project from its YAML (upsert), then submit |
-| `runq project ls` / `runq project show <name>` | List / inspect (alias `list`) |
+| `runq project ls` / `runq project show <id\|name>` | List (with `pj…` ids) / inspect (alias `list`) |
 | `runq project archive <name>` / `runq project unarchive <name>` | Hide a project and its jobs from default lists — reversible |
 | `runq job archive <job_id>` / `runq job unarchive <job_id>` | Same, for one job |
+| `runq rename <jb… \| pj… \| project-name> <new-name>` | Rename a job or a project; ids (and directories) never change |
 
 A new project must declare `target`. Experiments differ by job, not by project:
 a job may carry its own `command`, `target` and `preflight`.

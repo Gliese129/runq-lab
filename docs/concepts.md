@@ -74,7 +74,8 @@ database snapshot, labelled with when each value was observed.
 
 ## Workspace and storage
 
-Each task gets a workspace under `<working_dir>/.runq/<note>-<job_id>/<task_id>/`:
+Each task gets a workspace under `<data>/<project_id>/<job_id>/<task_id>/`, where
+`<data>` is the target's `data_path` (or `<working_dir>/.runq` when unset):
 
 ```
 params.json       — exact parameters for this task
@@ -87,8 +88,9 @@ run.sh            — HPC only: generated wrapper script
 status.json       — HPC only: self-reported status
 ```
 
-The job directory name starts with your `note`, so `ls .runq/` reads
-like an experiment log.
+Project and job directories are named by id, so renaming moves nothing; each
+holds an empty `0-<name>` marker that sorts first in `ls`. With `data_path` set,
+`<working_dir>/.runq/<project_id>` links to the project's data directory.
 
 ## Secrets
 

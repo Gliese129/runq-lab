@@ -7,7 +7,7 @@ reading them IS the schema reference (also see
 | You want to... | Copy |
 |---|---|
 | Submit your first sweep with minimum ceremony | [`job_simple.yaml`](./job_simple.yaml) |
-| See every job.yaml feature: grid × zip blocks, note, overrides | [`job.yaml`](./job.yaml) |
+| See every job.yaml feature: grid × zip blocks, name, overrides | [`job.yaml`](./job.yaml) |
 | See every project.yaml feature: constraints, mandatory choices, env | [`project.yaml`](./project.yaml) |
 | Run model × benchmark evals on an HPC cluster, each benchmark with its own walltime | [`hpc/`](./hpc/) |
 | A training script that reads params via the SDK and feeds the dashboard charts | [`test_train.py`](./test_train.py) |

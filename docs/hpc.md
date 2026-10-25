@@ -182,7 +182,8 @@ Each task runs **from the project's `working_dir`** (relative paths in
 your command just work), with all output redirected to its own log —
 `runq logs <task_id>` and the dashboard read it; `-o`/`-e` in your
 submit_template only catches scheduler-level noise. Workspaces live under
-`.runq/<note>-<job_id>/<task_id>/`.
+`<data>/<project_id>/<job_id>/<task_id>/` (`<data>` = the target's `data_path`,
+else `<working_dir>/.runq`).
 
 ## Preflight on strict login nodes
 

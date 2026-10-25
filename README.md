@@ -70,7 +70,7 @@ defaults: { gpus_per_task: 2, timeout: 12h }
 ```yaml
 # job.yaml — one experiment
 project: grpo
-note: kl-ablation
+name: kl ablation
 fixed_params: { model: qwen3-8b }
 sweep:
   - method: grid

@@ -128,24 +128,46 @@ func (b *Backend) planDeps(skipPreflight bool) submitplan.Deps {
 	}
 }
 
-// WorkspaceRoot is THE single decision point for where this target puts
-// job workspaces (RQ-65): a configured target workspace WINS — it is a
-// path on the TARGET's filesystem, composed as POSIX and materialized via
-// b.FS. The global data_path/working_dir resolution is the on-target /
-// legacy fallback only. Prepare (real submit), PreviewSubmit and dry-run
-// ALL call this — preview computing its own root is how dry-run ends up
-// confirming a path the submit never uses.
+// WorkspaceRoot is THE single decision point for where this target puts a
+// project's data (storage contract): <data_path>/<pj…>/ when the target sets
+// data_path, else <working_dir>/.runq/<pj…>/. Both are paths on the TARGET's
+// filesystem, composed as POSIX and materialized via b.FS. The global
+// data_path is a legacy fallback for local targets only. Prepare (real
+// submit) and preview ALL call this — preview computing its own root is how
+// dry-run ends up confirming a path the submit never uses.
 //
-// materialize=false is the read-only twin (preview): same branch, no mkdir.
-func (b *Backend) WorkspaceRoot(proj *project.Config, materialize bool) (string, error) {
-	if b.Cfg.Workspace != "" {
-		return b.Cfg.Workspace, nil
+// materialize=false is the read-only twin (preview): same branch, nothing
+// created. materialize=true creates the directory, its 0-<name> marker and,
+// for data_path roots, a <working_dir>/.runq/<pj…> convenience link.
+func (b *Backend) WorkspaceRoot(ctx context.Context, proj *project.Config, materialize bool) (string, error) {
+	id := proj.ID
+	if id == "" {
+		id = proj.ProjectName // unregistered config (tests, legacy callers)
 	}
-	if materialize {
-		return config.ResolveRoot(b.StorageCfg, proj.WorkingDir, proj.ProjectName)
+	root := b.Cfg.StorageRoot()
+	if root == "" && b.Cfg.SSH == nil && b.StorageCfg != nil {
+		root = b.StorageCfg.DataPath
 	}
-	return config.ProspectiveRoot(b.StorageCfg, proj.WorkingDir, proj.ProjectName), nil
+	linked := root != ""
+	if root == "" {
+		root = path.Join(proj.WorkingDir, ".runq")
+	}
+	projRoot := path.Join(root, id)
+	if !materialize {
+		return projRoot, nil
+	}
+	if err := b.FS.MkdirAll(projRoot, 0o755); err != nil {
+		return "", fmt.Errorf("create %s: %w", projRoot, err)
+	}
+	_ = workspace.WriteMarker(ctx, b.FS, projRoot, proj.ProjectName)
+	if linked && proj.WorkingDir != "" {
+		link := path.Join(proj.WorkingDir, ".runq", id)
+		script := "mkdir -p " + utils.ShellQuote(path.Dir(link)) + " && { test -e " + utils.ShellQuote(link) + " -a ! -L " + utils.ShellQuote(link) + " || ln -sfn " + utils.ShellQuote(projRoot) + " " + utils.ShellQuote(link) + "; }"
+		_, _, _, _ = b.FS.Exec(ctx, "sh", "-c", script)
+	}
+	return projRoot, nil
 }
+
 func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *project.Config, opts SubmitOpts) (jobID string, rows []store.TaskRow, err error) {
 	// Satisfy the jobs.project_name foreign key: ensure the project exists in
 	// the HPC store. Add-if-missing covers both "resolved from registry" and
@@ -161,6 +183,11 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 			return "", nil, fmt.Errorf("register project %q: %w", proj.ProjectName, aerr)
 		}
 	}
+	if proj.ID == "" {
+		if got, gerr := reg.GetCached(ctx, proj.ProjectName); gerr == nil {
+			proj.ID = got.ID
+		}
+	}
 	// THE submit precondition (exists + not archived, fail-closed) lives in
 	// one place — see Registry.RequireSubmittable.
 	if err := reg.RequireSubmittable(ctx, proj.ProjectName); err != nil {
@@ -168,15 +195,15 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	}
 
 	jobID = utils.GenerateJobID()
-	wsRoot, err := b.WorkspaceRoot(proj, true)
+	projRoot, err := b.WorkspaceRoot(ctx, proj, false)
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve workspace root: %w", err)
 	}
-
 	planCfg := jobCfg
 	planCfg.NormalizeLegacy()
-	// The DB stores full paths (never re-derived from id).
-	jobRoot := path.Join(wsRoot, workspace.JobDirName(planCfg.Name, jobID))
+	// The DB stores full paths (never re-derived from id); the directory
+	// is the id, the 0-<name> marker inside it is for humans.
+	jobRoot := path.Join(projRoot, jobID)
 
 	deps := b.planDeps(opts.SkipPreflight)
 	deps.JobID = jobID
@@ -226,6 +253,14 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 		Name: plan.Name, ConfigJSON: string(cfgJSON), Status: "pending",
 		TotalTasks: len(plan.Tasks), Target: b.Cfg.Name, CreatedAt: now,
 	}
+
+	if _, err := b.WorkspaceRoot(ctx, proj, true); err != nil {
+		return "", nil, fmt.Errorf("prepare workspace root: %w", err)
+	}
+	if err := b.FS.MkdirAll(jobRoot, 0o755); err != nil {
+		return "", nil, fmt.Errorf("create job directory: %w", err)
+	}
+	_ = workspace.WriteMarker(ctx, b.FS, jobRoot, plan.Name)
 
 	for _, t := range plan.Tasks {
 		if err := workspace.EnsureTaskDirs(ctx, b.FS, t.Env); err != nil {

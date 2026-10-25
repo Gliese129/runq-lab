@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -1584,11 +1585,56 @@ func (m *MultiBackend) UpdateProject(ctx context.Context, cfg project.Config) er
 }
 
 func (m *MultiBackend) RenameProject(ctx context.Context, oldName, newName string) error {
-	return m.registry.Rename(ctx, oldName, newName)
+	before, err := m.registry.GetCached(ctx, oldName)
+	if err != nil {
+		return err
+	}
+	if err := m.registry.Rename(ctx, before.ProjectName, newName); err != nil {
+		return err
+	}
+	// <…>/<pj…>/<jb…>/<tk…>: refresh the marker of every project directory
+	// that exists (pre-rc6 layouts have none). Best effort — decoration.
+	refs, _ := m.store.TaskDirs(ctx, newName, "")
+	m.rewriteMarkers(ctx, refs, func(taskDir string) string {
+		if dir := path.Dir(path.Dir(taskDir)); path.Base(dir) == before.ID {
+			return dir
+		}
+		return ""
+	}, newName)
+	return nil
 }
 
 func (m *MultiBackend) RenameJob(ctx context.Context, ref, newName string) (string, error) {
-	return m.store.RenameJob(ctx, ref, newName)
+	id, err := m.store.RenameJob(ctx, ref, newName)
+	if err != nil {
+		return "", err
+	}
+	refs, _ := m.store.TaskDirs(ctx, "", id)
+	m.rewriteMarkers(ctx, refs, func(taskDir string) string {
+		if dir := path.Dir(taskDir); path.Base(dir) == id {
+			return dir
+		}
+		return ""
+	}, strings.TrimSpace(newName))
+	return id, nil
+}
+
+// rewriteMarkers rewrites the 0-<name> marker in each distinct directory
+// dirOf derives from a task dir ("" = no id-named directory to mark).
+func (m *MultiBackend) rewriteMarkers(ctx context.Context, refs []store.TaskDirRef, dirOf func(string) string, name string) {
+	done := map[string]bool{}
+	for _, r := range refs {
+		dir := dirOf(r.TaskDir)
+		if dir == "" || done[r.Target+"\x00"+dir] {
+			continue
+		}
+		done[r.Target+"\x00"+dir] = true
+		fsys, err := m.TargetFS(r.Target)
+		if err != nil {
+			continue
+		}
+		_ = workspace.WriteMarker(ctx, fsys, dir, name)
+	}
 }
 
 // compile-time interface check

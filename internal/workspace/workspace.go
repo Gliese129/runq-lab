@@ -1,11 +1,13 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/project"
@@ -154,42 +156,44 @@ func WriteFS(fsys rfs.FS, dir string, params job.TaskParams, wandb *project.Wand
 	return nil
 }
 
-// JobDirName names a job's workspace directory: "<sanitized-note>-<jobID>"
-// so an `ls` of .runq/ reads like an experiment log, falling back to the
-// bare id when there is no note. The DB always stores full paths — this
-// name is decoration for humans, never re-derived from the id.
-func JobDirName(note, jobID string) string {
-	s := sanitizeDirComponent(note)
-	if s == "" {
-		return jobID
+// MarkerPrefix starts the empty file that names an id-named directory
+// (<pj…>/ or <jb…>/) for humans: "0-<name>" sorts first in `ls`.
+const MarkerPrefix = "0-"
+
+// MarkerName is the marker file name for a display name: path separators
+// and control characters become '-', capped at 100 bytes on a rune
+// boundary. Empty name → "" (no marker).
+func MarkerName(name string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(name) {
+		if r == '/' || r == '\\' || r < 0x20 || r == 0x7f {
+			r = '-'
+		}
+		if b.Len()+utf8.RuneLen(r) > 100 {
+			break
+		}
+		b.WriteRune(r)
 	}
-	return s + "-" + jobID
+	if b.Len() == 0 {
+		return ""
+	}
+	return MarkerPrefix + b.String()
 }
 
-// sanitizeDirComponent keeps [A-Za-z0-9._-], maps the rest to '-',
-// collapses runs, trims separators, caps at 40 chars (paths must stay
-// pleasant to type and safe on every shared FS).
-func sanitizeDirComponent(s string) string {
-	var b []rune
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
-			r == '_', r == '-', r == '.':
-			b = append(b, r)
-		default:
-			b = append(b, '-')
-		}
+// WriteMarker replaces dir's marker with one for name (best effort: the
+// marker is decoration, never a source of truth).
+func WriteMarker(ctx context.Context, fsys rfs.FS, dir, name string) error {
+	marker := MarkerName(name)
+	if marker == "" {
+		return nil
 	}
-	out := string(b)
-	for len(out) > 0 && (out[0] == '-' || out[0] == '.') {
-		out = out[1:]
+	script := "rm -f " + utils.ShellQuote(dir) + "/" + MarkerPrefix + "* && : > " + utils.ShellQuote(path.Join(dir, marker))
+	_, stderr, code, err := fsys.Exec(ctx, "sh", "-c", script)
+	if err != nil {
+		return err
 	}
-	for strings.Contains(out, "--") {
-		out = strings.ReplaceAll(out, "--", "-")
+	if code != 0 {
+		return fmt.Errorf("write marker in %s: exit %d: %s", dir, code, strings.TrimSpace(string(stderr)))
 	}
-	out = strings.Trim(out, "-.")
-	if len(out) > 40 {
-		out = strings.Trim(out[:40], "-.")
-	}
-	return out
+	return nil
 }

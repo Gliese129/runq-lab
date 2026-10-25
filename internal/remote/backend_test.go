@@ -78,7 +78,10 @@ func TestPrepareRefreshKill(t *testing.T) {
 	if len(tasks) != 2 {
 		t.Fatalf("ListTasks = %d, want 2", len(tasks))
 	}
-	jobRoot := filepath.Join(workDir, ".runq", jobID)
+	if !strings.HasPrefix(proj.ID, "pj") {
+		t.Fatalf("Prepare should register the project with a pj… id, got %q", proj.ID)
+	}
+	jobRoot := filepath.Join(workDir, ".runq", proj.ID, jobID)
 	for _, tk := range tasks {
 		if tk.ExternalID == "" {
 			t.Errorf("task %s missing ExternalID", tk.ID)

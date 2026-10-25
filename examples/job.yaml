@@ -27,10 +27,9 @@
 project: resnet50
 description: "LR × optimizer sweep with tied batch/worker configs"
 
-# Human label — labels live HERE, never as sweep params. Placeholders:
-# params, {{project}} {{user}} {{date}} {{time}} {{sweep}} {{version}}.
-# Re-running the same named config auto-numbers it (foo, foo-v2, foo-v3).
-note: "lr-optimizer sweep {{date}}"
+# Display name — labels live HERE, never as sweep params. Free text; say
+# what differs from the baseline. `runq rename <jb…> "…"` changes it later.
+name: "lr × optimizer"
 
 sweep:
   # Grid block: every lr with every optimizer.

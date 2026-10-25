@@ -71,7 +71,7 @@ runq the same script still runs (`ctx.params` is empty, defaults apply).
 ```yaml
 # job.yaml
 project: grpo
-note: kl-ablation                        # shows in runq ps and names the task dirs
+name: kl ablation                        # first column of runq ps; rename any time
 fixed_params: { model: qwen3-8b }        # same in every task
 sweep:
   - method: grid                         # cross product
@@ -125,10 +125,11 @@ reply is in `~/.runq/logs/runq.log`. Common errors and fixes:
 |---|---|
 | `~/.runq/config.yaml` | Global config and targets |
 | `~/.local/share/runq/` | Service data: database, logs, socket (`runq serve status` prints them) |
-| `<working_dir>/.runq/<note>-<job_id>/<task_id>/` | Task workspace: log, `params.json`, `metrics.jsonl`, `results.jsonl`, `outputs/`, `checkpoints/`, `run.sh`, `status.json` |
+| `<data>/<project_id>/<job_id>/<task_id>/` | Task workspace: log, `params.json`, `metrics.jsonl`, `results.jsonl`, `outputs/`, `checkpoints/`, `run.sh`, `status.json` |
 
-Set `data_path` in `~/.runq/config.yaml` to keep task workspaces on bulk
-storage (`.runq` becomes a symlink). Don't parse these paths — use `--json`.
+`<data>` is `<working_dir>/.runq` unless the target sets `data_path` (e.g. a
+bulk-storage disk; `<working_dir>/.runq/<project_id>` then links there). Don't
+parse these paths — use `--json`.
 
 When a run is truly over: `runq clean --job <job_id> --show`, then `-y`
 (irreversible: task directories, outputs and checkpoints are deleted).
