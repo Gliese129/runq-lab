@@ -211,6 +211,10 @@ func (s *Store) addMissingColumns(ctx context.Context) error {
 	if err := s.backfillProjectIDs(ctx); err != nil {
 		return err
 	}
+	// rc6 run names: the row's name within its job.
+	if err := addColumnIfMissing(ctx, s.db, "tasks", "run_name", "TEXT"); err != nil {
+		return fmt.Errorf("add tasks.run_name: %w", err)
+	}
 	// rc6 sections: NULL = unsorted.
 	if err := addColumnIfMissing(ctx, s.db, "jobs", "section_id", "TEXT"); err != nil {
 		return fmt.Errorf("add jobs.section_id: %w", err)

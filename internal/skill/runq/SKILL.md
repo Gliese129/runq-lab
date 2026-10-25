@@ -41,6 +41,7 @@ agent) or you are about to set one up, read `references/heartbeat.md` first.
 | Preview (submits nothing) | `runq submit job.yaml --dry` |
 | Submit | `runq submit job.yaml --json` → `{job_id,total_tasks}` |
 | Jobs / one job's tasks | `runq ps --json` · `runq ps <job_id> --json` (add `--fresh` to probe the scheduler first) |
+| A submitted job back as job.yaml (`tasks:` rows) | `runq export <jb…> [-o file]` |
 | One task (command, dirs, scheduler id, times, links) | `runq task show <task_id>` |
 | Log tail | `runq logs <task_id> --no-follow -n 200` |
 | Last matching log lines | `runq logs <task_id> --grep 'loss\|step' -n 20` (ERE, runs on the target) |
@@ -236,6 +237,13 @@ Each file you add is one more thing the researcher reads or cleans up later. Goo
   (for example `configs/runq/` or `runq/jobs/`), one job file per experiment.
 - Prefer editing or parametrizing an existing job or script (`fixed_params` plus a
   flag, or `ctx.params` for a one-off test) over copying it into a `-v2` / `-fixed` variant; git keeps the history.
+- Write an ablation as named rows: `tasks:` with one `{run: R1 lr, lr: 2e-6}` per
+  cell, each listing only what differs from `fixed_params`; mark the baseline with
+  `baseline:` when it is not the first row, and flag rows that need a code change
+  with `needs_code: [param]`. The run names then label `runq ps <job>`, W&B and the
+  researcher's plan table. Use `sweep:` when the cells really are a grid.
+- To bring a submitted plan back into the repo (e.g. after the researcher changed
+  it), `runq export <jb…> -o <job.yaml>` and commit that file.
 - Make a smoke test a job: the same command with small `fixed_params`
   (`max_steps: 2`) and `name: smoke`.
 - Give each job a `name` that says what it is compared with the baseline, in a few

@@ -463,7 +463,7 @@ func planToTaskRow(t submitplan.PlannedTask, plan submitplan.Plan, now time.Time
 	paramsJSON, _ := json.Marshal(t.Params)
 	envJSON, _ := json.Marshal(t.Env)
 	return store.TaskRow{
-		ID: t.TaskID, JobID: plan.JobID, ProjectName: plan.Project,
+		ID: t.TaskID, RunName: t.RunName, JobID: plan.JobID, ProjectName: plan.Project,
 		Command: t.Command, ParamsJSON: string(paramsJSON), GPUsNeeded: t.GPUsNeeded,
 		Status: "pending", LogPath: t.LogPath,
 		WorkingDir: t.WorkingDir, EnvJSON: string(envJSON),

@@ -16,6 +16,17 @@ type TaskParams map[string]any
 // Each block expands independently (grid → cartesian, list → zip),
 // then blocks are combined via cross-product.
 func Expand(cfg *JobConfig) ([]TaskParams, error) {
+	if len(cfg.Tasks) > 0 {
+		rows, err := Rows(cfg)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]TaskParams, len(rows))
+		for i, r := range rows {
+			out[i] = r.Params
+		}
+		return out, nil
+	}
 	if len(cfg.Sweep) == 0 {
 		// No sweep: return one task with just fixed_params (if any).
 		base := make(TaskParams, len(cfg.FixedParams))

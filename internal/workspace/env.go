@@ -29,6 +29,7 @@ type Identity struct {
 	SweepKeys       []string // sweep parameter key names (for WANDB_TAGS + WANDB_RUN_NAME)
 	WandbConfigured bool     // supplied by the plan, never inferred from the controller filesystem
 	JobName         string   // job display name at submit (for WANDB_RUN_GROUP)
+	RunName         string   // the task's run name (row name; W&B run name)
 }
 
 // BaseEnv returns the shared RUNQ_* variables. It does NOT set RUNQ_SOCKET_PATH or
@@ -56,6 +57,9 @@ func BaseEnv(id Identity) map[string]string {
 	if len(id.SweepKeys) > 0 {
 		env["RUNQ_SWEEP_KEYS"] = strings.Join(id.SweepKeys, ",")
 		env["WANDB_TAGS"] = strings.Join(id.SweepKeys, ",")
+	}
+	if id.RunName != "" {
+		env["RUNQ_RUN_NAME"] = id.RunName
 	}
 	if id.JobName != "" {
 		env["RUNQ_JOB_NAME"] = id.JobName

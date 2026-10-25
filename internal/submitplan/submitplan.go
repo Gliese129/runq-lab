@@ -68,7 +68,9 @@ type Plan struct {
 	GPUsPerTask int                  `json:"gpus_per_task"`
 	Wandb       *project.WandbConfig `json:"wandb"`
 	Tasks       []PlannedTask        `json:"tasks"`
-	SweepKeys   []string             `json:"sweep_keys"` // swept parameter names (sorted), for WANDB_TAGS/RUN_NAME
+	// Baseline is the reference run (rows describe themselves against it).
+	Baseline  string   `json:"baseline"`
+	SweepKeys []string `json:"sweep_keys"` // swept parameter names (sorted), for WANDB_TAGS/RUN_NAME
 	// Preflight is the full three-state report (failed entries already
 	// aborted Build) — callers print it so skips stay visible.
 	Preflight preflight.Report `json:"preflight"`
@@ -81,6 +83,8 @@ type Plan struct {
 
 type PlannedTask struct {
 	TaskID        string            `json:"task_id"`
+	RunName       string            `json:"run_name"`
+	NeedsCode     []string          `json:"needs_code,omitempty"`
 	Name          string            `json:"name"` // scheduler job name ({{name}} in submit_template), pre-sanitized
 	Command       string            `json:"command"`
 	Params        job.TaskParams    `json:"params"`
@@ -238,9 +242,20 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 		idGen = utils.GenerateID
 	}
 
-	taskParams, err := job.Expand(&cfg)
+	for _, def := range proj.Params {
+		for _, reserved := range job.ReservedRowKeys {
+			if def.Name == reserved {
+				return Plan{}, fmt.Errorf("project param %q clashes with the job.yaml row key %q; rename the param", def.Name, reserved)
+			}
+		}
+	}
+	rows, err := job.Rows(&cfg)
 	if err != nil {
-		return Plan{}, fmt.Errorf("sweep expansion failed: %w", err)
+		return Plan{}, fmt.Errorf("expand job: %w", err)
+	}
+	taskParams := make([]job.TaskParams, len(rows))
+	for i, r := range rows {
+		taskParams[i] = r.Params
 	}
 
 	gpusPerTask := proj.Defaults.GPUsPerTask
@@ -364,7 +379,7 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 	flagParams := flagParamNames(proj)
 	unconsumed := map[string]bool{}
 	tasks := make([]PlannedTask, 0, len(taskParams))
-	for _, params := range taskParams {
+	for i, params := range taskParams {
 		for _, key := range job.UnconsumedParams(proj.CmdTemplate, params, schedParams) {
 			unconsumed[key] = true
 		}
@@ -381,6 +396,8 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 		})
 		tasks = append(tasks, PlannedTask{
 			TaskID:        taskID,
+			RunName:       rows[i].Run,
+			NeedsCode:     rows[i].NeedsCode,
 			Name:          name,
 			Command:       cmd,
 			Params:        params,
@@ -407,9 +424,12 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 		}
 	}
 	sort.Strings(sweepKeys)
+	if len(cfg.Tasks) > 0 {
+		sweepKeys = job.VaryingKeys(rows)
+	}
 	for i := range tasks {
 		task := &tasks[i]
-		task.Env = workspace.TaskEnv(workspace.Identity{TaskID: task.TaskID, JobID: jobID, Project: cfg.Project, TaskDir: task.TaskDir, SweepKeys: sweepKeys, JobName: cfg.Name, WandbConfigured: proj.Wandb != nil}, env, task.WorkingDir)
+		task.Env = workspace.TaskEnv(workspace.Identity{TaskID: task.TaskID, JobID: jobID, Project: cfg.Project, TaskDir: task.TaskDir, SweepKeys: sweepKeys, JobName: cfg.Name, RunName: task.RunName, WandbConfigured: proj.Wandb != nil}, env, task.WorkingDir)
 		task.CheckpointDir = task.Env["RUNQ_CHECKPOINT_DIR"]
 		task.OutputDir = task.Env["RUNQ_OUTPUT_DIR"]
 		task.WandbDir = task.Env["WANDB_DIR"]
@@ -430,6 +450,7 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 		GPUsPerTask: gpusPerTask,
 		Wandb:       proj.Wandb,
 		Tasks:       tasks,
+		Baseline:    baselineRun(rows, cfg.Baseline),
 		SweepKeys:   sweepKeys,
 		Preflight:   pfReport,
 		Env:         cloneEnv(env),
@@ -442,4 +463,11 @@ func cloneEnv(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+func baselineRun(rows []job.Row, baseline string) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	return rows[job.BaselineIndex(rows, baseline)].Run
 }

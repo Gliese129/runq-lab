@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -1682,6 +1683,62 @@ func (m *MultiBackend) MoveJob(ctx context.Context, jobRef, section string) (str
 	return ids[0], nil
 }
 
+// ExportJob freezes a job back into job.yaml form (`tasks:` rows). Jobs
+// from before rc6 get run names derived from their first row.
+func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error) {
+	j, err := m.store.ResolveJobRef(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	tasks, err := m.store.JobTasksInOrder(ctx, j.ID)
+	if err != nil {
+		return nil, err
+	}
+	var cfg job.JobConfig
+	_ = json.Unmarshal([]byte(j.ConfigJSON), &cfg)
+	needs := map[string][]string{}
+	for _, tr := range cfg.Tasks {
+		needs[tr.Run] = tr.NeedsCode
+	}
+	rows := make([]job.Row, 0, len(tasks))
+	for _, t := range tasks {
+		var params job.TaskParams
+		if err := json.Unmarshal([]byte(t.ParamsJSON), &params); err != nil {
+			return nil, fmt.Errorf("task %s params: %w", t.ID, err)
+		}
+		rows = append(rows, job.Row{Run: t.RunName, NeedsCode: needs[t.RunName], Params: params})
+	}
+	// Pre-rc6 tasks have no run names: re-plan the stored config for its
+	// names when it still yields the same rows, else derive them.
+	if len(rows) > 0 && rows[0].Run == "" {
+		if planned, err := job.Rows(&cfg); err == nil && sameParams(planned, rows) {
+			for i := range rows {
+				rows[i].Run = planned[i].Run
+			}
+		}
+	}
+	job.NameRows(rows)
+	in := job.ExportInput{
+		JobID: j.ID, ExportedAt: time.Now(), Project: j.ProjectName,
+		Name: j.Name, Description: j.Description, Section: j.Section,
+		Overrides: cfg.Overrides, Consumers: cfg.Consumers, Baseline: cfg.Baseline, Rows: rows,
+	}
+	if proj, err := m.registry.GetCached(ctx, j.ProjectName); err == nil {
+		for _, d := range proj.Params {
+			in.ParamOrder = append(in.ParamOrder, d.Name)
+		}
+		if j.Target != proj.Target {
+			in.Target = j.Target
+		}
+		if cfg.Command != "" && cfg.Command != proj.CmdTemplate {
+			in.Command = cfg.Command
+		}
+	} else {
+		in.Target, in.Command = j.Target, cfg.Command
+	}
+	return job.ExportYAML(in)
+}
+
 // resolveJobSection fills cfg.SectionID: an explicit section must exist;
 // otherwise the project's rules decide, and no match means unsorted. The
 // returned line says which, for the preview.
@@ -1727,7 +1784,26 @@ func (m *MultiBackend) rewriteMarkers(ctx context.Context, refs []store.TaskDirR
 
 // compile-time interface check
 var (
-	_ Backend    = (*MultiBackend)(nil)
-	_ Sectioner  = (*MultiBackend)(nil)
-	_ JobRenamer = (*MultiBackend)(nil)
+	_ Backend     = (*MultiBackend)(nil)
+	_ Sectioner   = (*MultiBackend)(nil)
+	_ JobExporter = (*MultiBackend)(nil)
+	_ JobRenamer  = (*MultiBackend)(nil)
 )
+
+func sameParams(a, b []job.Row) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if len(a[i].Params) != len(b[i].Params) {
+			return false
+		}
+		for k, v := range a[i].Params {
+			w, ok := b[i].Params[k]
+			if !ok || job.FormatValue(v) != job.FormatValue(w) {
+				return false
+			}
+		}
+	}
+	return true
+}

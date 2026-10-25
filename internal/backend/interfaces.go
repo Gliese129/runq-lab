@@ -185,3 +185,8 @@ type Sectioner interface {
 	// own project ("unsorted" clears it) and returns the resolved job id.
 	MoveJob(ctx context.Context, jobRef, section string) (string, error)
 }
+
+// JobExporter renders a submitted job back as job.yaml `tasks:` rows.
+type JobExporter interface {
+	ExportJob(ctx context.Context, jobRef string) ([]byte, error)
+}

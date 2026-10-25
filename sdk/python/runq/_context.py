@@ -161,7 +161,7 @@ class Context:
                 "tags":    <project wandb.tags> + sweep keys
                 "mode":    <project wandb.mode>; "disabled" on RANK > 0
                 "id":      task_id,  "resume": "allow",    # retries continue one run
-                "name":    "lr=0.01_bs=32" or f"{job_id}/{task_id}",
+                "name":    run name ("R1 lr", "kl=0.1, seed=2") or f"{job_id}/{task_id}",
                 "group":   job name or job_id,
                 "config":  dict(params),
             }
@@ -179,7 +179,10 @@ class Context:
         # RUNQ_JOB_NOTE: tasks submitted before rc6.
         job_name = os.environ.get("RUNQ_JOB_NAME") or os.environ.get("RUNQ_JOB_NOTE", "")
 
-        if sweep_keys and self.params:
+        run_name = os.environ.get("RUNQ_RUN_NAME", "")
+        if run_name:
+            name = run_name
+        elif sweep_keys and self.params:
             parts = [f"{k}={self.params[k]}" for k in sweep_keys if k in self.params]
             name = "_".join(parts) if parts else (f"{self.job_id}/{self.task_id}" if self.job_id else self.task_id)
         else:

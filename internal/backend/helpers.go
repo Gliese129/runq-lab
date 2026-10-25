@@ -419,6 +419,7 @@ func buildTaskView(task store.TaskRow, files bool) TaskView {
 	}
 	view := TaskView{
 		ID:            task.ID,
+		RunName:       task.RunName,
 		JobID:         task.JobID,
 		Project:       task.ProjectName,
 		Target:        task.Target,

@@ -649,6 +649,10 @@ func (p *Proxy) doWithTimeout(ctx context.Context, method, path string, body any
 		_, err = io.Copy(io.Discard, resp.Body)
 		return err
 	}
+	if raw, ok := out.(*[]byte); ok { // non-JSON bodies (text/yaml export)
+		*raw, err = io.ReadAll(resp.Body)
+		return err
+	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
@@ -703,7 +707,14 @@ func (p *Proxy) MoveJob(ctx context.Context, jobRef, section string) (string, er
 	return out.ID, err
 }
 
+func (p *Proxy) ExportJob(ctx context.Context, ref string) ([]byte, error) {
+	var out []byte
+	err := p.do(ctx, "GET", "/api/v1/jobs/"+url.PathEscape(ref)+"/export", nil, &out)
+	return out, err
+}
+
 var (
-	_ backend.Sectioner  = (*Proxy)(nil)
-	_ backend.JobRenamer = (*Proxy)(nil)
+	_ backend.JobExporter = (*Proxy)(nil)
+	_ backend.Sectioner   = (*Proxy)(nil)
+	_ backend.JobRenamer  = (*Proxy)(nil)
 )

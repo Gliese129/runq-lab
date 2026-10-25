@@ -101,6 +101,7 @@ type TaskView struct {
 	Stale        bool          `json:"stale"`
 
 	ID             string                        `json:"id"`
+	RunName        string                        `json:"run_name,omitempty"`
 	JobID          string                        `json:"job_id,omitempty"`
 	Project        string                        `json:"project,omitempty"`
 	Status         string                        `json:"status"`

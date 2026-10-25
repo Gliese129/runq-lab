@@ -138,3 +138,20 @@ func (s *Server) handleMoveJob(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "section": body.Section})
 }
+
+// handleExportJob — GET /jobs/{id}/export: the frozen job as job.yaml
+// `tasks:` rows (text/yaml), ready to feed back to submit.
+func (s *Server) handleExportJob(w http.ResponseWriter, r *http.Request) {
+	ex, ok := s.backend.(backend.JobExporter)
+	if !ok {
+		writeErrorStatus(w, http.StatusNotImplemented, fmt.Errorf("export is not supported by this backend"))
+		return
+	}
+	out, err := ex.ExportJob(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+	_, _ = w.Write(out)
+}

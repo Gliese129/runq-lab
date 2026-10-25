@@ -44,9 +44,9 @@ func printDashboardTasks(tasks []backend.TaskView) error {
 	}
 	w := newTable()
 	if hasHPC {
-		fmt.Fprintf(w, "TASK_ID\tEXT_ID\tSTATUS\tSCHED_STATE\tQUEUE\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
+		fmt.Fprintf(w, "RUN\tTASK_ID\tEXT_ID\tSTATUS\tSCHED_STATE\tQUEUE\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
 	} else {
-		fmt.Fprintf(w, "TASK_ID\tSTATUS\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
+		fmt.Fprintf(w, "RUN\tTASK_ID\tSTATUS\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
 	}
 	for _, task := range tasks {
 		step := "-"
@@ -58,14 +58,18 @@ func printDashboardTasks(tasks []backend.TaskView) error {
 			elapsed = formatTaskDuration(task.ElapsedSec, task.TimeEstimated)
 		}
 		status := utils.StatusColor(task.Status)
+		run := task.RunName
+		if run == "" {
+			run = "-"
+		}
 		if hasHPC {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				utils.IDColor(task.ID), task.ExternalID, status,
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				run, utils.IDColor(task.ID), task.ExternalID, status,
 				task.NativeState, task.Queue,
 				step, formatTaskDuration(task.QueueSec, task.QueueEstimated), formatTaskDuration(task.SchedulerSec, false), elapsed, compactJSON(task.Params))
 		} else {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				utils.IDColor(task.ID), status,
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				run, utils.IDColor(task.ID), status,
 				step, formatTaskDuration(task.QueueSec, task.QueueEstimated), formatTaskDuration(task.SchedulerSec, false), elapsed, compactJSON(task.Params))
 		}
 	}

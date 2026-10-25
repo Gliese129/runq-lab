@@ -21,8 +21,9 @@ When the service serves the dashboard, `submit`, `ps` and `task show` JSON carry
 | Command | What it does |
 |---|---|
 | `runq ps --json` | Jobs: name, id, project, section, status, counts (alias `ls`; `-t` filters by target) |
-| `runq ps <job_id> --json` | That job's tasks: status, scheduler state, queue, step, elapsed, params |
+| `runq ps <job_id> --json` | That job's tasks: run name, status, scheduler state, queue, step, elapsed, params |
 | `runq ps <job_id> --fresh --json` | Same, after forcing a scheduler probe |
+| `runq export <jb…> [-o file]` | The job as job.yaml `tasks:` rows (fixed_params = baseline, rows = differences); submitting it reproduces the plan |
 | `runq task show <task_id>` | One task as JSON: command, dirs, external id, status source, links |
 | `runq logs <task_id> --no-follow -n 200` | Last 200 log lines, then exit |
 | `runq logs <task_id> --grep '<regex>' -n 20` | Last 20 lines matching an extended regex, grepped on the target |

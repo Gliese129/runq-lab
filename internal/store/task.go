@@ -15,6 +15,7 @@ import (
 // Callers are responsible for converting between the two.
 type TaskRow struct {
 	ID            string
+	RunName       string // row name within the job (tasks: run, or derived from the baseline)
 	JobID         string
 	ProjectName   string
 	Command       string
@@ -101,7 +102,7 @@ const allTaskColumns = `id, job_id, project_name, command, params_json,
 	pid, start_time, log_path, working_dir, env_json,
 	resumable, extra_args, uid, timeout,
 	enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-	native_state, queue, failure_detail, target_generation, timing_json`
+	native_state, queue, failure_detail, target_generation, timing_json, run_name`
 
 // scanTask reads one result row into a TaskRow.
 // Column order must match allTaskColumns.
@@ -130,6 +131,7 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 		failureDetail sql.NullString
 		targetGen     sql.NullString
 		timingJSON    sql.NullString
+		runName       sql.NullString
 	)
 
 	var target sql.NullString
@@ -139,13 +141,14 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 		&pid, &startTime, &logPath, &workingDir, &envJSON,
 		&resumable, &extraArgs, &uid, &timeout, &enqueuedAt, &startedAt, &finishedAt,
 		&taskDir, &target, &externalID, &statusSource, &killRequested,
-		&nativeState, &queue, &failureDetail, &targetGen, &timingJSON,
+		&nativeState, &queue, &failureDetail, &targetGen, &timingJSON, &runName,
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	t.GPUs = gpus.String
+	t.RunName = runName.String
 	t.PID = int(pid.Int64)
 	t.StartTime = startTime.Int64
 	t.LogPath = logPath.String
@@ -184,8 +187,8 @@ func (s *Store) InsertTask(ctx context.Context, t *TaskRow) error {
 		pid, start_time, log_path, working_dir, env_json,
 		resumable, extra_args, uid, timeout,
 		enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-		native_state, queue, failure_detail, target_generation, timing_json
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		native_state, queue, failure_detail, target_generation, timing_json, run_name
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	resumable := 0
 	if t.Resumable {
@@ -206,7 +209,7 @@ func (s *Store) InsertTask(ctx context.Context, t *TaskRow) error {
 		nullTimeToUnix(t.StartedAt), nullTimeToUnix(t.FinishedAt),
 		nullString(t.TaskDir), targetOrDefault(t.Target), nullString(t.ExternalID), nullString(t.StatusSource), killRequested,
 		nullString(t.NativeState), nullString(t.Queue), nullString(t.FailureDetail),
-		t.TargetGeneration, nullString(t.TimingJSON),
+		t.TargetGeneration, nullString(t.TimingJSON), nullString(t.RunName),
 	)
 	return err
 }
@@ -220,8 +223,8 @@ func (s *Store) InsertTaskTx(ctx context.Context, tx *sql.Tx, t *TaskRow) error 
 		pid, start_time, log_path, working_dir, env_json,
 		resumable, extra_args, uid, timeout,
 		enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-		native_state, queue, failure_detail, target_generation, timing_json
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		native_state, queue, failure_detail, target_generation, timing_json, run_name
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	resumable := 0
 	if t.Resumable {
@@ -242,7 +245,7 @@ func (s *Store) InsertTaskTx(ctx context.Context, tx *sql.Tx, t *TaskRow) error 
 		nullTimeToUnix(t.StartedAt), nullTimeToUnix(t.FinishedAt),
 		nullString(t.TaskDir), targetOrDefault(t.Target), nullString(t.ExternalID), nullString(t.StatusSource), killRequested,
 		nullString(t.NativeState), nullString(t.Queue), nullString(t.FailureDetail),
-		t.TargetGeneration, nullString(t.TimingJSON),
+		t.TargetGeneration, nullString(t.TimingJSON), nullString(t.RunName),
 	)
 	return err
 }
@@ -810,6 +813,25 @@ func (s *Store) TaskDirs(ctx context.Context, projectName, jobID string) ([]Task
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// JobTasksInOrder lists a job's tasks in submission order (insertion order;
+// enqueued_at ties within one submit).
+func (s *Store) JobTasksInOrder(ctx context.Context, jobID string) ([]TaskRow, error) {
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("SELECT %s FROM tasks WHERE job_id = ? ORDER BY rowid", allTaskColumns), jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TaskRow
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *t)
 	}
 	return out, rows.Err()
 }

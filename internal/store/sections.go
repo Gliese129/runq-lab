@@ -360,7 +360,7 @@ func (s *Store) SetJobSection(ctx context.Context, section string, refs []string
 	var ids []string
 	project := ""
 	for _, ref := range refs {
-		j, err := s.resolveJobRef(ctx, ref)
+		j, err := s.ResolveJobRef(ctx, ref)
 		if err != nil {
 			return nil, err
 		}
@@ -420,8 +420,8 @@ func (s *Store) SortUnsorted(ctx context.Context, project string) (int, error) {
 	return moved, nil
 }
 
-// resolveJobRef finds a job by id or unique id prefix.
-func (s *Store) resolveJobRef(ctx context.Context, ref string) (*JobRow, error) {
+// ResolveJobRef finds a job by id or unique id prefix.
+func (s *Store) ResolveJobRef(ctx context.Context, ref string) (*JobRow, error) {
 	if j, err := s.GetJob(ctx, ref); err != nil || j != nil {
 		return j, err
 	}

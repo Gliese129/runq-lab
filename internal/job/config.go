@@ -33,7 +33,15 @@ type JobConfig struct {
 	Note        string         `yaml:"note,omitempty" json:"note,omitempty"`
 	FixedParams map[string]any `yaml:"fixed_params,omitempty" json:"fixed_params,omitempty"` // params with fixed values (not swept)
 	Sweep       []SweepBlock   `yaml:"sweep" json:"sweep"`
-	Overrides   *Overrides     `yaml:"overrides,omitempty" json:"overrides,omitempty"`
+	// Tasks lists named runs explicitly (the alternative to Sweep): each row
+	// is fixed_params overridden by the row's own params.
+	Tasks []TaskRow `yaml:"tasks,omitempty" json:"tasks,omitempty"`
+	// Baseline names the reference run (default: the first row). Run names
+	// of sweep rows and the plan table describe rows relative to it.
+	Baseline string `yaml:"baseline,omitempty" json:"baseline,omitempty"`
+	// FromJob is written by `runq export` for provenance; ignored as input.
+	FromJob   string     `yaml:"from_job,omitempty" json:"from_job,omitempty"`
+	Overrides *Overrides `yaml:"overrides,omitempty" json:"overrides,omitempty"`
 }
 
 // SweepBlock is one block inside the sweep array.

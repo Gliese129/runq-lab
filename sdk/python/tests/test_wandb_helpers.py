@@ -231,3 +231,16 @@ def test_link_wandb_uses_real_url_only_on_global_main(clean_env, tmp_path, monke
     assert json.loads(ctx.links_file.read_text())["wandb"] == run.url
     ctx.link_wandb(SimpleNamespace(url=""), global_rank=0)
     assert json.loads(ctx.links_file.read_text())["wandb"] == run.url
+
+
+def test_wandb_like_cfg_uses_run_and_job_names(clean_env, tmp_path, monkeypatch):
+    """rc6: the row's run name is the W&B run name; the job name its group."""
+    monkeypatch.setenv("RUNQ_TASK_ID", "t1")
+    monkeypatch.setenv("RUNQ_JOB_ID", "j-abc")
+    monkeypatch.setenv("RUNQ_TASK_DIR", str(tmp_path))
+    monkeypatch.setenv("RUNQ_SWEEP_KEYS", "lr")
+    monkeypatch.setenv("RUNQ_RUN_NAME", "R1 lr")
+    monkeypatch.setenv("RUNQ_JOB_NAME", "A1 第一批消融")
+    cfg = runq.context().wandb_like_cfg
+    assert cfg["name"] == "R1 lr"
+    assert cfg["group"] == "A1 第一批消融"

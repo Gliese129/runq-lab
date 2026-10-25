@@ -88,8 +88,14 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	if len(plan.Tasks) == 0 {
 		return "", submitplan.Plan{}, fmt.Errorf("sweep expands to zero tasks — check sweep parameters (nothing would be submitted)")
 	}
+	fmt.Fprintf(&s, "baseline: %s\n", plan.Baseline)
 	for _, task := range plan.Tasks {
-		fmt.Fprintf(&s, "task %s: outputs=%s checkpoints=%s WANDB_DIR=%s\n", task.TaskID, task.OutputDir, task.CheckpointDir, task.WandbDir)
+		fmt.Fprintf(&s, "run %q task %s: outputs=%s checkpoints=%s WANDB_DIR=%s\n", task.RunName, task.TaskID, task.OutputDir, task.CheckpointDir, task.WandbDir)
+	}
+	for _, task := range plan.Tasks {
+		if len(task.NeedsCode) > 0 {
+			fmt.Fprintf(&s, "needs code: %q (%s) — submitting does not wait for it\n", task.RunName, strings.Join(task.NeedsCode, ", "))
+		}
 	}
 	t := plan.Tasks[0]
 	runsh := path.Join(t.TaskDir, runScriptName)

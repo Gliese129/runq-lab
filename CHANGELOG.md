@@ -33,6 +33,15 @@
 - Preflight warns (never blocks) when a script defines an output flag such as
   `--output_dir` that the command does not pass.
 - `runq target check` reports the target's `data_path`.
+- job.yaml `tasks:` lists named runs instead of a `sweep:` (one or the other):
+  `{run: R1 lr, lr: 2e-6}` per row, overriding `fixed_params`; `needs_code:
+  [param]` flags rows that need a code change (listed in the preview, not
+  blocking). `baseline:` names the reference run (default: the first row). Sweep
+  rows are named by what differs from the baseline (`kl=0.1, seed=2`; the
+  baseline is `base`). Run names are stored per task, shown as RUN in
+  `runq ps <job>`, and passed as `RUNQ_RUN_NAME` (the SDK's W&B run name).
+- `runq export <jb…> [-o file]` (and `GET /api/v1/jobs/{id}/export`) writes a
+  submitted job back as `tasks:` rows; submitting the file reproduces the plan.
 - Sections group a project's jobs: `runq section ls/create/rm/move/sort` and
   `runq section rule add/rm`. Every project has `unsorted` and `smoke` (default
   rule `name *smoke*`). `runq submit -s <section>` or job.yaml `section:` files a

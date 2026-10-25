@@ -170,6 +170,35 @@ overrides:                      # optional per-job overrides of project defaults
     WANDB_RUN_GROUP: sweep-v2
 ```
 
+### Named runs: `tasks:` instead of `sweep:`
+
+An ablation table is usually a handful of named runs, each changing one or
+two things from a baseline. List them as rows instead of a sweep (a job has
+one or the other):
+
+```yaml
+project: tij-guru-a1
+name: A1 batch 1
+description: no code change, ~380 node_f h   # shown under the plan table
+baseline: B0                                 # optional; default = first row
+fixed_params: { lr: 0.000001, beta: 0.01, seed: s1, std: on }
+tasks:
+  - { run: B0 }                              # every row = fixed_params + its own keys
+  - { run: "B0'", seed: s2 }
+  - { run: R1 lr, lr: 0.000002 }
+  - { run: R5 Dr.GRPO, std: off, needs_code: [std] }
+```
+
+- `run` (required, unique in the job) names the row: it is the RUN column of
+  `runq ps <job>` and the W&B run name. `needs_code` (optional, param names)
+  notes that the row needs a code change first; the preview lists such rows,
+  and submitting does not wait for them. Neither key becomes a param.
+- Sweep rows get names too: what differs from the baseline row
+  (`kl=0.1, seed=2`), and `base` for the baseline itself.
+- `runq export <jb…> [-o file]` writes any submitted job back in this form —
+  fixed_params from the baseline, each row only what differs. Submitting the
+  file again reproduces the same rows, names and params.
+
 ### Choosing grid vs list
 
 Ask: "does every value of A make sense with every value of B?" Yes → same

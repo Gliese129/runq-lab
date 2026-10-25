@@ -211,6 +211,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/archive", s.handleArchiveJob)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/rename", s.handleRenameJob)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/section", s.handleMoveJob)
+	s.mux.HandleFunc("GET /api/v1/jobs/{id}/export", s.handleExportJob)
 	s.mux.HandleFunc("GET /api/v1/projects/{name}/sections", s.handleListSections)
 	s.mux.HandleFunc("POST /api/v1/projects/{name}/sections", s.handleCreateSection)
 	s.mux.HandleFunc("DELETE /api/v1/projects/{name}/sections/{section}", s.handleRemoveSection)
