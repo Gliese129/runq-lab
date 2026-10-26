@@ -6,7 +6,6 @@ import type { Capabilities, TargetSummary } from '@/types/api'
 const NO_CAPS: Capabilities = {
   gpu_map: false,
   live_log: false,
-  retry: false,
   state_model: 'push',
   kill_async: false,
   submit_preview: false,

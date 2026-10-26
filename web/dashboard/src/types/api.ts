@@ -260,7 +260,6 @@ export interface GPUSlot {
 export interface Capabilities {
   gpu_map: boolean
   live_log: boolean
-  retry: boolean
   state_model: 'push' | 'poll'
   kill_async: boolean
   /** backend can render exactly what would be submitted (zero side effects) */
@@ -524,8 +523,11 @@ export interface DraftResult {
   table: string
   rows: PlanRow[]
   baseline: string
+  /** full rendered preview: after create/edit, and on GET ?preview=1 */
   preview?: string
   warnings?: string[]
+  /** the editable YAML of this same rev (`runq show dr… --yaml`) */
+  yaml: string
   /** a draft with into: what each row would do (cells align with rows) */
   append?: AppendSummary
 }

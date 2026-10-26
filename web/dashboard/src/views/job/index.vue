@@ -52,10 +52,8 @@
       :wandb="detail.wandb"
       :metric-keys="detail.metric_keys"
       :swept-params="sweptParams"
-      :can-retry="caps.retry"
       :last-output="lastOutput"
       @kill-task="onKillTask"
-      @retry-task="onRetryTask"
       @click-task="onClickTask"
     />
 
@@ -159,7 +157,6 @@
   </div>
 
   <!-- RQ-75: cross-generation rerun confirmation -->
-  <GenerationRerunDialog v-model="genRerun.open.value" @confirm="genRerun.confirmRerun" />
 </template>
 
 <script setup lang="ts">
@@ -175,8 +172,6 @@ import { useJobDetailQuery, useCompareQuery, useJobResultsQuery, useJobActions, 
 import { lastOutputTs } from '@/utils/lastOutput'
 import { liveCells, rerunIds } from '@/utils/jobCells'
 import { useTaskActions } from '@/queries/useTaskQueries'
-import { useGenerationRerun } from '@/composables/useGenerationRerun'
-import GenerationRerunDialog from '@/components/GenerationRerunDialog.vue'
 import JobHeader from './JobHeader.vue'
 import TaskTable from './TaskTable.vue'
 import JobResultsCard from './JobResultsCard.vue'
@@ -411,17 +406,6 @@ async function onKillTask(id: string) {
   if (!ok) return
   taskActions.kill.mutateAsync(id)
     .catch((e: any) => snack.error(e?.message || t('common.error')))
-}
-
-// RQ-75: cross-generation reruns confirm through the shared dialog.
-const genRerun = useGenerationRerun(
-  (p) => taskActions.retry.mutateAsync(p),
-  () => {},
-  (e: any) => snack.error(e?.message || t('common.error')),
-)
-
-function onRetryTask(id: string) {
-  void genRerun.run(id)
 }
 
 async function archiveJob() {

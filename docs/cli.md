@@ -38,7 +38,7 @@ When the service serves the dashboard, `submit`, `ps` and `show` JSON carry a
 | `runq logs <task_id> -n 200` | Last 200 log lines; at a terminal it then follows until Ctrl-C, otherwise it exits (`--no-follow` makes a terminal exit too) |
 | `runq logs <task_id> --grep '<regex>' -n 20` | Last 20 lines matching an extended regex, grepped on the target |
 | `runq logs <task_id> --timeout 2m` | Tail, then follow for at most 2 minutes — at a terminal or not |
-| `runq view --job <job_id> --json` | Result rows written by `runq.record(...)` |
+| `runq view --job <job_id>` | Results written by `runq.record(...)`, through the view engine: a table per scoring script and section, one row per cell (`--format csv\|markdown\|latex`, `--json`) |
 | `runq dashboard` | Print the dashboard URL and open it in the browser; job, task and draft pages are linked from `show`, `ps` and `draft` |
 
 ## Projects (one per code base)

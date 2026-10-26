@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -26,6 +27,17 @@ func runKill(cmd *cobra.Command, args []string) error {
 	}
 	return withBackend(cmd, func(be backend.Backend) error {
 		ctx := cmd.Context()
+		// Short ids resolve as in ps/show; an ambiguous prefix is an answer.
+		resolve := map[string]func(context.Context, backend.Backend, string) (string, error){"tk": resolveTaskRef, "jb": resolveJobRef}
+		if fn, ok := resolve[prefixOf(id)]; ok {
+			full, err := fn(ctx, be, id)
+			if err != nil && !errors.Is(err, backend.ErrNotFound) {
+				return err
+			}
+			if err == nil {
+				id = full
+			}
+		}
 
 		// Prefix dispatch: try task, fall through to job — but ONLY on
 		// not-found (D21: branch on the code, never on error presence).
@@ -61,6 +73,13 @@ func runKill(cmd *cobra.Command, args []string) error {
 
 		return fmt.Errorf("no task or job found with id %q", id)
 	})
+}
+
+func prefixOf(id string) string {
+	if len(id) < 2 {
+		return ""
+	}
+	return id[:2]
 }
 
 func init() {

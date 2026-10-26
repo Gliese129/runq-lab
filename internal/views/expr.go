@@ -24,6 +24,17 @@ func lex(s string) ([]token, error) {
 			i++
 			continue
 		}
+		// `name` is a field whose name is not a bare word (eval/acc,
+		// auto-1f2e.loss): everything up to the closing backtick.
+		if c == '`' {
+			end := strings.IndexByte(s[i+1:], '`')
+			if end <= 0 {
+				return nil, fmt.Errorf("unclosed or empty `field`")
+			}
+			out = append(out, token{"id", s[i+1 : i+1+end]})
+			i += end + 2
+			continue
+		}
 		if c == '\'' || c == '"' {
 			q := c
 			i++

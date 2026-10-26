@@ -30,10 +30,15 @@ with runq.log_group("train"):
 runq.record({"acc": acc}, seed=ctx.seed, split="val")  # axis-keyed result row
 ```
 
-Checkpoints go under `ctx.checkpoint_dir` (`<task_dir>/checkpoints`, stable
-across retries, so a `resume.extra_args` restart can find them). runq does not
-manage checkpoint lifecycle or early stopping — those belong to your training
-script.
+Checkpoints go under `ctx.checkpoint_dir` (`<task_dir>/checkpoints`). runq does
+not retry tasks: a rerun (`runq draft job.yaml --into jb… --rerun-failed`) is a
+new task with its own directory, so to resume, pass the old checkpoint as a
+param (`fixed_params: { resume_from: <path> }`, `--resume_from {{resume_from}}`).
+runq does not manage checkpoint lifecycle or early stopping — those belong to
+your training script.
+
+`runq.report()` writes a NaN or Inf as `null` (one warning per key on stderr);
+the dashboard draws a gap there and says from which step.
 
 ## Two modes
 
@@ -58,13 +63,14 @@ for t in job.tasks:
 ingests it like the task's own results. See
 [scoring scripts](../../docs/views.md#scoring-scripts-with-runqjob).
 
-## Output and W&B directories (RC3)
+## Output and W&B directories
 
-`ctx.output_dir` defaults to `<task_dir>/outputs`; `ctx.checkpoint_dir` defaults
-to `<task_dir>/checkpoints`. `ctx.wandb_like_cfg["dir"]` uses `WANDB_DIR`, whose
-default is the task directory. W&B manages the `wandb` child itself. Explicit
-project/job environment overrides are resolved before submission and preserved
-by the SDK.
+`ctx.output_dir` is `<task_dir>/outputs` and `ctx.checkpoint_dir` is
+`<task_dir>/checkpoints`; `ctx.wandb_like_cfg["dir"]` uses `WANDB_DIR`, the task
+directory. W&B manages the `wandb` child itself. runq owns these directories:
+setting `RUNQ_OUTPUT_DIR`, `RUNQ_CHECKPOINT_DIR` or `WANDB_DIR` in
+`environment:`/`overrides.env` is refused — move all task data with the target's
+`data_path`.
 
 ```python
 import wandb
@@ -72,7 +78,7 @@ run = wandb.init(**ctx.wandb_like_cfg)
 runq.link("wandb", run)  # global rank 0; no URL (offline/disabled) = no-op
 ```
 
-The SDK still works without W&B installed. Retries keep outputs and offline
-files; online `resume="allow"` and offline `wandb sync` have different semantics.
+The SDK still works without W&B installed. A rerun is a new task, so it gets a
+new directory and a new W&B run.
 See the [directory contract](../../docs/sdk_reference.md#task-outputs-and-wb-files-rc3)
 for artifact staging/cache/download paths and explicit clean behavior.

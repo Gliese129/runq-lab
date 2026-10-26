@@ -81,8 +81,11 @@ type DraftResult struct {
 	Table    string    `json:"table"` // plan table (run × varying params)
 	Rows     []job.Row `json:"rows"`  // the same plan, structured (dashboard)
 	Baseline string    `json:"baseline"`
-	Preview  string    `json:"preview,omitempty"` // full rendered preview (create/edit)
-	Warnings []string  `json:"warnings,omitempty"`
+	Preview  string    `json:"preview,omitempty"` // full rendered preview (create/edit, GetDraftPreview)
+	// YAML is the editable form (`runq show dr… --yaml`) of this same rev,
+	// so a page never pairs a table with another rev's text.
+	YAML     string   `json:"yaml"`
+	Warnings []string `json:"warnings,omitempty"`
 	// Preflight is every check's result for this plan (warnings only, never
 	// blocking).
 	Preflight []preflight.CheckResult `json:"preflight,omitempty"`
@@ -163,6 +166,9 @@ func (m *MultiBackend) CreateDraft(ctx context.Context, req DraftRequest) (*Draf
 // the frozen form: every row explicit under tasks:, sweep and fixed_params
 // folded in.
 func (m *MultiBackend) planDraft(ctx context.Context, cfg job.JobConfig, target string) (PreviewResult, job.JobConfig, error) {
+	if len(m.snapshot()) == 0 { // nothing could run it: say what to do first
+		return PreviewResult{}, job.JobConfig{}, noTargetConfiguredError()
+	}
 	if cfg.Into != "" {
 		if _, err := m.resolveInto(ctx, &cfg, target); err != nil {
 			return PreviewResult{}, job.JobConfig{}, err
@@ -224,7 +230,11 @@ func (m *MultiBackend) draftResult(ctx context.Context, d *store.DraftRow) (*Dra
 			order = append(order, p.Name)
 		}
 	}
-	res := &DraftResult{Draft: view, Table: job.PlanTable(rows, cfg.Baseline, order), Rows: rows}
+	text, err := m.draftYAML(ctx, d, cfg, rows)
+	if err != nil {
+		return nil, err
+	}
+	res := &DraftResult{Draft: view, Table: job.PlanTable(rows, cfg.Baseline, order), Rows: rows, YAML: string(text)}
 	if len(rows) > 0 {
 		res.Baseline = rows[job.BaselineIndex(rows, cfg.Baseline)].Run
 	}
@@ -282,6 +292,31 @@ func (m *MultiBackend) GetDraft(ctx context.Context, ref string) (*DraftResult, 
 	return m.draftResult(ctx, d)
 }
 
+// GetDraftPreview is GetDraft plus the plan's full preview and preflight,
+// re-planned now (side-effect free) — what the draft page opens with. An
+// open draft only: a submitted one is history.
+func (m *MultiBackend) GetDraftPreview(ctx context.Context, ref string) (*DraftResult, error) {
+	d, err := m.store.GetDraft(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	res, err := m.draftResult(ctx, d)
+	if err != nil || d.Status != "open" {
+		return res, err
+	}
+	var cfg job.JobConfig
+	if err := json.Unmarshal([]byte(d.ConfigJSON), &cfg); err != nil {
+		return nil, err
+	}
+	out, _, err := m.planDraft(ctx, cfg, d.Target)
+	if err != nil { // the plan no longer validates (project or target changed)
+		res.Warnings = append(res.Warnings, "the plan does not validate now: "+err.Error())
+		return res, nil
+	}
+	res.Preview, res.Preflight = out.Preview, out.Preflight.Results
+	return res, nil
+}
+
 // DraftYAML is the draft's editable form: the export layout headed by
 // draft/rev, so `runq draft edit -f` knows what it edits.
 func (m *MultiBackend) DraftYAML(ctx context.Context, ref string) ([]byte, error) {
@@ -297,6 +332,10 @@ func (m *MultiBackend) DraftYAML(ctx context.Context, ref string) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
+	return m.draftYAML(ctx, d, cfg, rows)
+}
+
+func (m *MultiBackend) draftYAML(ctx context.Context, d *store.DraftRow, cfg job.JobConfig, rows []job.Row) ([]byte, error) {
 	in := job.ExportInput{DraftID: d.ID, Rev: d.Rev, Into: cfg.Into, RerunFailed: cfg.RerunFailed, Project: d.Project, Name: cfg.Name, Description: cfg.Description,
 		Section: cfg.Section, Target: cfg.Target, Command: cfg.Command, Overrides: cfg.Overrides,
 		Baseline: cfg.Baseline, Rows: rows}

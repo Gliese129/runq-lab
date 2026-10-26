@@ -137,34 +137,6 @@ func showJob(cmd *cobra.Command, be backend.Backend, ref string, jsonOut bool) e
 }
 
 // resolveJobRef expands a unique job-id prefix (archived jobs included).
-func resolveJobRef(ctx context.Context, be backend.Backend, ref string) (string, error) {
-	if d, err := be.GetJob(ctx, ref); err == nil && d != nil {
-		return d.Job.ID, nil
-	}
-	var matches []string
-	for _, list := range []func(context.Context) ([]backend.JobSummary, error){
-		func(ctx context.Context) ([]backend.JobSummary, error) { return be.ListJobs(ctx, "") },
-		be.ListArchivedJobs,
-	} {
-		jobs, err := list(ctx)
-		if err != nil {
-			continue
-		}
-		for _, j := range jobs {
-			if strings.HasPrefix(j.ID, ref) {
-				matches = append(matches, j.ID)
-			}
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return "", fmt.Errorf("job %q not found", ref)
-	case 1:
-		return matches[0], nil
-	}
-	return "", fmt.Errorf("job %q is ambiguous: %s", ref, strings.Join(matches, ", "))
-}
-
 var archiveCmd = &cobra.Command{
 	Use:   "archive <jb… | pj… | project-name>",
 	Short: "Hide a job or a project from default lists (--restore brings it back)",
@@ -218,4 +190,24 @@ func init() {
 	archiveCmd.GroupID = groupManagement
 	dashboardCmd.GroupID = groupCore
 	rootCmd.AddCommand(showCmd, archiveCmd, dashboardCmd)
+}
+
+func runJobArchive(cmd *cobra.Command, jobID string, archive bool) error {
+	verb := "archived"
+	if !archive {
+		verb = "unarchived"
+	}
+	return withBackend(cmd, func(be backend.Backend) error {
+		var err error
+		if archive {
+			err = be.ArchiveJob(cmd.Context(), jobID)
+		} else {
+			err = be.UnarchiveJob(cmd.Context(), jobID)
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Printf("job %s %s\n", utils.IDColor(jobID), verb)
+		return nil
+	})
 }

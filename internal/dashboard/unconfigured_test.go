@@ -73,9 +73,9 @@ func TestUnconfiguredBootstrapAndHealth(t *testing.T) {
 	}
 }
 
-func TestUnconfiguredSubmitIsActionableConflict(t *testing.T) {
+func TestUnconfiguredDraftIsActionableConflict(t *testing.T) {
 	server := newUnconfiguredServer(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"config":{"project":"demo"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/drafts", strings.NewReader(`{"job_yaml":"project: demo\ntasks: [{run: a}]\n"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)

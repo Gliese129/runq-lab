@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"path"
 	"strings"
@@ -32,6 +33,7 @@ func cleanCheckpoints(ctx context.Context, st *store.Store, resolveFS func(store
 		tasks  []store.TaskRow
 	}
 	var order []string
+	var failures []string
 	groups := map[string]*group{}
 	for _, t := range tasks {
 		if t.TaskDir == "" {
@@ -39,11 +41,13 @@ func cleanCheckpoints(ctx context.Context, st *store.Store, resolveFS func(store
 		}
 		if err := utils.SafeDeletePath(t.TaskDir); err != nil {
 			slog.Warn("clean: refusing suspicious path", "task", t.ID, "error", err)
+			failures = append(failures, fmt.Sprintf("task %s: refused %s: %v", t.ID, t.TaskDir, err))
 			continue
 		}
 		fsys, err := resolveFS(t)
 		if err != nil {
 			slog.Warn("clean: target unavailable", "task", t.ID, "error", err)
+			failures = append(failures, fmt.Sprintf("task %s: target unavailable: %v", t.ID, err))
 			continue
 		}
 		if fsys == nil {
@@ -59,7 +63,7 @@ func cleanCheckpoints(ctx context.Context, st *store.Store, resolveFS func(store
 		g.tasks = append(g.tasks, t)
 	}
 
-	res := &CleanResult{}
+	res := &CleanResult{Failures: failures}
 	if dryRun {
 		res.Preview = preview
 	}
@@ -118,11 +122,17 @@ func cleanCheckpoints(ctx context.Context, st *store.Store, resolveFS func(store
 		if dryRun {
 			continue
 		}
-		cleaned := deleteCheckpointContents(ctx, g.fs, ckDirs)
+		cleaned, fails := deleteCheckpointContents(ctx, g.fs, ckDirs)
 		res.Tasks += cleaned
-		for _, id := range jobOrder {
-			if j := jobs[id]; j.Bytes > 0 {
-				res.FreedBytes += j.Bytes
+		res.Failures = append(res.Failures, fails...)
+		// Freed is what is gone: measured again after the rm, not assumed.
+		if merr == nil {
+			if after, aerr := diskspace.Measure(ctx, g.fs, ckDirs...); aerr == nil {
+				for _, d := range ckDirs {
+					res.FreedBytes += max(0, use[d].Bytes-after[d].Bytes)
+				}
+			} else {
+				res.Failures = append(res.Failures, fmt.Sprintf("target %s: could not measure what was freed: %v", g.target, aerr))
 			}
 		}
 		res.Jobs += len(jobOrder)
@@ -158,10 +168,11 @@ func recordJobUsage(ctx context.Context, st *store.Store, jobID string, u disksp
 
 // deleteCheckpointContents empties each existing checkpoints dir (dotfiles
 // included, the dir itself kept), 100 dirs per Exec. Returns how many
-// dirs the shell reported emptied.
-func deleteCheckpointContents(ctx context.Context, fsys rfs.FS, dirs []string) int {
+// dirs the shell reported emptied and the batches that failed.
+func deleteCheckpointContents(ctx context.Context, fsys rfs.FS, dirs []string) (int, []string) {
 	const batch = 100
 	cleaned := 0
+	var failures []string
 	for start := 0; start < len(dirs); start += batch {
 		var sb strings.Builder
 		for _, d := range dirs[start:min(start+batch, len(dirs))] {
@@ -171,8 +182,9 @@ func deleteCheckpointContents(ctx context.Context, fsys rfs.FS, dirs []string) i
 		out, _, code, err := fsys.Exec(ctx, "sh", "-c", sb.String())
 		if err != nil || code != 0 {
 			slog.Warn("clean: checkpoint removal failed", "dirs", len(dirs), "exit", code, "err", err)
+			failures = append(failures, fmt.Sprintf("checkpoint rm failed (exit %d): %v", code, err))
 		}
 		cleaned += strings.Count(string(out), "ok\n")
 	}
-	return cleaned
+	return cleaned, failures
 }

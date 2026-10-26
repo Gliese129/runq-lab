@@ -201,6 +201,7 @@ func PerformClean(ctx context.Context, st *store.Store, fsFor func(store.TaskRow
 	// owning lane's Exec (freed bytes approximated from the ledger stats —
 	// per-dir du over SSH isn't worth the round trips).
 	var freedBytes int64
+	var failures []string
 	type remoteGroup struct {
 		fs   rfs.FS
 		rows []store.TaskRow
@@ -214,6 +215,7 @@ func PerformClean(ctx context.Context, st *store.Store, fsFor func(store.TaskRow
 		if ferr != nil {
 			slog.Warn("clean: artifact generation unavailable after DB deletion",
 				"task", d.task.ID, "generation", d.task.TargetGeneration, "error", ferr)
+			failures = append(failures, fmt.Sprintf("task %s: target unavailable, %s left on disk: %v", d.task.ID, d.task.TaskDir, ferr))
 			continue
 		}
 		if fsys != nil {
@@ -232,17 +234,21 @@ func PerformClean(ctx context.Context, st *store.Store, fsFor func(store.TaskRow
 		if cerr != nil {
 			slog.Warn("clean: failed to remove task artifacts",
 				"task", d.task.ID, "err", cerr)
+			failures = append(failures, fmt.Sprintf("task %s: %v", d.task.ID, cerr))
 		}
 		freedBytes += cleaned
 	}
 	for _, group := range remoteByGeneration {
-		freedBytes += cleanRemoteArtifacts(ctx, group.fs, group.rows, stats)
+		freed, fails := cleanRemoteArtifacts(ctx, group.fs, group.rows, stats)
+		freedBytes += freed
+		failures = append(failures, fails...)
 	}
 
 	return &CleanResult{
 		Tasks:      len(deleted),
 		Jobs:       int(deletedJobs),
 		FreedBytes: freedBytes,
+		Failures:   failures,
 	}, nil
 }
 
@@ -377,28 +383,31 @@ func classifyAction(t store.TaskRow, fsys rfs.FS) CleanAction {
 // command-line budget). Freed bytes are the LEDGER's estimate
 // (checkpoints + metrics ingest size): honest enough for the summary
 // line, and per-dir du over SSH would cost a round trip per task.
-func cleanRemoteArtifacts(ctx context.Context, fsys rfs.FS, rows []store.TaskRow, stats map[string]store.TaskCleanStat) int64 {
+func cleanRemoteArtifacts(ctx context.Context, fsys rfs.FS, rows []store.TaskRow, stats map[string]store.TaskCleanStat) (int64, []string) {
 	var paths []string
-	var freed int64
+	var failures []string
+	freedOf := map[string]int64{} // path → ledger bytes, counted once its rm succeeds
 	for _, t := range rows {
 		// RQ-45: structural guard before anything reaches `rm -rf`.
 		if t.TaskDir != "" {
 			if err := utils.SafeDeletePath(t.TaskDir); err != nil {
 				slog.Warn("clean: refusing suspicious path", "task", t.ID, "error", err)
+				failures = append(failures, fmt.Sprintf("task %s: refused %s: %v", t.ID, t.TaskDir, err))
 			} else {
 				paths = append(paths, t.TaskDir)
+				freedOf[t.TaskDir] = stats[t.ID].MetricsBytes
 			}
 		}
 		if t.LogPath != "" && (t.TaskDir == "" || !strings.HasPrefix(t.LogPath, t.TaskDir)) {
 			if err := utils.SafeDeletePath(t.LogPath); err != nil {
 				slog.Warn("clean: refusing suspicious log path", "task", t.ID, "error", err)
+				failures = append(failures, fmt.Sprintf("task %s: refused %s: %v", t.ID, t.LogPath, err))
 			} else {
 				paths = append(paths, t.LogPath)
 			}
 		}
-		st := stats[t.ID]
-		freed += st.MetricsBytes
 	}
+	var freed int64
 	const batch = 100
 	for start := 0; start < len(paths); start += batch {
 		chunk := paths[start:min(start+batch, len(paths))]
@@ -408,12 +417,18 @@ func cleanRemoteArtifacts(ctx context.Context, fsys rfs.FS, rows []store.TaskRow
 			sb.WriteByte(' ')
 			sb.WriteString(utils.ShellQuote(p))
 		}
-		if _, _, code, err := fsys.Exec(ctx, "sh", "-c", sb.String()); err != nil || code != 0 {
+		_, stderr, code, err := fsys.Exec(ctx, "sh", "-c", sb.String())
+		if err != nil || code != 0 {
 			slog.Warn("clean: remote artifact removal failed",
 				"paths", len(chunk), "exit", code, "err", err)
+			failures = append(failures, fmt.Sprintf("rm of %d path(s) failed (exit %d): %v %s", len(chunk), code, err, strings.TrimSpace(string(stderr))))
+			continue // which of them went is unknown: free nothing for the chunk
+		}
+		for _, p := range chunk {
+			freed += freedOf[p]
 		}
 	}
-	return freed
+	return freed, failures
 }
 
 // cleanTaskArtifacts removes the task's workspace directory and log file.

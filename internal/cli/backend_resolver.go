@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -21,9 +22,6 @@ import (
 func withBackend(cmd *cobra.Command, fn func(backend.Backend) error) error {
 	be := api.NewProxy(getSocketPath())
 	be.TargetFilter = resolveTarget(cmd)
-	if cmd.Name() == "submit" {
-		be.SubmitTarget = explicitSubmitTarget(cmd)
-	}
 	return fn(be)
 }
 
@@ -71,4 +69,24 @@ func resolveTarget(cmd *cobra.Command) string {
 		return t
 	}
 	return ""
+}
+
+// resolveJobRef and resolveTaskRef are the CLI's one way to read an id the
+// user typed: the service resolves a full id or a unique prefix (and says
+// which ids an ambiguous prefix matches), so every command accepts the same
+// short ids that ps and show print.
+func resolveJobRef(ctx context.Context, be backend.Backend, ref string) (string, error) {
+	d, err := be.GetJob(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	return d.Job.ID, nil
+}
+
+func resolveTaskRef(ctx context.Context, be backend.Backend, ref string) (string, error) {
+	v, err := be.GetTask(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	return v.ID, nil
 }

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gliese129/runq-lab/internal/backend"
+	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/store"
 	"github.com/gliese129/runq-lab/internal/views"
 )
@@ -37,6 +39,7 @@ func (s *Server) registerViews() {
 	s.mux.HandleFunc("PUT /api/v1/projects/{p}/views/{name}", s.handlePutView)
 	s.mux.HandleFunc("DELETE /api/v1/projects/{p}/views/{name}", s.handleDeleteView)
 	s.mux.HandleFunc("GET /api/v1/projects/{p}/views/{name}/render", s.handleRenderView)
+	s.mux.HandleFunc("GET /api/v1/jobs/{id}/view", s.handleJobView)
 }
 func (s *Server) handleListViews(w http.ResponseWriter, r *http.Request) {
 	st := s.viewStore(w)
@@ -137,6 +140,44 @@ func (s *Server) handleDeleteView(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
+func (s *Server) handleJobView(w http.ResponseWriter, r *http.Request) {
+	st := s.viewStore(w)
+	if st == nil {
+		return
+	}
+	j, err := st.ResolveJobRef(r.Context(), r.PathValue("id"))
+	if err != nil {
+		var ambiguous *store.AmbiguousRefError
+		if !errors.As(err, &ambiguous) {
+			err = fmt.Errorf("%w: %v", backend.ErrNotFound, err)
+		}
+		writeError(w, err)
+		return
+	}
+	input, err := st.ViewInput(r.Context(), views.Spec{Name: "results", Project: j.ProjectName}, []string{j.ID})
+	if err != nil {
+		viewError(w, err)
+		return
+	}
+	tasks, err := st.ListTasks(r.Context(), store.TaskFilter{JobID: j.ID, LiveOnly: true})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	rows := make([]job.Row, 0, len(tasks))
+	for _, t := range tasks {
+		var p job.TaskParams
+		_ = json.Unmarshal([]byte(t.ParamsJSON), &p)
+		rows = append(rows, job.Row{Params: p})
+	}
+	results, err := views.JobViews(j.ProjectName, input, job.VaryingKeys(rows), time.Now().Unix())
+	if err != nil {
+		viewError(w, err)
+		return
+	}
+	writeJSON(w, 200, views.JobView{JobID: j.ID, Views: results})
+}
+
 func (s *Server) handleRenderView(w http.ResponseWriter, r *http.Request) {
 	st := s.viewStore(w)
 	if st == nil {

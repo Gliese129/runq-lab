@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -102,6 +103,24 @@ func buildCleanOptions(cmd *cobra.Command) (backend.CleanOptions, error) {
 	return opts, nil
 }
 
+// resolveCleanRefs turns --job/--task short ids into full ids: the clean
+// selectors match exactly, and a prefix that matched nothing would delete
+// nothing without saying why.
+func resolveCleanRefs(ctx context.Context, be backend.Backend, opts *backend.CleanOptions) error {
+	var err error
+	if opts.JobID != "" {
+		if opts.JobID, err = resolveJobRef(ctx, be, opts.JobID); err != nil {
+			return err
+		}
+	}
+	if opts.TaskID != "" {
+		if opts.TaskID, err = resolveTaskRef(ctx, be, opts.TaskID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func runClean(cmd *cobra.Command, args []string) error {
 	opts, err := buildCleanOptions(cmd)
 	if err != nil {
@@ -109,9 +128,17 @@ func runClean(cmd *cobra.Command, args []string) error {
 	}
 
 	if opts.Checkpoints {
-		return withBackend(cmd, func(be backend.Backend) error { return runCleanCheckpoints(cmd, be, opts) })
+		return withBackend(cmd, func(be backend.Backend) error {
+			if err := resolveCleanRefs(cmd.Context(), be, &opts); err != nil {
+				return err
+			}
+			return runCleanCheckpoints(cmd, be, opts)
+		})
 	}
 	return withBackend(cmd, func(be backend.Backend) error {
+		if err := resolveCleanRefs(cmd.Context(), be, &opts); err != nil {
+			return err
+		}
 		// Always preview first — the ledger-backed dry run is cheap.
 		previewOpts := opts
 		previewOpts.DryRun = true
@@ -161,7 +188,7 @@ func runClean(cmd *cobra.Command, args []string) error {
 			fmt.Printf(", freed %s", humanBytes(result.FreedBytes))
 		}
 		fmt.Println()
-		return nil
+		return cleanFailures(result)
 	})
 }
 
@@ -200,12 +227,24 @@ func runCleanCheckpoints(cmd *cobra.Command, be backend.Backend, opts backend.Cl
 	if err != nil {
 		return err
 	}
-	if result.Tasks == 0 {
+	if result.Tasks == 0 && len(result.Failures) == 0 {
 		fmt.Println("No checkpoints to clean.")
 		return nil
 	}
 	fmt.Printf("Deleted checkpoints of %d tasks in %d jobs, freed %s\n", result.Tasks, result.Jobs, humanBytes(result.FreedBytes))
-	return nil
+	return cleanFailures(result)
+}
+
+// cleanFailures lists what a clean could not delete and fails the command:
+// the records are gone, but those files may still take space.
+func cleanFailures(r *backend.CleanResult) error {
+	if len(r.Failures) == 0 {
+		return nil
+	}
+	for _, f := range r.Failures {
+		fmt.Fprintf(os.Stderr, "  not deleted: %s\n", f)
+	}
+	return fmt.Errorf("%d deletion(s) failed; the files above may still be on disk", len(r.Failures))
 }
 
 // printCheckpointPreview lists jobs and filesystems; returns the total

@@ -58,7 +58,7 @@ var viewCmd = &cobra.Command{Use: "view <file.yaml | name> | view --job <jb…>"
 		if len(jobs) != 1 {
 			return fmt.Errorf("give a view (file or name), or exactly one --job <jb…> for that job's recorded results")
 		}
-		return runResults(cmd, jobs)
+		return runJobView(cmd, jobs[0])
 	}
 	return withBackend(cmd, func(be backend.Backend) error {
 		p := be.(*api.Proxy)
@@ -133,6 +133,13 @@ var viewCmd = &cobra.Command{Use: "view <file.yaml | name> | view --job <jb…>"
 			return openBrowser(cmd.Context(), cmd.ErrOrStderr(), address)
 		}
 		jobs, _ := cmd.Flags().GetStringArray("job")
+		for i, ref := range jobs { // short ids, as everywhere else
+			id, err := resolveJobRef(cmd.Context(), be, ref)
+			if err != nil {
+				return err
+			}
+			jobs[i] = id
+		}
 		refresh, _ := cmd.Flags().GetBool("refresh")
 		r, err := p.RenderView(cmd.Context(), project, name, jobs, refresh)
 		if err != nil {
@@ -162,6 +169,57 @@ var viewCmd = &cobra.Command{Use: "view <file.yaml | name> | view --job <jb…>"
 		return nil
 	})
 }}
+
+// runJobView is `runq view --job jb…` with no view named: the job through
+// the view engine (views.JobViews), one table per producer and section, in
+// the same formats as a saved view.
+func runJobView(cmd *cobra.Command, ref string) error {
+	if refresh, _ := cmd.Flags().GetBool("refresh"); refresh {
+		return fmt.Errorf("--refresh re-runs a saved view's script sources; a job's own view has none (use --fresh to re-pull the job's status)")
+	}
+	return withBackend(cmd, func(be backend.Backend) error {
+		p := be.(*api.Proxy)
+		d, err := be.GetJob(cmd.Context(), ref)
+		if err != nil {
+			return err
+		}
+		applyFresh(cmd, be, d.Job.ID)
+		if openView, _ := cmd.Flags().GetBool("open"); openView {
+			address := dashboard.JobURL(dashboardBase(cmd.Context(), p), d.Job.Project, d.Job.ID)
+			if address == "" {
+				return fmt.Errorf("the runq service is not serving the dashboard UI (check `runq serve status`, or reinstall with the dashboard)")
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), address)
+			return openBrowser(cmd.Context(), cmd.ErrOrStderr(), address)
+		}
+		res, err := p.RenderJobView(cmd.Context(), d.Job.ID)
+		if err != nil {
+			return err
+		}
+		format, _ := cmd.Flags().GetString("format")
+		if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut || format == "json" {
+			printJSON(res)
+			return nil
+		}
+		if len(res.Views) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "no recorded results — emit them with runq.record(metrics, **axes) in your script")
+			return nil
+		}
+		wide, _ := cmd.Flags().GetBool("wide")
+		color, _ := cmd.Flags().GetBool("latex-color")
+		for i, r := range res.Views {
+			text, err := views.Export(r, format, wide, color)
+			if err != nil {
+				return err
+			}
+			if i > 0 {
+				fmt.Fprintln(cmd.OutOrStdout())
+			}
+			fmt.Fprint(cmd.OutOrStdout(), text)
+		}
+		return nil
+	})
+}
 
 func init() {
 	viewCmd.Flags().String("project", "", "Project containing the view")

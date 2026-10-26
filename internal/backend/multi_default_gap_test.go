@@ -43,7 +43,7 @@ func TestDefaultBackendReconcileGap(t *testing.T) {
 	// replacement still building) — the exact window Codex reproduced.
 	m.RemoveTarget("hpc")
 	caps := m.Capabilities() // must not panic; zero value is the honest answer
-	if caps.Retry {
+	if caps != (Capabilities{}) {
 		t.Fatalf("gap capabilities must be zero, got %+v", caps)
 	}
 	if _, lerr := m.ListProjects(ctx); lerr != nil {

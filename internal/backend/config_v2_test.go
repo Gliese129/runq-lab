@@ -3,7 +3,6 @@ package backend
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/project"
 	"github.com/gliese129/runq-lab/internal/store"
@@ -81,30 +80,6 @@ func TestV2TargetPrecedenceAndThreeExperimentPreviews(t *testing.T) {
 	}
 }
 
-func TestV2ForwardBoundarySurvivesSecondResolution(t *testing.T) {
-	st, err := store.Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	lane := &v2PreviewLane{UnavailableBackend: NewUnavailableBackend(nil)}
-	m, err := NewMultiBackend(map[string]Backend{"a": lane, "b": lane}, st, "a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg := project.Config{ProjectName: "p", Target: "b", Targets: []string{"a", "b"}, WorkingDir: t.TempDir()}
-	if err := m.CreateProject(context.Background(), cfg); err != nil {
-		t.Fatal(err)
-	}
-	ctx := WithSubmitTargetBoundary(context.Background(), "a")
-	if _, err := m.PreviewSubmit(ctx, job.JobConfig{Project: "p", Command: "echo hi"}); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("cross-boundary preview: %v", err)
-	}
-	if _, _, err := m.SubmitJob(ctx, job.JobConfig{Project: "p", Command: "echo hi"}, SubmitOptions{}); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("cross-boundary submit: %v", err)
-	}
-}
-
 func TestV2StateReadsSurviveRemovedTarget(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")
@@ -150,8 +125,8 @@ func TestV2TaskViewsUseOwningGenerationCapabilities(t *testing.T) {
 	}
 	defer st.Close()
 	seedGenerationJob(t, st, "job-old", "old")
-	active := &v2CapsLane{UnavailableBackend: NewUnavailableBackend(nil), caps: Capabilities{StateModel: "push", Retry: false}}
-	old := &v2CapsLane{UnavailableBackend: NewUnavailableBackend(nil), caps: Capabilities{StateModel: "poll", Retry: true, KillAsync: true}}
+	active := &v2CapsLane{UnavailableBackend: NewUnavailableBackend(nil), caps: Capabilities{StateModel: "push"}}
+	old := &v2CapsLane{UnavailableBackend: NewUnavailableBackend(nil), caps: Capabilities{StateModel: "poll", KillAsync: true}}
 	m, err := NewMultiBackend(map[string]Backend{"default": active, "hpc": active}, st, "default")
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +140,7 @@ func TestV2TaskViewsUseOwningGenerationCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Capabilities == nil || !view.Capabilities.Retry || view.Capabilities.StateModel != "poll" || detail.Capabilities == nil || !detail.Capabilities.KillAsync {
+	if view.Capabilities == nil || !view.Capabilities.KillAsync || view.Capabilities.StateModel != "poll" || detail.Capabilities == nil || !detail.Capabilities.KillAsync {
 		t.Fatalf("views used default/active lane: %+v %+v", view.Capabilities, detail.Capabilities)
 	}
 }

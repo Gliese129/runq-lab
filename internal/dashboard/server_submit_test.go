@@ -10,24 +10,7 @@ import (
 
 	"github.com/gliese129/runq-lab/internal/backend"
 	"github.com/gliese129/runq-lab/internal/config"
-	"github.com/gliese129/runq-lab/internal/job"
-	"github.com/gliese129/runq-lab/internal/preflight"
 )
-
-type submitCaptureBackend struct {
-	*backend.UnavailableBackend
-	cfg  job.JobConfig
-	opts backend.SubmitOptions
-}
-
-func (b *submitCaptureBackend) SubmitJob(_ context.Context, cfg job.JobConfig, opts backend.SubmitOptions) (string, int, error) {
-	b.cfg = cfg
-	b.opts = opts
-	if opts.Preflight != nil {
-		*opts.Preflight = preflight.Report{Results: []preflight.CheckResult{{Name: "entry", Status: "warning", Detail: "x.py does not exist"}}}
-	}
-	return "job-test", 1, nil
-}
 
 type renameCaptureBackend struct {
 	*backend.UnavailableBackend
@@ -39,25 +22,6 @@ func (b *renameCaptureBackend) RenameProject(_ context.Context, oldName, newName
 	b.oldName = oldName
 	b.newName = newName
 	return nil
-}
-
-// Preflight cannot be skipped: a pre-rc6 skip_preflight is ignored, and the
-// submit's warnings come back with the job.
-func TestHandleSubmitJobReturnsPreflightWarnings(t *testing.T) {
-	be := &submitCaptureBackend{UnavailableBackend: backend.NewUnavailableBackend(errors.New("unused"))}
-	server := NewServer(be, &config.GlobalConfig{})
-	body := `{"config":{"project":"pytrain-example","fixed_params":{"epochs":30},"sweep":[]},"skip_preflight":true}`
-	rec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(body)))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if be.cfg.Project != "pytrain-example" || be.opts.Preflight == nil {
-		t.Fatalf("submit not routed with a preflight out-param: %+v %+v", be.cfg, be.opts)
-	}
-	if !strings.Contains(rec.Body.String(), `"name":"entry","status":"warning"`) {
-		t.Fatalf("preflight warnings missing from the response: %s", rec.Body.String())
-	}
 }
 
 func TestHandleRenameProjectRoutesToBackend(t *testing.T) {

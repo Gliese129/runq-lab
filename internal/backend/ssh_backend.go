@@ -663,10 +663,9 @@ func (b *SSHBackend) Capabilities() Capabilities {
 	return Capabilities{
 		GPUMap:        b.backend.Cfg.GPUTemplate != "", // gpu_template-driven (runq preset)
 		LiveLog:       true,                            // logs readable via SSH
-		Retry:         false,
-		StateModel:    "poll", // best-effort projection; staleness surfaced
-		KillAsync:     true,   // qdel/scancel forwarded
-		SubmitPreview: true,   // zero-disk dry-run via submit code path
+		StateModel:    "poll",                          // best-effort projection; staleness surfaced
+		KillAsync:     true,                            // qdel/scancel forwarded
+		SubmitPreview: true,                            // zero-disk dry-run via submit code path
 	}
 }
 

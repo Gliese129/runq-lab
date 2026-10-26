@@ -1,35 +1,23 @@
 package cli
 
 import (
-	"github.com/gliese129/runq-lab/internal/api"
-	"github.com/gliese129/runq-lab/internal/backend"
-	"github.com/spf13/cobra"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
+// The submit target is only what -t says: a query environment never picks it.
 func TestSubmitSeparatesExplicitTargetFromQueryEnvironment(t *testing.T) {
 	t.Setenv("RUNQ_TARGET", "query-only")
-	t.Setenv("RUNQ_DATA_DIR", t.TempDir())
 	cmd := &cobra.Command{Use: "submit"}
 	cmd.Flags().StringP("target", "t", "", "")
-	check := func(want string) {
-		t.Helper()
-		if err := withBackend(cmd, func(be backend.Backend) error {
-			p := be.(*api.Proxy)
-			if p.SubmitTarget != want {
-				t.Fatalf("preview target %q, want %q", p.SubmitTarget, want)
-			}
-			if explicitSubmitTarget(cmd) != want {
-				t.Fatal("submit and preview disagree")
-			}
-			return nil
-		}); err != nil {
-			t.Fatal(err)
-		}
+	if got := explicitSubmitTarget(cmd); got != "" {
+		t.Fatalf("submit target %q without -t, want none", got)
 	}
-	check("")
 	if err := cmd.Flags().Set("target", "explicit"); err != nil {
 		t.Fatal(err)
 	}
-	check("explicit")
+	if got := explicitSubmitTarget(cmd); got != "explicit" {
+		t.Fatalf("submit target %q, want explicit", got)
+	}
 }

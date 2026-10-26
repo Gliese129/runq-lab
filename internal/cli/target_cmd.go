@@ -34,19 +34,6 @@ var targetCmd = &cobra.Command{
 	Short: "Configure compute targets (add, show, check, connect)",
 }
 
-var targetUseCmd = &cobra.Command{
-	Use:   "use <name>",
-	Short: "Select the active compute target for this session (or persistently with -p)",
-	Long: `Select the active compute target. Without -p, writes to ~/.runq/.active-target
-(session-scoped, overridden by $RUNQ_TARGET or --target flag). With -p,
-writes to config.yaml default_target (persists across sessions).
-This scopes queries; submit always uses -t > job.target > project.target.`,
-	Example: `  runq target use tsubame       # session-scoped
-  runq target use tsubame -p    # persistent default`,
-	Args: cobra.ExactArgs(1),
-	RunE: runConfigSetTarget,
-}
-
 var targetDisconnectCmd = &cobra.Command{
 	Use:          "disconnect <name>...",
 	Short:        "Stop the remote CLI forward and disable remote_cli",
@@ -156,11 +143,8 @@ func runTargetRm(cmd *cobra.Command, args []string) error {
 }
 
 func init() {
-	targetUseCmd.Flags().BoolP("persist", "p", false, "Write to config default_target instead of session file")
-
 	targetCmd.AddCommand(configAddCmd, configShowCmd, configCheckCmd)
-	targetCmd.AddCommand(targetUseCmd, connectCmd, targetDisconnectCmd, targetRmCmd)
+	targetCmd.AddCommand(connectCmd, targetDisconnectCmd, targetRmCmd)
 	targetCmd.GroupID = groupManagement
 	rootCmd.AddCommand(targetCmd)
-	retire(targetUseCmd, "pass `-t <target>` to the command that needs it; the default target is default_target in ~/.runq/config.yaml")
 }

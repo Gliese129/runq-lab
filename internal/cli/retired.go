@@ -2,9 +2,52 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
+
+// consumerReplacement is what replaced runq-managed consumers: the script
+// runs wherever you start it and reads the job itself.
+const consumerReplacement = "run the scoring script yourself; it reads the job with `runq.job()` and writes results runq ingests (docs/views.md)"
+
+// Removed commands, each a hidden stub that fails with what replaced it.
+// A stub swallows its old subcommands and flags (`runq job archive jb1`).
+func init() {
+	for _, r := range []struct {
+		parent      *cobra.Command
+		use         string
+		replacement string
+	}{
+		{rootCmd, "task", "use `runq show <tk…>`"},
+		{rootCmd, "job", "use `runq archive <jb…>` (`--restore` to undo); jobs are listed by `runq ps`"},
+		{rootCmd, "results", "use `runq view --job <jb…>`"},
+		{rootCmd, "consumer", consumerReplacement},
+		{rootCmd, "config", "edit ~/.runq/config.yaml directly (`runq doctor` prints its path, `runq target check` validates it)"},
+		{rootCmd, "gpu", "GPU allocation is shown on the dashboard's Targets page (`runq dashboard`)"},
+		{rootCmd, "open", "use `runq dashboard`; job, task and draft pages are linked from `runq show`, `runq ps` and `runq draft`"},
+		{rootCmd, "version", "use `runq --version`"},
+		{rootCmd, "connect", "use `runq target connect`"},
+		{projectCmd, "add", "use `runq project <project.yaml>` (registers or updates)"},
+		{projectCmd, "show", "use `runq show <pj… | project-name>`"},
+		{projectCmd, "archive", "use `runq archive <pj… | project-name>`"},
+		{projectCmd, "unarchive", "use `runq archive <pj… | project-name> --restore`"},
+		{targetCmd, "use", "pass `-t <target>` to the command that needs it; the default target is default_target in ~/.runq/config.yaml"},
+		{draftCmd, "show", "read a draft with `runq show dr… [--yaml]`"},
+	} {
+		stub := &cobra.Command{Use: r.use}
+		r.parent.AddCommand(stub)
+		retire(stub, r.replacement)
+	}
+}
+
+// consumerRetired answers a cs… id given to show/logs/kill.
+func consumerRetired(id string) error {
+	if !strings.HasPrefix(id, "cs") {
+		return nil
+	}
+	return fmt.Errorf("consumers (%s) were removed — %s", id, consumerReplacement)
+}
 
 // retire turns a removed command into a hidden stub: calling it fails with
 // the command that replaced it, so old habits (and old agent prompts) get a

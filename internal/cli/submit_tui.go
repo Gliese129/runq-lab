@@ -180,7 +180,7 @@ func (t *submitTUI) pickProject() {
 		names = names[:9]
 	}
 	if len(names) == 0 {
-		fmt.Fprintln(t.out, "no projects registered (runq project add -f project.yaml)")
+		fmt.Fprintln(t.out, "no projects registered (runq project project.yaml)")
 		return
 	}
 	for i, n := range names {

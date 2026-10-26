@@ -104,3 +104,46 @@ func TestCleanCheckpointsOnlyDeletesCheckpoints(t *testing.T) {
 		t.Fatalf("usage must survive the clean: %+v", u)
 	}
 }
+
+// A checkpoint rm that fails comes back as a failure, and freed counts
+// only what is gone (measured after the rm), not the size before it.
+func TestCleanCheckpointsReportsFailures(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if _, err := st.DB().Exec(`INSERT INTO projects (name, config_json) VALUES ('p', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.InsertJob(ctx, &store.JobRow{ID: "jbdone", ProjectName: "p", ConfigJSON: "{}", Status: "done", TotalTasks: 1, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "pj1", "jbdone", "tk1")
+	ck := filepath.Join(dir, "checkpoints")
+	if err := os.MkdirAll(ck, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ck, "step100.pt"), make([]byte, 40000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(ck, 0o555); err != nil { // its entries cannot be removed
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ck, 0o755) })
+	if err := st.InsertTask(ctx, &store.TaskRow{ID: "tk1", JobID: "jbdone", ProjectName: "p", Command: "true", ParamsJSON: "{}",
+		Status: "success", TaskDir: dir, EnqueuedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := PerformClean(ctx, st, nil, CleanOptions{Checkpoints: true, TaskIDs: []string{"tk1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Failures) == 0 || res.FreedBytes != 0 {
+		t.Fatalf("result = %+v, want a failure and nothing freed", res)
+	}
+}

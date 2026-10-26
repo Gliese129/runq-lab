@@ -271,7 +271,6 @@ type Capabilities struct {
 	// Feature bits — "does this concept exist here at all".
 	GPUMap  bool `json:"gpu_map"`
 	LiveLog bool `json:"live_log"`
-	Retry   bool `json:"retry"`
 	// State model — "push": a resident process owns the truth, data is
 	// always current. "poll": best-effort projection, only advances on
 	// refresh; consumers must surface staleness (refreshed_at).
@@ -327,6 +326,11 @@ type CleanResult struct {
 	// tasks/jobs whose checkpoints were deleted.
 	CheckpointJobs []CheckpointJob   `json:"checkpoint_jobs,omitempty"`
 	Filesystems    []CleanFilesystem `json:"filesystems,omitempty"`
+
+	// Failures are deletions that did not happen (a refused path, an
+	// unreachable target, a failed rm). The records are gone either way;
+	// these files may still be on disk.
+	Failures []string `json:"failures,omitempty"`
 }
 
 // CheckpointJob is one job's checkpoint footprint in a checkpoints clean.

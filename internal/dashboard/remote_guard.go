@@ -29,7 +29,6 @@ import (
 	"strings"
 
 	"github.com/gliese129/runq-lab/internal/backend"
-	"github.com/gliese129/runq-lab/internal/job"
 )
 
 // guardBodyLimit caps buffered request bodies (submit configs are small).
@@ -91,10 +90,6 @@ func (s *Server) guardAllows(w http.ResponseWriter, r *http.Request, target stri
 			q.Set("target", target)
 			r.URL.RawQuery = q.Encode()
 			return true
-		case len(seg) == 1 && r.Method == http.MethodPost: // submit
-			return s.rewriteBodyTarget(w, r, target)
-		case len(seg) == 2 && seg[1] == "preview" && r.Method == http.MethodPost:
-			return s.rewriteBodyTarget(w, r, target)
 		case len(seg) >= 2: // /jobs/{id}[/...] — ownership gate
 			return s.checkOwner(w, r, target, "job", seg[1], owner)
 		}
@@ -191,43 +186,6 @@ func (s *Server) checkOwner(w http.ResponseWriter, r *http.Request, target, kind
 		return false
 	}
 	return true
-}
-
-// rewriteBodyTarget enforces the submit-family contract: body.target empty
-// → forced to this target; set to anything else → refused.
-func (s *Server) rewriteBodyTarget(w http.ResponseWriter, r *http.Request, target string) bool {
-	doc, ok := s.readBodyDoc(w, r)
-	if !ok {
-		return false
-	}
-	raw, err := json.Marshal(doc)
-	if err != nil {
-		writeError(w, err)
-		return false
-	}
-	var body submitBody
-	if err := json.Unmarshal(raw, &body); err != nil {
-		writeErr(w, http.StatusBadRequest, backend.CodeBadRequest, err.Error())
-		return false
-	}
-	resolver, ok := s.backend.(interface {
-		ResolveSubmitTarget(context.Context, job.JobConfig, string) (string, string, error)
-	})
-	if !ok {
-		writeErr(w, http.StatusForbidden, backend.CodeForbidden, "submission target resolution unavailable")
-		return false
-	}
-	resolved, _, err := resolver.ResolveSubmitTarget(r.Context(), body.Config, body.Target)
-	if err != nil {
-		writeError(w, err)
-		return false
-	}
-	if resolved != target {
-		writeErr(w, http.StatusForbidden, backend.CodeForbidden, fmt.Sprintf("cannot submit to target %q through target %q's forward", resolved, target))
-		return false
-	}
-	*r = *r.WithContext(backend.WithSubmitTargetBoundary(r.Context(), target))
-	return s.replaceBody(w, r, doc)
 }
 
 // forceBodyField overwrites one body field unconditionally.

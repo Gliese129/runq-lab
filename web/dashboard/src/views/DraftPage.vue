@@ -43,7 +43,7 @@
           <div class="section-title">{{ t('drafts.edit_title') }}</div>
           <span class="text-caption text-on-surface-variant">{{ t('drafts.edit_hint') }}</span>
           <v-spacer />
-          <v-btn size="small" variant="text" :disabled="!dirty || busy" @click="loadYaml">{{ t('drafts.revert') }}</v-btn>
+          <v-btn size="small" variant="text" :disabled="!dirty || busy" @click="revert">{{ t('drafts.revert') }}</v-btn>
           <v-btn size="small" variant="tonal" :loading="saving" :disabled="!dirty || busy" @click="save">{{ t('common.save') }}</v-btn>
         </div>
         <textarea v-model="text" class="yaml" spellcheck="false" :aria-label="t('drafts.edit_title')" @keydown.meta.s.prevent="save" @keydown.ctrl.s.prevent="save" />
@@ -104,15 +104,14 @@ const conflict = ref(false)
 const preview = ref('')
 const previewOpen = ref(false)
 
-async function loadYaml() {
-  try {
-    const y = await draftsApi.yaml(props.draftId)
-    text.value = original.value = y
-    saveError.value = ''
-    conflict.value = false
-  } catch { /* the 404 card covers a missing draft */ }
+// The text, table and preview all come from one read of one rev.
+function revert() {
+  text.value = original.value = res.value?.yaml ?? ''
+  preview.value = res.value?.preview ?? ''
+  saveError.value = ''
+  conflict.value = false
 }
-watch(() => res.value?.draft.status, (s) => { if (s === 'open' && !dirty.value) void loadYaml() }, { immediate: true })
+watch(res, (r) => { if (r?.draft.status === 'open' && !dirty.value) revert() }, { immediate: true })
 
 async function save() {
   if (!dirty.value || busy.value) return
@@ -122,9 +121,9 @@ async function save() {
   try {
     const out = await draftsApi.save(props.draftId, text.value)
     qc.setQueryData(qk.draft(props.draftId), out)
+    text.value = original.value = out.yaml
     preview.value = out.preview ?? ''
     for (const w of out.warnings ?? []) snack.success(w)
-    await loadYaml()
     void qc.invalidateQueries({ queryKey: qk.drafts })
   } catch (e) {
     const err = e as ApiError
@@ -139,7 +138,7 @@ async function save() {
 // load the current version to edit on top of.
 async function reloadAfterConflict() {
   await query.refetch()
-  await loadYaml()
+  revert()
 }
 
 // An append (into): each row's verdict — new cells stand out, skipped

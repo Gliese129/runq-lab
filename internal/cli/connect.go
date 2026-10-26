@@ -45,25 +45,9 @@ import (
 // （TOFU 指纹确认，同意后写 known_hosts）。
 
 func init() {
-	// connectCmd itself lives under `runq target` (target_cmd.go). The
-	// top-level `runq connect` is a thin alias — the first command a new
-	// user runs deserves a short spelling.
-	rootCmd.AddCommand(connectAliasCmd)
-	for _, cmd := range []*cobra.Command{connectCmd, connectAliasCmd} {
-		cmd.Flags().String("remote-binary", "", "Matching remote-platform binary for unpublished/development versions")
-		cmd.Flags().Duration("timeout", 2*time.Minute, "Total timeout per target, including forward readiness")
-	}
-	retire(connectAliasCmd, "use `runq target connect`")
-}
-
-var connectAliasCmd = &cobra.Command{
-	Use:          "connect [name...]",
-	Short:        "Alias of `runq target connect`",
-	Hidden:       true, // one spelling in help; the alias keeps old scripts working
-	Args:         cobra.ArbitraryArgs,
-	RunE:         runConnect,
-	GroupID:      groupDiag,
-	SilenceUsage: true,
+	// connectCmd lives under `runq target` (target_cmd.go).
+	connectCmd.Flags().String("remote-binary", "", "Matching remote-platform binary for unpublished/development versions")
+	connectCmd.Flags().Duration("timeout", 2*time.Minute, "Total timeout per target, including forward readiness")
 }
 
 var connectCmd = &cobra.Command{

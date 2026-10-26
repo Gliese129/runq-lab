@@ -12,7 +12,6 @@ import (
 
 	"github.com/gliese129/runq-lab/internal/backend"
 	"github.com/gliese129/runq-lab/internal/config"
-	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/project"
 	"github.com/gliese129/runq-lab/internal/store"
 )
@@ -26,52 +25,13 @@ func TestRC2RemovedRoutes(t *testing.T) {
 		"GET /api/v1/targets/a/fs/read", "GET /api/v1/targets/a/fs/glob", "POST /api/v1/targets/a/fs/parse-script", "GET /api/v1/targets/a/python-envs",
 		"POST /api/v1/log-sessions", "GET /api/v1/log-sessions/id", "DELETE /api/v1/log-sessions/id", "GET /api/v1/log-sessions/id/search",
 		"POST /api/v1/jobs/plan", "POST /api/v1/jobs/id/pause", "POST /api/v1/jobs/id/resume",
+		"POST /api/v1/jobs", "POST /api/v1/jobs/preview", // submit goes through drafts
 	} {
 		method, path, _ := strings.Cut(route, " ")
 		res := httptest.NewRecorder()
 		s.Handler().ServeHTTP(res, httptest.NewRequest(method, path, strings.NewReader(`{}`)))
 		if res.Code != http.StatusNotFound {
 			t.Fatalf("removed %s: %d %s", route, res.Code, res.Body.String())
-		}
-	}
-}
-
-type forwardSubmitBackend struct {
-	*submitCaptureBackend
-	projectTarget string
-}
-
-func (b *forwardSubmitBackend) ResolveSubmitTarget(_ context.Context, cfg job.JobConfig, explicit string) (string, string, error) {
-	target, source := b.projectTarget, "project"
-	if cfg.Target != "" {
-		target, source = cfg.Target, "job"
-	}
-	if explicit != "" {
-		target, source = explicit, "cli"
-	}
-	return target, source, nil
-}
-func TestRC2ForwardVerifiesResolvedTarget(t *testing.T) {
-	be := &forwardSubmitBackend{submitCaptureBackend: &submitCaptureBackend{UnavailableBackend: backend.NewUnavailableBackend(nil)}, projectTarget: "b"}
-	s := NewServer(be, &config.GlobalConfig{})
-	defer s.Close()
-	for _, tt := range []struct {
-		body   string
-		status int
-		target string
-	}{
-		{`{"config":{"project":"p"}}`, 403, ""},
-		{`{"config":{"project":"p","target":"b"}}`, 403, ""},
-		{`{"config":{"project":"p","target":"a"}}`, 200, ""},
-		{`{"config":{"project":"p","target":"b"},"target":"a"}`, 200, "a"},
-	} {
-		res := httptest.NewRecorder()
-		s.RemoteCLIHandler("a").ServeHTTP(res, httptest.NewRequest("POST", "/api/v1/jobs", strings.NewReader(tt.body)))
-		if res.Code != tt.status {
-			t.Fatalf("%s: %d %s", tt.body, res.Code, res.Body.String())
-		}
-		if tt.status == 200 && be.opts.Target != tt.target {
-			t.Fatal("guard rewrote target precedence")
 		}
 	}
 }

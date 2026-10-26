@@ -165,7 +165,7 @@ func (r *Registry) Resolve(ctx context.Context, ref string) (string, error) {
 		known = append(known, e.id+" ("+e.name+")")
 	}
 	if len(known) == 0 {
-		return "", fmt.Errorf("project %q not found (no projects registered; run: runq project add -f project.yaml)", ref)
+		return "", fmt.Errorf("project %q not found (no projects registered; run: runq project project.yaml)", ref)
 	}
 	return "", fmt.Errorf("project %q not found; known: %s", ref, strings.Join(known, ", "))
 }

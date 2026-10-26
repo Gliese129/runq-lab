@@ -319,3 +319,28 @@ func TestDraftRunsPreflightAndSubmitWarns(t *testing.T) {
 		t.Fatalf("submit warnings: %+v", sub.PreflightWarnings)
 	}
 }
+
+// The draft page opens with the preview and preflight (re-planned), and its
+// YAML is the same rev as its table.
+func TestGetDraftPreviewCarriesPreviewAndYAML(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newDraftBackend(t)
+	d, err := m.CreateDraft(ctx, DraftRequest{JobYAML: sweepYAML})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := m.GetDraft(ctx, d.Draft.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Preview != "" || !strings.Contains(plain.YAML, "rev: 1") {
+		t.Fatalf("GetDraft: preview %q, yaml %q", plain.Preview, plain.YAML)
+	}
+	got, err := m.GetDraftPreview(ctx, d.Draft.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Preview == "" || len(got.Preflight) == 0 || got.YAML != plain.YAML {
+		t.Fatalf("GetDraftPreview: preview %q, preflight %v, yaml same rev: %v", got.Preview, got.Preflight, got.YAML == plain.YAML)
+	}
+}

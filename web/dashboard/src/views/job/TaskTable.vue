@@ -123,10 +123,6 @@
                   @click.stop="$emit('kill-task', task.id)"
                   :aria-label="t('job.kill')" :title="t('job.kill')"
                 ><v-icon size="14">mdi-stop</v-icon></v-btn>
-                <v-btn v-if="canRetry && (task.status === 'failed' || task.status === 'killed')" icon size="x-small" variant="text" color="primary"
-                  @click.stop="$emit('retry-task', task.id)"
-                  :aria-label="t('job.retry')" :title="t('job.retry')"
-                ><v-icon size="14">mdi-refresh</v-icon></v-btn>
               </div>
             </td>
           </tr>
@@ -157,10 +153,9 @@ const props = withDefaults(defineProps<{
   wandb?: WandbInfo | null
   metricKeys?: string[]
   sweptParams?: string[]  // params that vary across tasks
-  canRetry?: boolean
   /** task id → unix seconds the log last grew */
   lastOutput?: Record<string, number>
-}>(), { canRetry: true, lastOutput: () => ({}) })
+}>(), { lastOutput: () => ({}) })
 
 // Prefer the backend's field; fall back to the job activity samples.
 function lastOutputOf(task: TaskView): number | undefined {
@@ -171,7 +166,7 @@ function isQuiet(task: TaskView): boolean {
   return task.status === 'running' && !!ts && Date.now() / 1000 - ts > QUIET_AFTER_SECONDS
 }
 
-defineEmits<{ 'kill-task': [id: string]; 'retry-task': [id: string]; 'click-task': [id: string] }>()
+defineEmits<{ 'kill-task': [id: string]; 'click-task': [id: string] }>()
 
 const hasWandb = computed(() => !!props.wandb || props.tasks.some(task => !!task.links?.wandb))
 const hasHPC = computed(() => props.tasks.some(task => !!task.external_id))

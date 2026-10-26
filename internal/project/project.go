@@ -13,7 +13,7 @@ import (
 )
 
 const yamlHeader = `# runq project configuration
-# Edit as needed, then re-register: runq project add .
+# Edit as needed, then re-register: runq project project.yaml
 #
 `
 

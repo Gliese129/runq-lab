@@ -43,3 +43,11 @@ func (p *Proxy) RenderView(ctx context.Context, project, name string, jobs []str
 	err := p.do(ctx, "GET", viewPath(project, name)+"/render?"+q.Encode(), nil, &out)
 	return &out, err
 }
+
+// RenderJobView renders a job with no saved view (GET /jobs/{id}/view);
+// the service resolves a short id.
+func (p *Proxy) RenderJobView(ctx context.Context, job string) (*views.JobView, error) {
+	var out views.JobView
+	err := p.do(ctx, "GET", "/api/v1/jobs/"+url.PathEscape(job)+"/view", nil, &out)
+	return &out, err
+}

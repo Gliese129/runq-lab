@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,7 +14,6 @@ import (
 	"github.com/gliese129/runq-lab/internal/backend"
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/logfile"
-	"github.com/gliese129/runq-lab/internal/preflight"
 	"github.com/gliese129/runq-lab/internal/project"
 	"github.com/gliese129/runq-lab/internal/store"
 	"github.com/gliese129/runq-lab/internal/workspace"
@@ -37,8 +37,6 @@ type Proxy struct {
 	// the API layer itself is always explicit (D11), so the Proxy is where
 	// the convenience layer turns into explicit paths/body fields.
 	TargetFilter string
-	// SubmitTarget is an explicit preview override; query filters never select submissions.
-	SubmitTarget string
 }
 
 // NewProxy creates a Backend proxy connected to the daemon at
@@ -125,7 +123,6 @@ func (p *Proxy) Capabilities() backend.Capabilities {
 	return backend.Capabilities{
 		GPUMap:     true,
 		LiveLog:    true,
-		Retry:      false,
 		StateModel: "push",
 		KillAsync:  false,
 	}
@@ -530,39 +527,18 @@ func (p *Proxy) KillJob(ctx context.Context, jobID string) error {
 	return p.do(ctx, "POST", "/api/v1/jobs/"+url.PathEscape(jobID)+"/kill", nil, nil)
 }
 
-// ── Submit family（plan → preview → submit，选项一律 body，D12）──────────
+// ── Submit: only through a draft (POST /drafts, /drafts/{id}/submit) ──
 
-// submitWireBody matches the server's submitBody.
-type submitWireBody struct {
-	Config job.JobConfig `json:"config"`
-	Target string        `json:"target,omitempty"`
+// errDraftOnly: the service takes jobs from drafts only; the CLI never
+// calls these (they keep Proxy a backend.Backend).
+var errDraftOnly = errors.New("submit through a draft: runq draft job.yaml, then runq submit dr…")
+
+func (p *Proxy) SubmitJob(context.Context, job.JobConfig, backend.SubmitOptions) (string, int, error) {
+	return "", 0, errDraftOnly
 }
 
-func (p *Proxy) SubmitJob(ctx context.Context, cfg job.JobConfig, opts backend.SubmitOptions) (string, int, error) {
-	var resp struct {
-		JobID      string           `json:"job_id"`
-		TotalTasks int              `json:"total_tasks"`
-		Preflight  preflight.Report `json:"preflight"`
-	}
-	body := submitWireBody{Config: cfg, Target: opts.Target}
-	if err := p.doWithTimeout(ctx, "POST", "/api/v1/jobs", body, &resp, proxySubmitTimeout); err != nil {
-		return "", 0, err
-	}
-	if opts.Preflight != nil {
-		*opts.Preflight = resp.Preflight
-	}
-	return resp.JobID, resp.TotalTasks, nil
-}
-
-// PreviewSubmit routes through POST /jobs/preview, which delegates to the
-// target backend (full run.sh + submit command rendering).
-func (p *Proxy) PreviewSubmit(ctx context.Context, cfg job.JobConfig) (backend.PreviewResult, error) {
-	body := submitWireBody{Config: cfg, Target: p.SubmitTarget}
-	var resp backend.PreviewResult
-	if err := p.do(ctx, "POST", "/api/v1/jobs/preview", body, &resp); err != nil {
-		return backend.PreviewResult{}, err
-	}
-	return resp, nil
+func (p *Proxy) PreviewSubmit(context.Context, job.JobConfig) (backend.PreviewResult, error) {
+	return backend.PreviewResult{}, errDraftOnly
 }
 
 // ── Projects ────────────────────────────────────────────────────────────

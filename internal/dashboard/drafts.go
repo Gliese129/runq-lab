@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,8 @@ func writeDraftError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusConflict, backend.ErrorResponse{Error: err.Error(), Code: "submitted"})
 	case errors.Is(err, store.ErrDraftNotFound):
 		writeJSON(w, http.StatusNotFound, backend.ErrorResponse{Error: err.Error(), Code: "not_found"})
+	case errors.Is(err, backend.ErrNoTargetConfigured): // the service's state, not the plan
+		writeError(w, err)
 	default:
 		writeJSON(w, http.StatusBadRequest, backend.ErrorResponse{Error: err.Error(), Code: "invalid_plan"})
 	}
@@ -85,7 +88,13 @@ func (s *Server) handleGetDraft(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(out)
 		return
 	}
-	res, err := d.GetDraft(r.Context(), r.PathValue("id"))
+	get := d.GetDraft
+	if p, ok := d.(interface {
+		GetDraftPreview(context.Context, string) (*backend.DraftResult, error)
+	}); ok && r.URL.Query().Get("preview") == "1" { // the draft page: open with the full preview
+		get = p.GetDraftPreview
+	}
+	res, err := get(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeDraftError(w, err)
 		return

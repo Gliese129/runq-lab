@@ -1473,14 +1473,6 @@ func projectSourceTarget(cfg *project.Config) string {
 	return cfg.Target
 }
 
-// ResolveSubmitTarget applies the same precedence and permission checks as submit.
-func (m *MultiBackend) ResolveSubmitTarget(ctx context.Context, cfg job.JobConfig, explicit string) (string, string, error) {
-	m.routingMu.RLock()
-	defer m.routingMu.RUnlock()
-	_, target, source, err := m.submissionTarget(ctx, cfg, explicit)
-	return target, source, err
-}
-
 func (m *MultiBackend) submissionTarget(ctx context.Context, cfg job.JobConfig, explicit string) (*project.Config, string, string, error) {
 	if len(m.snapshot()) == 0 {
 		return nil, "", "", noTargetConfiguredError()
@@ -1498,9 +1490,6 @@ func (m *MultiBackend) submissionTarget(ctx context.Context, cfg job.JobConfig, 
 	}
 	if target == "" {
 		return nil, "", "", fmt.Errorf("project.target is required")
-	}
-	if boundary, _ := ctx.Value(submitBoundaryKey{}).(string); boundary != "" && target != boundary {
-		return nil, "", "", fmt.Errorf("%w: resolved target %q differs from forward target %q", ErrForbidden, target, boundary)
 	}
 	if err := m.validateProjectTargets(proj); err != nil {
 		return nil, "", "", fmt.Errorf("invalid submission target: %w", err)

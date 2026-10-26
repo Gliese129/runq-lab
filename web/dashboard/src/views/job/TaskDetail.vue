@@ -21,17 +21,6 @@
           >
             <v-icon start size="14">mdi-stop</v-icon> {{ t('job.kill') }}
           </v-btn>
-          <v-btn
-            v-if="taskCaps.retry && (task.status === 'failed' || task.status === 'killed')"
-            size="x-small"
-            variant="tonal"
-            color="primary"
-            :loading="retrying"
-            :disabled="retrying"
-            @click="retryTask"
-          >
-            <v-icon start size="14">mdi-refresh</v-icon> {{ t('job.retry') }}
-          </v-btn>
         </div>
       </div>
 
@@ -318,7 +307,6 @@
   </div>
 
   <!-- RQ-75: cross-generation rerun confirmation -->
-  <GenerationRerunDialog v-model="genRerun.open.value" @confirm="genRerun.confirmRerun" />
 </template>
 
 <script setup lang="ts">
@@ -338,8 +326,6 @@ import { resolveIdPrefix } from '@/utils/idPrefix'
 import { useJobActivityQuery } from '@/queries/useJobQueries'
 import { lastLogLine, lastOutputTs, QUIET_AFTER_SECONDS } from '@/utils/lastOutput'
 import { useQuery } from '@tanstack/vue-query'
-import { useGenerationRerun } from '@/composables/useGenerationRerun'
-import GenerationRerunDialog from '@/components/GenerationRerunDialog.vue'
 import { useConfigStore } from '@/stores/config'
 import { useLogSurfaceStore } from '@/stores/logSurface'
 import MetricsChart from '@/components/MetricsChart.vue'
@@ -967,7 +953,6 @@ watch(isActive, async (active, prev) => {
 // ── Actions: mutations invalidate task + parent job + lists. ──
 const taskActions = useTaskActions(() => props.jobId)
 const killing = computed(() => taskActions.kill.isPending.value)
-const retrying = computed(() => taskActions.retry.isPending.value)
 
 async function killTask() {
   if (killing.value) return
@@ -985,20 +970,6 @@ async function killTask() {
   } catch (e: any) {
     snack.error(e?.message || t('common.error'))
   }
-}
-
-// RQ-75: a rerun of a task whose target config changed since submission
-// goes through the confirmation dialog (or straight through, if the user
-// checked "don't ask again").
-const genRerun = useGenerationRerun(
-  (p) => taskActions.retry.mutateAsync(p),
-  () => snack.success(t('task.retried')),
-  (e: any) => snack.error(e?.message || t('common.error')),
-)
-
-async function retryTask() {
-  if (retrying.value) return
-  await genRerun.run(props.taskId)
 }
 
 // RQ-74: the submit-evidence card's tone follows the task status — red only

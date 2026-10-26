@@ -83,6 +83,20 @@
 - SDK `runq.report()` writes a NaN/Inf as `null` with one warning per key
   (it used to write a bare `NaN` that runq dropped); the task's metric chart
   draws a gap and says how many and from which step.
+- `runq view --job jb…` renders through the view engine, like a saved view:
+  one table per scoring script and section, one row per cell (the records'
+  axes plus the params that vary), a column per metric. `--format`, `--wide`,
+  `--open` and `--fresh` work; `--refresh` is refused (a job's own view has no
+  script sources). `--json` is `{job_id, views: [...]}`, each a view render.
+  It no longer refreshes the job on its own.
+- The API takes jobs only from drafts: `POST /api/v1/jobs` and
+  `POST /api/v1/jobs/preview` are gone (`POST /api/v1/drafts`, then
+  `/drafts/{id}/submit`). The `retry` capability and the dashboard's task retry
+  button and rerun dialog are gone (there was no retry behind them).
+- Retired commands are one table of stubs (`task`, `job`, `results`,
+  `consumer`, `config`, `gpu`, `open`, `version`, `connect`, `project
+  add/show/archive/unarchive`, `target use`, `draft show`); their old code is
+  removed.
 
 ### Changes
 
@@ -241,6 +255,19 @@
   task runs.
 - Draft `updated_at` reads back in seconds (it came back in nanoseconds).
 - `--fresh` refreshes for `runq show jb…/tk…` too (it was ignored there).
+- Short ids work everywhere ids are taken: `kill`, `view --job`, `clean
+  --job/--task` resolve them like `ps` and `show` (an ambiguous prefix says
+  which ids it matches).
+- `runq clean` reports what it could not delete and exits non-zero; freed
+  bytes count only what is gone (checkpoints are measured again after the
+  rm).
+- The draft page opens with the plan's preview and preflight, and its YAML,
+  table and preview come from one read of one rev.
+- A draft on a service with no target says to `runq target add` first; the
+  no-project hint names `runq project project.yaml` (not the retired `project
+  add`).
+- View expressions take `` `field` `` for names that are not bare words
+  (`` `eval/acc` ``, `` `auto-1a2b.loss` ``).
 
 
 ## v0.6.0 — 2026-10-16

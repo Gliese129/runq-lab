@@ -59,7 +59,7 @@ agent) or you are about to set one up, read `references/heartbeat.md` first.
 | One job (run table) / task (command, dirs, scheduler id, times, links) / project | `runq show <jb…\|tk…\|pj…>` |
 | Log tail | `runq logs <task_id> -n 200` |
 | Last matching log lines | `runq logs <task_id> --grep 'loss\|step' -n 20` (ERE, runs on the target) |
-| Result rows from `runq.record` | `runq view --job <job_id> --json` |
+| Result rows from `runq.record` | `runq view --job <job_id>` (a table per scoring script and section, one row per cell; `--json`, `--format csv`) |
 | Kill | `runq kill <task_id\|job_id>` |
 | Rename a job or project (ids never change) | `runq rename <jb…\|pj…\|project-name> "<new name>"` |
 | Sections of a project / file a job | `runq section ls <project>` · `runq submit job.yaml -s <section>` · `runq section move <section> <jb…>` |

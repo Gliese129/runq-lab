@@ -187,10 +187,6 @@ var draftPsCmd = &cobra.Command{
 	},
 }
 
-// draftShowCmd is retired: `runq show dr… [--yaml]` reads a draft, as it
-// reads every other id.
-var draftShowCmd = &cobra.Command{Use: "show"}
-
 // showDraft is `runq show dr…`: the plan table, or with --yaml the
 // editable form for `runq draft edit -f`.
 func showDraft(cmd *cobra.Command, args []string) error {
@@ -388,8 +384,7 @@ func init() {
 	draftPsCmd.Flags().StringP("project", "p", "", "only this project")
 	draftPsCmd.Flags().Bool("json", false, "output raw JSON")
 	draftEditCmd.Flags().StringP("file", "f", "", "the edited draft YAML ('-' = stdin)")
-	draftCmd.AddCommand(draftPsCmd, draftShowCmd, draftEditCmd, draftDiscardCmd)
-	retire(draftShowCmd, "read a draft with `runq show dr… [--yaml]`")
+	draftCmd.AddCommand(draftPsCmd, draftEditCmd, draftDiscardCmd)
 	draftCmd.GroupID = groupCore
 	rootCmd.AddCommand(draftCmd)
 }
