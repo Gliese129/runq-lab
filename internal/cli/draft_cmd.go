@@ -39,7 +39,7 @@ do not make a cell different.`,
 	Example: `  runq draft configs/runq/a1-batch1.yaml
   runq draft job.yaml -s "KL 消融" -t tsubame
   runq draft more-seeds.yaml --into jb6573   # add cells to an existing job
-  runq draft show dr8f2k --yaml > plan.yaml   # edit, then:
+  runq show dr8f2k --yaml > plan.yaml         # edit, then:
   runq draft edit dr8f2k -f plan.yaml
   runq submit dr8f2k`,
 	Args: cobra.MaximumNArgs(1),
@@ -187,53 +187,54 @@ var draftPsCmd = &cobra.Command{
 	},
 }
 
-var draftShowCmd = &cobra.Command{
-	Use:   "show <dr…>",
-	Short: "Show a draft's plan table (--yaml: its editable form)",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		asYAML, _ := cmd.Flags().GetBool("yaml")
-		jsonOut, _ := cmd.Flags().GetBool("json")
-		return withDrafter(cmd, func(d backend.Drafter) error {
-			if asYAML {
-				out, err := d.DraftYAML(cmd.Context(), args[0])
-				if err != nil {
-					return err
-				}
-				_, err = os.Stdout.Write(out)
-				return err
-			}
-			res, err := d.GetDraft(cmd.Context(), args[0])
+// draftShowCmd is retired: `runq show dr… [--yaml]` reads a draft, as it
+// reads every other id.
+var draftShowCmd = &cobra.Command{Use: "show"}
+
+// showDraft is `runq show dr…`: the plan table, or with --yaml the
+// editable form for `runq draft edit -f`.
+func showDraft(cmd *cobra.Command, args []string) error {
+	asYAML, _ := cmd.Flags().GetBool("yaml")
+	jsonOut, _ := cmd.Flags().GetBool("json")
+	return withDrafter(cmd, func(d backend.Drafter) error {
+		if asYAML {
+			out, err := d.DraftYAML(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
-			if jsonOut {
-				printJSON(res)
-				return nil
-			}
-			printDraftLine(res.Draft)
-			if res.Draft.Status == "submitted" {
-				fmt.Printf("submitted as %s\n", res.Draft.JobID)
-			}
-			if res.Draft.Description != "" {
-				fmt.Println(res.Draft.Description)
-			}
-			fmt.Println()
-			fmt.Print(res.Table)
-			if res.Append != nil {
-				fmt.Println()
-				fmt.Print(res.Append.Report())
-			}
+			_, err = os.Stdout.Write(out)
+			return err
+		}
+		res, err := d.GetDraft(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		if jsonOut {
+			printJSON(res)
 			return nil
-		})
-	},
+		}
+		printDraftLine(res.Draft)
+		if res.Draft.Status == "submitted" {
+			fmt.Printf("submitted as %s\n", res.Draft.JobID)
+		}
+		if res.Draft.Description != "" {
+			fmt.Println(res.Draft.Description)
+		}
+		fmt.Println()
+		fmt.Print(res.Table)
+		if res.Append != nil {
+			fmt.Println()
+			fmt.Print(res.Append.Report())
+		}
+		return nil
+	})
 }
 
 var draftEditCmd = &cobra.Command{
 	Use:   "edit <dr…> [-f file]",
 	Short: "Replace a draft's plan from a file (-f) or in $EDITOR",
 	Long: `Edit a draft. With -f, the file is the draft's editable YAML (start from
-'runq draft show dr… --yaml'); its rev: must be current. Without -f, the
+'runq show dr… --yaml'); its rev: must be current. Without -f, the
 draft opens in $EDITOR (default vi); on save it is validated and stored. A
 failed save keeps the temporary file and prints its path. Rows, names,
 params, fixed_params, baseline, name and description are editable; project
@@ -304,7 +305,7 @@ func saveDraftEdit(cmd *cobra.Command, d backend.Drafter, ref, text, tmp string)
 	if err != nil {
 		hint := ""
 		if strings.Contains(err.Error(), "changed") {
-			hint = fmt.Sprintf("\nre-read it: runq draft show %s --yaml > plan.yaml", ref)
+			hint = fmt.Sprintf("\nre-read it: runq show %s --yaml > plan.yaml", ref)
 		}
 		if tmp != "" {
 			hint += "\nyour edits are kept in " + tmp
@@ -386,10 +387,9 @@ func init() {
 	draftCmd.Flags().Bool("json", false, "output raw JSON")
 	draftPsCmd.Flags().StringP("project", "p", "", "only this project")
 	draftPsCmd.Flags().Bool("json", false, "output raw JSON")
-	draftShowCmd.Flags().Bool("yaml", false, "print the editable YAML (for draft edit -f)")
-	draftShowCmd.Flags().Bool("json", false, "output raw JSON")
 	draftEditCmd.Flags().StringP("file", "f", "", "the edited draft YAML ('-' = stdin)")
 	draftCmd.AddCommand(draftPsCmd, draftShowCmd, draftEditCmd, draftDiscardCmd)
+	retire(draftShowCmd, "read a draft with `runq show dr… [--yaml]`")
 	draftCmd.GroupID = groupCore
 	rootCmd.AddCommand(draftCmd)
 }

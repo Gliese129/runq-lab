@@ -163,3 +163,46 @@ func TestAppendRefusesOtherProjectAndTarget(t *testing.T) {
 		t.Errorf("other target: %v", err)
 	}
 }
+
+// A job keeps one command and one set of overrides: an append that changes
+// either is refused (approach/append-cell-rules), in preview and submit.
+func TestAppendRefusesDifferentCommandOrOverrides(t *testing.T) {
+	ctx := context.Background()
+	b, proj := appendFixture(t)
+	jobID, _, err := b.Prepare(ctx, gridCfg([]any{0}, nil), proj, SubmitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := gridCfg([]any{1}, nil)
+	cfg.Into, cfg.Command = jobID, "python second.py --lr {{lr}} --seed {{seed}}"
+	if _, _, err := b.Prepare(ctx, cfg, proj, SubmitOpts{}); err == nil || !strings.Contains(err.Error(), "command differs") {
+		t.Errorf("submit with another command: %v", err)
+	}
+	if _, _, err := b.CompilePreview(ctx, cfg, proj); err == nil || !strings.Contains(err.Error(), "command differs") {
+		t.Errorf("preview with another command: %v", err)
+	}
+	cfg.Command = proj.CmdTemplate // spelled out, but the same command
+	gpus := 2
+	cfg.Overrides = &job.Overrides{GPUsPerTask: &gpus}
+	if _, _, err := b.Prepare(ctx, cfg, proj, SubmitOpts{}); err == nil || !strings.Contains(err.Error(), "overrides differ") {
+		t.Errorf("submit with other overrides: %v", err)
+	}
+	cfg.Overrides = nil
+	if _, _, err := b.Prepare(ctx, cfg, proj, SubmitOpts{}); err != nil {
+		t.Errorf("same command spelled out: %v", err)
+	}
+}
+
+// Two rows that differ only in a scheduler param are one cell: the plan is
+// refused before anything is submitted, so one failure is never rerun twice.
+func TestPlanRefusesDuplicateCells(t *testing.T) {
+	ctx := context.Background()
+	b, proj := appendFixture(t)
+	cfg := job.JobConfig{Project: "kl", Tasks: []job.TaskRow{
+		{Run: "A", Params: job.TaskParams{"lr": 1e-4, "seed": 0, "h_rt": "1:00:00"}},
+		{Run: "B", Params: job.TaskParams{"lr": 1e-4, "seed": 0, "h_rt": "2:00:00"}},
+	}}
+	if _, _, err := b.Prepare(ctx, cfg, proj, SubmitOpts{}); err == nil || !strings.Contains(err.Error(), "same cell") {
+		t.Fatalf("duplicate cells: %v", err)
+	}
+}

@@ -1,6 +1,7 @@
 package job
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -135,6 +136,60 @@ func FormatValue(v any) string {
 }
 
 func formatValue(v any) string { return FormatValue(v) }
+
+// SameValue is the one semantic comparison of parameter values (cell
+// identity, run-name matching, export's "same as baseline"): scalar types
+// stay apart (true and "true" differ), numbers compare by value (1 and 1.0
+// are the same). FormatValue is for display only.
+func SameValue(a, b any) bool { return valueKey(a) == valueKey(b) }
+
+func valueKey(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return "z:"
+	case bool:
+		return "b:" + strconv.FormatBool(x)
+	case string:
+		return "s:" + x
+	case float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return "n:" + FormatValue(toFloat(x))
+	}
+	raw, err := json.Marshal(v) // lists and maps: JSON keeps scalar types apart
+	if err != nil {
+		return "v:" + fmt.Sprintf("%#v", v)
+	}
+	return "j:" + string(raw)
+}
+
+func toFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int8:
+		return float64(n)
+	case int16:
+		return float64(n)
+	case int32:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case uint:
+		return float64(n)
+	case uint8:
+		return float64(n)
+	case uint16:
+		return float64(n)
+	case uint32:
+		return float64(n)
+	case uint64:
+		return float64(n)
+	}
+	return 0
+}
 
 // sortedKeys returns the keys of a TaskParams map in sorted order.
 func sortedKeys(params TaskParams) []string {

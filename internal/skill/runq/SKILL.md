@@ -51,7 +51,7 @@ agent) or you are about to set one up, read `references/heartbeat.md` first.
 |---|---|
 | Plan (the preview; submits nothing) | `runq draft job.yaml` → draft `dr…` (`--json` for the full plan) |
 | Submit the draft | `runq submit dr… --json` → `{job_id,total_tasks,draft_id}` (repeat-safe: same job). A job file passed to `submit` outside a terminal is refused — that interactive form is for the researcher |
-| Change a draft | `runq draft show dr… --yaml > plan.yaml`, edit, `runq draft edit dr… -f plan.yaml` · `runq draft ps` |
+| Change a draft | `runq show dr… --yaml > plan.yaml`, edit, `runq draft edit dr… -f plan.yaml` · `runq draft ps` |
 | Add cells to an existing job (more seeds, a missing row, a failed cell) | `runq draft job.yaml --into <jb…> [--rerun-failed]` → read new / skipped, then `runq submit dr…` |
 | Jobs / one job's tasks | `runq ps --json` · `runq ps <job_id> --json` (add `--fresh` to probe the scheduler first) |
 | Wait for a state change (in place of sleep loops) | `runq ps <jb…> --wait --json` — returns when a task changes state or all finish, at most 30m (`--wait=2h` for longer); a timeout adds `no change in 30m (last refresh …)` on stderr and exits 0 |

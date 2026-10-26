@@ -453,6 +453,7 @@
   "common.browse": "Browse",
   "a11y.open_project": "Open project {name}",
   "task.all_series_hidden": "All series hidden — select a metric above",
+  "task.metric_nonfinite": "{key}: {n} NaN/Inf value(s), first at step {step} — drawn as gaps",
   "statusbar.connected": "connected",
   "statusbar.reconnecting": "daemon disconnected — reconnecting…",
   "statusbar.reconnect_banner": "Daemon connection lost — reconnecting automatically. The data below is the last known state.",
@@ -770,7 +771,7 @@
   "drafts.discard_title": "Discard this draft?",
   "drafts.discard_body": "The plan is deleted; nothing was submitted.",
   "drafts.edit_title": "Edit the plan",
-  "drafts.edit_hint": "Same YAML as runq draft show --yaml; rows, params, baseline, name.",
+  "drafts.edit_hint": "Same YAML as runq show dr… --yaml; rows, params, baseline, name.",
   "drafts.revert": "Revert",
   "drafts.reload": "Load the current version",
   "drafts.conflict": "Someone changed or submitted this draft meanwhile: {msg}",
@@ -791,7 +792,5 @@
   "drafts.append": "Append {n} runs",
   "drafts.append_title": "Append to this job?",
   "drafts.append_body": "{n} tasks will be added to {id} on {target}; cells it already has are skipped.",
-  "drafts.nothing_to_append": "Every cell is already in the job",
-  "drafts.differs_command": "The command differs from the job's first batch",
-  "drafts.differs_overrides": "The overrides differ from the job's first batch"
+  "drafts.nothing_to_append": "Every cell is already in the job"
 }

@@ -233,7 +233,7 @@ func diffName(base, p TaskParams, quiet map[string]bool) string {
 		bv, inBase := base[k]
 		v, inRow := p[k]
 		switch {
-		case inRow && (!inBase || FormatValue(bv) != FormatValue(v)):
+		case inRow && (!inBase || !SameValue(bv, v)):
 			parts = append(parts, k+"="+labelValue(v))
 		case !inRow && inBase:
 			parts = append(parts, "-"+k)
@@ -261,7 +261,7 @@ func VaryingKeys(rows []Row) []string {
 		first, inFirst := rows[0].Params[k]
 		for _, r := range rows[1:] {
 			v, ok := r.Params[k]
-			if ok != inFirst || FormatValue(v) != FormatValue(first) {
+			if ok != inFirst || !SameValue(v, first) {
 				out = append(out, k)
 				break
 			}
@@ -312,7 +312,7 @@ func paramsKey(p TaskParams) string {
 	sort.Strings(keys)
 	var b strings.Builder
 	for _, k := range keys {
-		b.WriteString(k + "\x00" + FormatValue(p[k]) + "\x00")
+		b.WriteString(k + "\x00" + valueKey(p[k]) + "\x00")
 	}
 	return b.String()
 }

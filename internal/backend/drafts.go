@@ -103,7 +103,15 @@ type DraftSubmitResult struct {
 	PreflightWarnings []preflight.CheckResult `json:"preflight_warnings,omitempty"`
 }
 
-var draftLocks sync.Map // draft id → *sync.Mutex: one submit at a time
+var draftLocks sync.Map // draft id → *sync.Mutex: submit, edit and discard take turns
+
+// lockDraft serializes the writes to one draft, so a submit never freezes
+// a rev an edit replaced underneath it.
+func lockDraft(id string) func() {
+	mu, _ := draftLocks.LoadOrStore(id, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	return mu.(*sync.Mutex).Unlock
+}
 
 func (m *MultiBackend) CreateDraft(ctx context.Context, req DraftRequest) (*DraftResult, error) {
 	cfg, warns, err := parseDraftYAML(req.JobYAML)
@@ -315,7 +323,7 @@ func (m *MultiBackend) EditDraft(ctx context.Context, ref, yamlText string) (*Dr
 		return nil, fmt.Errorf("the file is draft %s, not %s", cfg.Draft, d.ID)
 	}
 	if cfg.Rev == 0 {
-		return nil, fmt.Errorf("the file has no rev: line; start from: runq draft show %s --yaml", d.ID)
+		return nil, fmt.Errorf("the file has no rev: line; start from: runq show %s --yaml", d.ID)
 	}
 	if cfg.Project == "" {
 		cfg.Project = d.Project
@@ -331,7 +339,10 @@ func (m *MultiBackend) EditDraft(ctx context.Context, ref, yamlText string) (*Dr
 		return nil, err
 	}
 	raw, _ := json.Marshal(frozen)
-	if _, err := m.store.UpdateDraft(ctx, d.ID, cfg.Rev, string(raw)); err != nil {
+	unlock := lockDraft(d.ID)
+	_, err = m.store.UpdateDraft(ctx, d.ID, cfg.Rev, string(raw))
+	unlock()
+	if err != nil {
 		return nil, err
 	}
 	d, err = m.store.GetDraft(ctx, d.ID)
@@ -354,9 +365,7 @@ func (m *MultiBackend) SubmitDraft(ctx context.Context, ref string, opts DraftSu
 	if err != nil {
 		return nil, err
 	}
-	mu, _ := draftLocks.LoadOrStore(d.ID, &sync.Mutex{})
-	mu.(*sync.Mutex).Lock()
-	defer mu.(*sync.Mutex).Unlock()
+	defer lockDraft(d.ID)()
 	if d, err = m.store.GetDraft(ctx, d.ID); err != nil {
 		return nil, err
 	}
@@ -366,6 +375,16 @@ func (m *MultiBackend) SubmitDraft(ctx context.Context, ref string, opts DraftSu
 			total = j.TotalTasks
 		}
 		return &DraftSubmitResult{JobID: d.JobID, TotalTasks: total, DraftID: d.ID, AlreadySubmitted: true}, nil
+	}
+	// A submit that landed its job but lost the draft mark (the caller went
+	// away in between) is finished here, not submitted twice.
+	if b, err := m.store.DraftBatch(ctx, d.ID); err != nil {
+		return nil, err
+	} else if b != nil {
+		if err := m.store.MarkDraftSubmitted(ctx, d.ID, b.JobID); err != nil && !errors.Is(err, store.ErrDraftSubmitted) {
+			return nil, err
+		}
+		return &DraftSubmitResult{JobID: b.JobID, TotalTasks: b.TaskCount, DraftID: d.ID, AlreadySubmitted: true}, nil
 	}
 	if opts.Rev > 0 && opts.Rev != d.Rev {
 		return nil, fmt.Errorf("%w (now rev %d)", store.ErrDraftChanged, d.Rev)
@@ -396,7 +415,8 @@ func (m *MultiBackend) SubmitDraft(ctx context.Context, ref string, opts DraftSu
 	if err != nil {
 		return nil, err
 	}
-	if err := m.store.MarkDraftSubmitted(ctx, d.ID, jobID); err != nil && !errors.Is(err, store.ErrDraftSubmitted) {
+	// The job exists now: record that even if the caller has gone away.
+	if err := m.store.MarkDraftSubmitted(context.WithoutCancel(ctx), d.ID, jobID); err != nil && !errors.Is(err, store.ErrDraftSubmitted) {
 		return nil, err
 	}
 	out := &DraftSubmitResult{JobID: jobID, TotalTasks: n, DraftID: d.ID, PreflightWarnings: report.Warnings()}
@@ -411,6 +431,7 @@ func (m *MultiBackend) DiscardDraft(ctx context.Context, ref string) error {
 	if err != nil {
 		return err
 	}
+	defer lockDraft(d.ID)()
 	return m.store.DiscardDraft(ctx, d.ID)
 }
 
@@ -431,7 +452,7 @@ func (m *MultiBackend) OpenDraftCount(ctx context.Context) (int, error) {
 var _ Drafter = (*MultiBackend)(nil)
 
 // storedAppendSummary classifies a draft's rows against its job from the
-// ledger alone (no target round trip) — what `draft show` and the draft
+// ledger alone (no target round trip) — what `show dr…` and the draft
 // page show. Submit classifies again under the job's append lock.
 func (m *MultiBackend) storedAppendSummary(ctx context.Context, cfg job.JobConfig, rows []job.Row, target string) (*job.AppendSummary, error) {
 	tasks, err := m.store.ListTasks(ctx, store.TaskFilter{JobID: cfg.Into})

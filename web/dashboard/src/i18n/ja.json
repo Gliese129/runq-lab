@@ -453,6 +453,7 @@
   "common.browse": "参照",
   "a11y.open_project": "プロジェクト {name} を開く",
   "task.all_series_hidden": "すべての系列が非表示です——上のチップから選択してください",
+  "task.metric_nonfinite": "{key}: NaN/Inf が {n} 個（最初は step {step}）——グラフでは途切れて表示",
   "statusbar.connected": "接続中",
   "statusbar.reconnecting": "daemon 切断 — 自動再接続中…",
   "statusbar.reconnect_banner": "daemon との接続が切れました — 自動再接続中。以下は最後に取得したデータです。",
@@ -770,7 +771,7 @@
   "drafts.discard_title": "この下書きを破棄しますか？",
   "drafts.discard_body": "計画は削除されます。何も投入されていません。",
   "drafts.edit_title": "計画を編集",
-  "drafts.edit_hint": "runq draft show --yaml と同じ YAML。行・パラメータ・ベースライン・名前を編集できます。",
+  "drafts.edit_hint": "runq show dr… --yaml と同じ YAML。行・パラメータ・ベースライン・名前を編集できます。",
   "drafts.revert": "元に戻す",
   "drafts.reload": "最新版を読み込む",
   "drafts.conflict": "この下書きは別の場所で変更または投入されました：{msg}",
@@ -791,7 +792,5 @@
   "drafts.append": "{n} 件を追加",
   "drafts.append_title": "このジョブに追加しますか？",
   "drafts.append_body": "{id}（{target}）に {n} タスクを追加します。既存のセルはスキップされます。",
-  "drafts.nothing_to_append": "すべてのセルがジョブに存在します",
-  "drafts.differs_command": "コマンドがジョブの最初のバッチと異なります",
-  "drafts.differs_overrides": "overrides がジョブの最初のバッチと異なります"
+  "drafts.nothing_to_append": "すべてのセルがジョブに存在します"
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/gliese129/runq-lab/internal/workspace"
 )
@@ -52,5 +53,31 @@ func TestReapLinksIngestsReplacesAndFreezes(t *testing.T) {
 	got, _ = st.TaskLinks(ctx, []string{"t1"})
 	if _, ok := got["t1"]["wandb"]; ok {
 		t.Fatalf("frozen task picked up a new link: %+v", got)
+	}
+}
+
+// runq.link rewrites links.json atomically; a same-size change is still
+// picked up (the mark tracks mtime, not only size).
+func TestReapLinksSeesSameSizeRewrite(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st := openMemoryStoreAndSeed(t, "t1", "j1", dir)
+	target := Target{TaskID: "t1", JobID: "j1", Dir: dir}
+	path := workspace.LinksPath(dir)
+	for i, url := range []string{"https://a.test/one", "https://a.test/two"} {
+		if err := os.WriteFile(path, []byte(`{"wandb":"`+url+`"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		at := time.Unix(1_700_000_000+int64(i), 0) // distinct mtimes, as two writes a second apart
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReapIncremental(ctx, st, target, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _ := st.TaskLinks(ctx, []string{"t1"})
+	if got["t1"]["wandb"] != "https://a.test/two" {
+		t.Fatalf("link = %q, want the rewritten /two", got["t1"]["wandb"])
 	}
 }

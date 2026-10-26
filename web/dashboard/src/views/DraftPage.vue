@@ -33,12 +33,10 @@
 
       <div v-if="res.append" class="append mb-2">
         <div>{{ t('drafts.append_summary', { batch: res.append.batch, new: res.append.new, existing: res.append.skipped_existing, failed: res.append.skipped_failed, rerun: res.append.rerun_failed }) }}</div>
-        <div v-if="res.append.differs?.command" class="text-warning">{{ t('drafts.differs_command') }}</div>
-        <div v-if="res.append.differs?.overrides" class="text-warning">{{ t('drafts.differs_overrides') }}</div>
       </div>
       <PlanTable :rows="res.rows" :baseline="res.baseline" :tags="cellTags" :accent="cellAccent" :dim="cellDim" />
 
-      <!-- Edit: the same YAML as `runq draft show --yaml`, saved through the
+      <!-- Edit: the same YAML as `runq show dr… --yaml`, saved through the
            same rev-checked PUT the CLI uses. -->
       <section v-if="res.draft.status === 'open'" class="mt-6">
         <div class="d-flex align-center ga-2 mb-2">

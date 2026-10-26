@@ -50,6 +50,14 @@ task; the failed one stays as history. Nothing new → an error, no batch.`,
 		}
 		if strings.HasPrefix(file, "dr") {
 			if _, err := os.Stat(file); err != nil {
+				// A draft fixed its target when it was made, and its section
+				// is part of the plan: neither changes at submit.
+				if cmd.Flags().Changed("target") {
+					return fmt.Errorf("a draft keeps the target it was made with; for another target start a new draft: runq draft job.yaml -t <target>")
+				}
+				if cmd.Flags().Changed("section") {
+					return fmt.Errorf("the section is part of the draft: set section: with runq draft edit %s, then submit", file)
+				}
 				var opts backend.DraftSubmitOptions
 				opts.Rev, _ = cmd.Flags().GetInt("rev")
 				opts.Into, _ = cmd.Flags().GetString("into")

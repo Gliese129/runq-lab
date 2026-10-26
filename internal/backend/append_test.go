@@ -25,7 +25,7 @@ func seedJob(t *testing.T, st *store.Store, id string, statuses ...string) []sto
 	for i, s := range statuses {
 		r := store.TaskRow{ID: id + "t" + string(rune('a'+i)), JobID: id, ProjectName: "kl", Command: "x", Target: "a",
 			ParamsJSON: `{"kl":` + []string{"0", "0.1"}[i%2] + `,"lr":0.000001,"seed":` + []string{"1", "2"}[i/2] + `}`,
-			Status: s, EnqueuedAt: now, TaskDir: filepath.Join(dir, id+string(rune('a'+i)))}
+			Status:     s, EnqueuedAt: now, TaskDir: filepath.Join(dir, id+string(rune('a'+i)))}
 		if err := st.InsertTask(ctx, &r); err != nil {
 			t.Fatal(err)
 		}
@@ -139,5 +139,26 @@ func TestJobSummaryCountsLiveTasks(t *testing.T) {
 		{ID: "a", Status: "success"}, {ID: "b", Status: "failed", SupersededBy: "c"}, {ID: "c", Status: "running"}})
 	if s.Tasks.Total != 2 || s.Tasks.Failed != 0 || s.Tasks.Running != 1 {
 		t.Fatalf("counts = %+v", s.Tasks)
+	}
+}
+
+// A pre-strict job whose batches ran different commands cannot be one
+// job.yaml: export says so instead of writing the first command for all.
+func TestExportRefusesBatchesThatRanDifferently(t *testing.T) {
+	ctx := context.Background()
+	m, _, st := newDraftBackend(t)
+	seedJob(t, st, "jbexport1", "success")
+	if _, err := st.DB().Exec(`UPDATE jobs SET config_json = '{"command":"python first.py"}' WHERE id = 'jbexport1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().Exec(`UPDATE job_batches SET config_json = '{"command":"python first.py"}' WHERE job_id = 'jbexport1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AppendTasks(ctx, store.JobBatch{JobID: "jbexport1", Name: "more", Command: "python second.py", Target: "a", ConfigJSON: `{"command":"python second.py"}`, SubmittedAt: time.Now()},
+		[]store.TaskRow{{ID: "tksecond", JobID: "jbexport1", ProjectName: "kl", RunName: "second", Target: "a", Command: "python second.py", ParamsJSON: `{"lr":1}`, Status: "pending", EnqueuedAt: time.Now()}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.ExportJob(ctx, "jbexport1"); err == nil || !strings.Contains(err.Error(), "batch 2") {
+		t.Fatalf("export = %v, want a refusal naming batch 2", err)
 	}
 }

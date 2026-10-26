@@ -16,7 +16,7 @@ func retire(cmd *cobra.Command, replacement string) {
 	cmd.Args = cobra.ArbitraryArgs
 	cmd.Run = nil
 	cmd.RunE = func(c *cobra.Command, _ []string) error {
-		return fmt.Errorf("`%s` was removed in rc6 — %s", c.CommandPath(), replacement)
+		return fmt.Errorf("`%s` was removed — %s", c.CommandPath(), replacement)
 	}
 	for _, sub := range cmd.Commands() {
 		if !sub.Hidden {

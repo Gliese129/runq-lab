@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -1811,10 +1812,25 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 	for _, tr := range cfg.Tasks {
 		needs[tr.Run] = tr.NeedsCode
 	}
+	projCmd := ""
+	if proj, err := m.registry.GetCached(ctx, j.ProjectName); err == nil {
+		projCmd = proj.CmdTemplate
+	}
+	effective := func(c string) string {
+		if c == "" {
+			return projCmd
+		}
+		return c
+	}
 	if batches, err := m.store.ListJobBatches(ctx, j.ID); err == nil {
 		for _, b := range batches[min(1, len(batches)):] {
 			var bc job.JobConfig
 			_ = json.Unmarshal([]byte(b.ConfigJSON), &bc)
+			// Appends now keep the job's command and overrides; older jobs
+			// may not have, and one job.yaml cannot say so.
+			if effective(bc.Command) != effective(cfg.Command) || !reflect.DeepEqual(bc.Overrides, cfg.Overrides) {
+				return nil, fmt.Errorf("job %s: batch %d ran a different command or overrides than batch 1, which one job.yaml cannot describe; export is only for jobs that run one way", j.ID, b.Seq)
+			}
 			for _, tr := range bc.Tasks {
 				needs[tr.Run] = tr.NeedsCode
 			}
@@ -1921,7 +1937,7 @@ func sameParams(a, b []job.Row) bool {
 		}
 		for k, v := range a[i].Params {
 			w, ok := b[i].Params[k]
-			if !ok || job.FormatValue(v) != job.FormatValue(w) {
+			if !ok || !job.SameValue(v, w) {
 				return false
 			}
 		}

@@ -7,7 +7,7 @@ export const draftsApi = {
   list: async (project = '') =>
     (await api.get<{ drafts: DraftView[] }>(project ? `/drafts?project=${encodeURIComponent(project)}` : '/drafts', { silent: true })).drafts ?? [],
   get: (id: string) => api.get<DraftResult>(path(id), { silent: true }),
-  /** The editable YAML (draft/rev header), exactly what `runq draft show --yaml` prints. */
+  /** The editable YAML (draft/rev header), exactly what `runq show dr… --yaml` prints. */
   yaml: (id: string) => api.get<string>(`${path(id)}?format=yaml`, { responseType: 'text', silent: true }),
   /** Rev-checked save: the rev comes from the YAML's own `rev:` line. */
   save: (id: string, yaml: string) => api.put<DraftResult>(path(id), { yaml }, { silent: true }),

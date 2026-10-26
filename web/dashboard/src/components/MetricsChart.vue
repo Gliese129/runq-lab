@@ -63,6 +63,11 @@
         {{ hasData ? t('task.all_series_hidden') : t('task.no_metrics') }}
       </div>
     </div>
+    <!-- A NaN/Inf reaches us as null and draws as a gap; say so, or a gap
+         reads as "not logged" when the run actually diverged. -->
+    <div v-for="n in nonFinite" :key="n.key" class="text-caption text-warning font-mono mt-1">
+      {{ t('task.metric_nonfinite', { key: n.label, n: n.count, step: n.firstStep }) }}
+    </div>
   </div>
 </template>
 
@@ -78,7 +83,7 @@ Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryS
 
 interface MetricPoint {
   key: string
-  value: number
+  value: number | null // null: a NaN/Inf the SDK wrote as null
   step?: number
   ts: number
 }
@@ -166,6 +171,23 @@ const hasChart = computed(() => hasData.value && visibleKeys.value.size > 0)
 // chip toggles automatically.
 const chartLabel = computed(() =>
   t('task.metrics_chart', { keys: [...visibleKeys.value].join(', ') }))
+
+// Visible series with null (non-finite) values: how many and where first.
+const nonFinite = computed(() => {
+  const out: Array<{ key: string; label: string; count: number; firstStep: number | string }> = []
+  for (const key of visibleKeys.value) {
+    let count = 0
+    let firstStep: number | string = '?'
+    // x is the step, else the index within this key — as buildDatasets draws it
+    props.points.filter(p => p.key === key).forEach((p, idx) => {
+      if (p.value !== null) return
+      if (count === 0) firstStep = p.step ?? idx
+      count++
+    })
+    if (count > 0) out.push({ key, label: labels.value.get(key) ?? key, count, firstStep })
+  }
+  return out
+})
 
 function buildDatasets() {
   return [...visibleKeys.value].map((key, i) => {

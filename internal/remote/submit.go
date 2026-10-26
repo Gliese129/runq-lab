@@ -218,8 +218,11 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 
 	var supersede map[string]string
 	if into != nil {
+		if err := checkSameRun(into.job.ID, plan.CommandTemplate, proj.CmdTemplate, planCfg.Overrides, into.first); err != nil {
+			return "", nil, err
+		}
 		var summary job.AppendSummary
-		summary, supersede = classifyAppend(&plan, into, jobCfg.RerunFailed, planCfg.Overrides)
+		summary, supersede = classifyAppend(&plan, into, jobCfg.RerunFailed)
 		if opts.Append != nil {
 			*opts.Append = summary
 		}

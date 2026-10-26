@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Appending to a job (`runq submit dr… --into jb…`): one experiment = one
@@ -36,23 +37,15 @@ type CellClass struct {
 
 // AppendSummary is what an append would do (preview) or did (submit).
 type AppendSummary struct {
-	Into            string        `json:"into"`
-	Batch           int           `json:"batch"` // the batch number it gets
-	New             int           `json:"new"`
-	SkippedExisting int           `json:"skipped_existing"`
-	SkippedFailed   int           `json:"skipped_failed"`
-	RerunFailed     int           `json:"rerun_failed"`
-	Differs         AppendDiffers `json:"differs"`
-	Cells           []CellClass   `json:"cells"`
+	Into            string      `json:"into"`
+	Batch           int         `json:"batch"` // the batch number it gets
+	New             int         `json:"new"`
+	SkippedExisting int         `json:"skipped_existing"`
+	SkippedFailed   int         `json:"skipped_failed"`
+	RerunFailed     int         `json:"rerun_failed"`
+	Cells           []CellClass `json:"cells"`
 	// Renamed lists new cells whose run name was taken in the job.
 	Renamed map[string]string `json:"renamed,omitempty"`
-}
-
-// AppendDiffers flags what this batch runs differently from the job's
-// first batch (allowed, but shown).
-type AppendDiffers struct {
-	Command   bool `json:"command"`
-	Overrides bool `json:"overrides"`
 }
 
 // Submits reports how many tasks the append creates.
@@ -67,8 +60,9 @@ func (s AppendSummary) Line() string {
 	return line
 }
 
-// CellKey is the identity of a cell: params in sorted key order, values in
-// their canonical text (1 and 1.0 are the same cell), exclude left out.
+// CellKey is the identity of a cell: params in sorted key order, values by
+// SameValue (1 and 1.0 are the same cell, true and "true" are not), exclude
+// left out.
 func CellKey(p TaskParams, exclude map[string]bool) string {
 	if len(exclude) == 0 {
 		return paramsKey(p)
@@ -80,6 +74,30 @@ func CellKey(p TaskParams, exclude map[string]bool) string {
 		}
 	}
 	return paramsKey(kept)
+}
+
+// DistinctCells is a plan error when two rows are the same cell once the
+// scheduler-only params are left out: they would run the same experiment
+// twice (and an append would rerun one failure twice).
+func DistinctCells(runs []string, params []TaskParams, exclude map[string]bool) error {
+	seen := make(map[string]int, len(params))
+	for i, p := range params {
+		k := CellKey(p, exclude)
+		if j, ok := seen[k]; ok {
+			hint := ""
+			if len(exclude) > 0 {
+				names := make([]string, 0, len(exclude))
+				for n := range exclude {
+					names = append(names, n)
+				}
+				sort.Strings(names)
+				hint = " (scheduler-only params do not make a cell: " + strings.Join(names, ", ") + ")"
+			}
+			return fmt.Errorf("rows %q and %q are the same cell%s; drop one or make their params differ", runs[j], runs[i], hint)
+		}
+		seen[k] = i
+	}
+	return nil
 }
 
 func failedStatus(s string) bool { return s == "failed" || s == "killed" }
@@ -166,7 +184,7 @@ func NothingToAppendError(s AppendSummary) error {
 	return fmt.Errorf("%w: all %d cells already exist in %s", ErrNothingToAppend, total, s.Into)
 }
 
-// Report is the append block of previews and `draft show`: the counts,
+// Report is the append block of previews and `show dr…`: the counts,
 // then one line per skipped, rerun or renamed cell.
 func (s AppendSummary) Report() string {
 	out := fmt.Sprintf("append to %s as batch %d: %s\n", s.Into, s.Batch, s.Line())
@@ -187,12 +205,6 @@ func (s AppendSummary) Report() string {
 	sort.Strings(froms)
 	for _, from := range froms {
 		out += fmt.Sprintf("  rename %q → %q: the job already has a run named %q\n", from, s.Renamed[from], from)
-	}
-	if s.Differs.Command {
-		out += "  note: the command differs from the job's first batch\n"
-	}
-	if s.Differs.Overrides {
-		out += "  note: the overrides differ from the job's first batch\n"
 	}
 	return out
 }

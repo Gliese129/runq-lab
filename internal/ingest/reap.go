@@ -50,10 +50,10 @@ type Result struct {
 // `task_id` / `job_id` are NOT in the SDK payload. The caller supplies them
 // through Target, keeping the SDK ignorant of internal DB schemas.
 type metricEvent struct {
-	Key   string  `json:"key"`
-	Value float64 `json:"value"`
-	Step  *int64  `json:"step"`
-	TS    int64   `json:"ts"`
+	Key   string   `json:"key"`
+	Value *float64 `json:"value"` // null: a NaN/Inf (SDK convention), kept out of min/max/last
+	Step  *int64   `json:"step"`
+	TS    int64    `json:"ts"`
 }
 
 // NOTE: the legacy ReapOutputs (markless full-file reap) is GONE. Its
@@ -102,19 +102,21 @@ func (c *collector) line(lineBytes []byte) {
 		if c.aggs == nil {
 			c.aggs = make(map[string]*store.MetricSummaryRow)
 		}
-		agg, ok := c.aggs[e.Key]
-		if !ok {
-			c.aggs[e.Key] = &store.MetricSummaryRow{
-				TaskID: c.target.TaskID, JobID: c.target.JobID, Key: e.Key,
-				Min: e.Value, Max: e.Value, Last: e.Value, LastTS: e.TS, Count: 1,
+		if v := e.Value; v != nil {
+			agg, ok := c.aggs[e.Key]
+			if !ok {
+				c.aggs[e.Key] = &store.MetricSummaryRow{
+					TaskID: c.target.TaskID, JobID: c.target.JobID, Key: e.Key,
+					Min: *v, Max: *v, Last: *v, LastTS: e.TS, Count: 1,
+				}
+			} else {
+				agg.Min = min(agg.Min, *v)
+				agg.Max = max(agg.Max, *v)
+				if e.TS >= agg.LastTS {
+					agg.Last, agg.LastTS = *v, e.TS
+				}
+				agg.Count++
 			}
-		} else {
-			agg.Min = min(agg.Min, e.Value)
-			agg.Max = max(agg.Max, e.Value)
-			if e.TS >= agg.LastTS {
-				agg.Last, agg.LastTS = e.Value, e.TS
-			}
-			agg.Count++
 		}
 		if e.Step != nil {
 			v := float64(*e.Step)
@@ -401,12 +403,15 @@ func reapLinksFile(ctx context.Context, st *store.Store, target Target, fsys rfs
 	if err != nil {
 		return err
 	}
-	if info.Size() == mark.Size && !final {
+	// The SDK rewrites links.json atomically, so a changed link can keep the
+	// size: the mark's Offset holds the file's mtime (ns) for links.
+	mtime := info.ModTime().UnixNano()
+	if info.Size() == mark.Size && mtime == mark.Offset && !final {
 		return nil
 	}
 	if info.Size() > maxLinksFileBytes {
 		logger.Warnf("reap %s: %d bytes exceeds the links cap; skipped", path, info.Size())
-		return st.SetFileIngestMark(ctx, target.TaskID, store.IngestFileLinks, store.FileIngestMark{Size: info.Size(), Final: final})
+		return st.SetFileIngestMark(ctx, target.TaskID, store.IngestFileLinks, store.FileIngestMark{Size: info.Size(), Offset: mtime, Final: final})
 	}
 	data, err := fsys.ReadFile(path)
 	if err != nil {
@@ -424,5 +429,5 @@ func reapLinksFile(ctx context.Context, st *store.Store, target Target, fsys rfs
 		}
 	}
 	return st.ApplyLinksIngest(ctx, target.TaskID, links,
-		store.FileIngestMark{Size: int64(len(data)), Offset: int64(len(data)), Final: final})
+		store.FileIngestMark{Size: int64(len(data)), Offset: mtime, Final: final})
 }

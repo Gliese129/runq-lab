@@ -122,7 +122,7 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 		m.Content = append(m.Content, str("run"), str(r.Run))
 		for _, k := range order {
 			v, ok := r.Params[k]
-			if !ok || fixed[k] && FormatValue(v) == FormatValue(base[k]) {
+			if !ok || fixed[k] && SameValue(v, base[k]) {
 				continue
 			}
 			vn, err := valueNode(v)
@@ -264,7 +264,7 @@ func PlanTable(rows []Row, baseline string, declared []string) string {
 			switch {
 			case !ok:
 				line = append(line, "∅")
-			case i != b && FormatValue(v) == FormatValue(base[k]):
+			case i != b && SameValue(v, base[k]):
 				line = append(line, "")
 			default:
 				line = append(line, FormatValue(v))
@@ -301,9 +301,9 @@ func PlanTable(rows []Row, baseline string, declared []string) string {
 }
 
 func varies(rows []Row, k string) bool {
-	first := FormatValue(rows[0].Params[k])
+	first := rows[0].Params[k]
 	for _, r := range rows[1:] {
-		if FormatValue(r.Params[k]) != first {
+		if !SameValue(r.Params[k], first) {
 			return true
 		}
 	}

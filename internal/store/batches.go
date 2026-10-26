@@ -90,6 +90,23 @@ func (s *Store) ListJobBatches(ctx context.Context, jobID string) ([]JobBatch, e
 	return out, rows.Err()
 }
 
+// DraftBatch is the batch a draft was submitted as, or nil. It catches a
+// submit whose job landed but whose draft was never marked submitted.
+func (s *Store) DraftBatch(ctx context.Context, draftID string) (*JobBatch, error) {
+	var b JobBatch
+	var at int64
+	err := s.db.QueryRowContext(ctx, `SELECT job_id, seq, submitted_at, task_count FROM job_batches WHERE draft_id = ? ORDER BY job_id, seq LIMIT 1`, draftID).
+		Scan(&b.JobID, &b.Seq, &at, &b.TaskCount)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	b.SubmittedAt, b.DraftID = time.Unix(at, 0), draftID
+	return &b, nil
+}
+
 // NextBatchSeq is the seq the next append to jobID gets.
 func (s *Store) NextBatchSeq(ctx context.Context, jobID string) (int, error) {
 	var seq int

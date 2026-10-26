@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"path"
@@ -191,11 +192,11 @@ func readTailMetricPoints(fsys rfs.FS, taskDir, key string, maxPoints int, after
 		raw, rerr := br.ReadBytes('\n')
 		if rerr == nil && len(raw) > 1 {
 			var e struct {
-				Type  string  `json:"type"`
-				Key   string  `json:"key"`
-				Value float64 `json:"value"`
-				Step  *int    `json:"step"`
-				TS    int64   `json:"ts"`
+				Type  string   `json:"type"`
+				Key   string   `json:"key"`
+				Value *float64 `json:"value"` // null = non-finite (SDK convention)
+				Step  *int     `json:"step"`
+				TS    int64    `json:"ts"`
 			}
 			if json.Unmarshal(raw, &e) == nil && e.Type == "metric" &&
 				(afterTS == 0 || e.TS > afterTS) && (key == "" || e.Key == key) {
@@ -227,9 +228,11 @@ func tailMetricBuckets(fsys rfs.FS, taskDir, key string, fromTS, toTS int64, bud
 		if toTS != 0 && p.TS > toTS {
 			continue
 		}
-		b := workspace.PyramidBucket{
-			Min: p.Value, Max: p.Value, Sum: p.Value, SumSq: p.Value * p.Value,
-			Count: 1, FirstTS: p.TS, LastTS: p.TS, FirstStep: -1, LastStep: -1,
+		b := workspace.PyramidBucket{FirstTS: p.TS, LastTS: p.TS, FirstStep: -1, LastStep: -1}
+		if v := p.Value; v != nil {
+			b.Min, b.Max, b.Sum, b.SumSq, b.Count = *v, *v, *v, *v**v, 1
+		} else {
+			b.Min, b.Max, b.NaNCount = math.Inf(1), math.Inf(-1), 1 // as the pyramid's foldPoint
 		}
 		if p.Step != nil {
 			b.FirstStep, b.LastStep = int64(*p.Step), int64(*p.Step)

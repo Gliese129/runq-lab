@@ -22,6 +22,11 @@ var taskShowCmd = &cobra.Command{
 
 func runTaskShow(cmd *cobra.Command, args []string) error {
 	return withBackend(cmd, func(b backend.Backend) error {
+		if fresh, _ := cmd.Root().PersistentFlags().GetBool("fresh"); fresh {
+			if view, err := b.GetTask(cmd.Context(), args[0]); err == nil {
+				applyFresh(cmd, b, view.JobID) // refresh is job-scoped
+			}
+		}
 		wait, err := runWait(cmd, func(ctx context.Context) (waitSnapshot, error) {
 			view, err := b.GetTask(ctx, args[0])
 			if err != nil {

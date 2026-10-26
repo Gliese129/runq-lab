@@ -101,7 +101,7 @@ func AppendSummaryFor(tasks []store.TaskRow, rows []job.Row, exclude map[string]
 // classifyAppend sorts the plan's rows against the job's live tasks, keeps
 // only the tasks to submit (renaming new cells whose run name is taken) and
 // returns the summary plus the failed tasks the reruns supersede.
-func classifyAppend(plan *submitplan.Plan, t *appendTarget, rerunFailed bool, overrides *job.Overrides) (job.AppendSummary, map[string]string) {
+func classifyAppend(plan *submitplan.Plan, t *appendTarget, rerunFailed bool) (job.AppendSummary, map[string]string) {
 	exclude := make(map[string]bool, len(plan.SchedulerParams))
 	for _, name := range plan.SchedulerParams {
 		exclude[name] = true
@@ -112,7 +112,6 @@ func classifyAppend(plan *submitplan.Plan, t *appendTarget, rerunFailed bool, ov
 	}
 	summary := AppendSummaryFor(t.tasks, rows, exclude, rerunFailed, t.job.ID, t.seq)
 	cells := summary.Cells
-	summary.Differs = appendDiffers(plan.CommandTemplate, overrides, t.first)
 
 	supersede := map[string]string{}
 	kept := plan.Tasks[:0]
@@ -136,18 +135,25 @@ func classifyAppend(plan *submitplan.Plan, t *appendTarget, rerunFailed bool, ov
 	return summary, supersede
 }
 
-// appendDiffers compares the batch with the job's first one.
-func appendDiffers(command string, overrides *job.Overrides, first store.JobBatch) job.AppendDiffers {
+// checkSameRun refuses an append whose command or overrides differ from
+// the job's first batch: a job keeps one way of running, so one job.yaml
+// (runq export) still describes all of it. command is this batch's
+// effective template; the first batch's comes from its job.yaml command:,
+// else the project's template (projectCmd).
+func checkSameRun(jobID, command, projectCmd string, overrides *job.Overrides, first store.JobBatch) error {
 	var cfg job.JobConfig
 	_ = json.Unmarshal([]byte(first.ConfigJSON), &cfg)
-	firstCommand := first.Command
+	firstCommand := cfg.Command
 	if firstCommand == "" {
-		firstCommand = cfg.Command
+		firstCommand = projectCmd
 	}
-	return job.AppendDiffers{
-		Command:   firstCommand != "" && command != firstCommand,
-		Overrides: !reflect.DeepEqual(normalizeOverrides(overrides), normalizeOverrides(cfg.Overrides)),
+	if command != firstCommand {
+		return fmt.Errorf("--into %s: the command differs from the job's (job: %q, this batch: %q); a job keeps one command, so start a new job for this", jobID, firstCommand, command)
 	}
+	if !reflect.DeepEqual(normalizeOverrides(overrides), normalizeOverrides(cfg.Overrides)) {
+		return fmt.Errorf("--into %s: the overrides differ from the job's; a job keeps one set of overrides, so match them (runq export %s) or start a new job", jobID, jobID)
+	}
+	return nil
 }
 
 func normalizeOverrides(o *job.Overrides) any {

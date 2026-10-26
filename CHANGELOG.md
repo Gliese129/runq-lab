@@ -70,6 +70,19 @@
 - `RUNQ_OUTPUT_DIR`, `RUNQ_CHECKPOINT_DIR` and `WANDB_DIR` in `environment:` or
   `overrides.env` are rejected: those directories always live in the task
   directory. Move all task data with the target's `data_path`.
+- An append (`--into jb…`) must keep the job's command and overrides; a batch
+  that changes either is refused (start a new job). `runq export` refuses an
+  older job whose batches ran differently instead of writing batch 1's command
+  for all of them.
+- Two rows that are the same cell once scheduler-only params (h_rt, ar_id…)
+  are left out are a plan error, in every draft and submit.
+- Cell identity keeps value types: `true` and `"true"` are different cells
+  (numbers still fold: `1` is `1.0`). Export keeps a string `"true"` a string.
+- `runq draft show` is retired → `runq show dr… [--yaml]`. `runq submit dr…`
+  refuses `-t/-s` (a draft keeps its target; set `section:` with `draft edit`).
+- SDK `runq.report()` writes a NaN/Inf as `null` with one warning per key
+  (it used to write a bare `NaN` that runq dropped); the task's metric chart
+  draws a gap and says how many and from which step.
 
 ### Changes
 
@@ -77,7 +90,7 @@
   whether the run is worth a record (scheduler, ablation cell, asked for
   runq) and runs quick one-offs on an interactive node directly.
 - One experiment = one job that keeps growing: `runq draft job.yaml --into jb…`
-  plans an append (the preview, `draft show` and the draft page mark every row
+  plans an append (the preview, `show dr…` and the draft page mark every row
   new, already there, or failed), `runq submit dr… --into jb… [--rerun-failed]`
   adds it as the job's next batch. Cells the job has are skipped — done, running
   and queued ones, and failed or killed ones unless `--rerun-failed`, which reruns
@@ -214,6 +227,20 @@
   `runq.link(name, value)` takes a URL or an object with `.url` (no URL = no-op).
   `runq.context()` creates metrics.jsonl, results.jsonl and links.json up front
   and warns once per filesystem under 5% free space or inodes.
+
+### Fixes
+
+- `runq submit dr…`: an edit or discard racing a submit waits for it (the
+  stored draft is the rev that ran), and a submit whose caller went away after
+  the job landed is finished on retry instead of submitted twice.
+- Results and views leave out tasks a rerun superseded.
+- Old result cards and `view --job` keep each scoring script and named section
+  its own group instead of showing only the latest of them.
+- The submit TUI keeps your saved edits when you switch project.
+- A link rewritten to the same length (`runq.link`) is picked up while the
+  task runs.
+- Draft `updated_at` reads back in seconds (it came back in nanoseconds).
+- `--fresh` refreshes for `runq show jb…/tk…` too (it was ignored there).
 
 
 ## v0.6.0 — 2026-10-16

@@ -108,3 +108,17 @@ def test_report_coerces_int_value_to_float(clean_env, tmp_path, monkeypatch):
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert events[0]["value"] == 42.0
     assert isinstance(events[0]["value"], float)
+
+
+def test_report_nonfinite_writes_null_and_warns_once(clean_env, tmp_path, monkeypatch, capsys):
+    """NaN/Inf become JSON null (Go cannot parse a bare NaN); training goes on."""
+    monkeypatch.chdir(tmp_path)
+    runq.context()
+    runq.report({"loss": float("nan"), "acc": 0.5}, step=1)
+    runq.report({"loss": float("inf")}, step=2)
+    text = (tmp_path / "runq_metrics.jsonl").read_text()
+    assert "NaN" not in text and "Infinity" not in text
+    events = _read_events(tmp_path / "runq_metrics.jsonl")
+    assert [(e["key"], e["value"]) for e in events] == [("loss", None), ("acc", 0.5), ("loss", None)]
+    err = capsys.readouterr().err
+    assert err.count("'loss'") == 1 and "null" in err

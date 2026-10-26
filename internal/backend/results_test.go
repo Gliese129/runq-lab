@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gliese129/runq-lab/internal/store"
+	"github.com/gliese129/runq-lab/internal/views"
 )
 
 func seedResultsStore(t *testing.T, taskIDs ...string) *store.Store {
@@ -386,5 +387,52 @@ func TestResultsEmptyJobShape(t *testing.T) {
 		res.Schema.XAxes == nil || res.Schema.Metrics == nil ||
 		res.Cols.TS == nil || res.Cols.Axes == nil || res.Cols.Metrics == nil {
 		t.Errorf("empty job must serialize empty containers: %+v", res)
+	}
+}
+
+// Superseded tasks are history: their records leave the results endpoint
+// and view input (approach/append-cell-rules).
+func TestResultsLeaveOutSupersededTasks(t *testing.T) {
+	ctx := context.Background()
+	st := seedResultsStore(t, "old", "new")
+	insertRecords(t, st, "old", [][2]string{{`{"split":"test"}`, `{"acc":0.1}`}}, 100)
+	insertRecords(t, st, "new", [][2]string{{`{"split":"test"}`, `{"acc":0.9}`}}, 200)
+	row := store.ResultRecordRow{TaskID: store.ProducerSourceID("old", "scorer"), JobID: "j1", TS: 300, AxesJSON: `{"split":"test"}`, MetricsJSON: `{"acc":0.2}`}
+	if err := st.ApplyProducerResultsDelta(ctx, "old", "scorer", false, []store.ResultRecordRow{row}, store.FileIngestMark{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().Exec(`UPDATE tasks SET superseded_by = 'new', status = 'failed' WHERE id = 'old'`); err != nil {
+		t.Fatal(err)
+	}
+	out, err := jobResultsFromDB(ctx, st, "j1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := st.ViewInput(ctx, views.Spec{Project: "p"}, []string{"j1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.N != 1 || len(in.Records) != 1 || in.Records[0].SourceID != "new" {
+		t.Fatalf("results N = %d, view records = %+v; want only task new", out.N, in.Records)
+	}
+}
+
+// Producers and sections are separate groups, so "latest per group" keeps
+// one row for each.
+func TestResultsGroupBySectionAndProducer(t *testing.T) {
+	ctx := context.Background()
+	st := seedResultsStore(t, "t1")
+	for i, p := range []string{"score_a", "score_b"} {
+		row := store.ResultRecordRow{TaskID: store.ProducerSourceID("t1", p), JobID: "j1", Section: p, TS: int64(i + 1), AxesJSON: `{"split":"test"}`, MetricsJSON: `{"acc":0.5}`}
+		if err := st.ApplyProducerResultsDelta(ctx, "t1", p, false, []store.ResultRecordRow{row}, store.FileIngestMark{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := jobResultsFromDB(ctx, st, "j1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.N != 2 || len(out.Schema.Groups) != 2 {
+		t.Fatalf("groups = %+v, want two", out.Schema.Groups)
 	}
 }

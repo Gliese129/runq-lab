@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/bytedance/gopkg/util/logger"
 	"github.com/gliese129/runq-lab/internal/store"
@@ -108,6 +109,20 @@ func jobResultsFromDB(ctx context.Context, st *store.Store, jobID string) (*JobR
 		}
 		rec := &resultRec{taskID: taskID, ts: row.TS, axes: axes, metrics: metrics, order: i}
 		rec.identity, rec.label = identityKey(axes["model"], taskID)
+		// A section or a scoring script is its own series: two producers
+		// scoring one model must not collapse into one "latest" row.
+		// Only a named section counts; "auto-…" is derived from the record's
+		// key shape (store.RecordIdentity), not something the script chose.
+		section := row.Section
+		if strings.HasPrefix(section, "auto-") {
+			section = ""
+		}
+		rec.identity = section + "\x00" + producer + "\x00" + rec.identity
+		for _, part := range []string{producer, section} {
+			if part != "" {
+				rec.label += " · " + part
+			}
+		}
 		recs = append(recs, rec)
 	}
 

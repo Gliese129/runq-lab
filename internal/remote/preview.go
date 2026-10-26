@@ -55,7 +55,10 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 
 	var s strings.Builder
 	if into != nil {
-		summary, _ := classifyAppend(&plan, into, jobCfg.RerunFailed, jobCfg.Overrides)
+		if err := checkSameRun(into.job.ID, plan.CommandTemplate, proj.CmdTemplate, jobCfg.Overrides, into.first); err != nil {
+			return "", submitplan.Plan{}, err
+		}
+		summary, _ := classifyAppend(&plan, into, jobCfg.RerunFailed)
 		plan.Append = &summary
 		s.WriteString(summary.Report())
 		if summary.Submits() == 0 {

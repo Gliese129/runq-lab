@@ -19,7 +19,8 @@ type fakeDrafter struct {
 	submitted []string
 	discarded []string
 	edits     []string
-	failFor   string // CreateDraft fails for this project
+	plans     []string // job YAML of each CreateDraft
+	failFor   string   // CreateDraft fails for this project
 }
 
 func (f *fakeDrafter) CreateDraft(_ context.Context, req backend.DraftRequest) (*backend.DraftResult, error) {
@@ -28,6 +29,7 @@ func (f *fakeDrafter) CreateDraft(_ context.Context, req backend.DraftRequest) (
 	}
 	f.n++
 	f.projects = append(f.projects, req.Project)
+	f.plans = append(f.plans, req.JobYAML)
 	id := fmt.Sprintf("dr%08d", f.n)
 	return &backend.DraftResult{Draft: backend.DraftView{ID: id, Project: req.Project, Rev: 1, Rows: 2}, Table: "RUN\nB0 (baseline)\n", Preview: "name: x\n"}, nil
 }
@@ -38,6 +40,9 @@ func (f *fakeDrafter) GetDraft(context.Context, string) (*backend.DraftResult, e
 	return nil, nil
 }
 func (f *fakeDrafter) DraftYAML(_ context.Context, id string) ([]byte, error) {
+	if len(f.edits) > 0 {
+		return []byte(f.edits[len(f.edits)-1]), nil
+	}
 	return []byte("draft: " + id + "\nrev: 1\ntasks:\n  - {run: B0}\n"), nil
 }
 func (f *fakeDrafter) EditDraft(_ context.Context, id, text string) (*backend.DraftResult, error) {
@@ -139,5 +144,40 @@ func TestTemplateYAML(t *testing.T) {
 	}
 	if text, err := templateYAML("kl", filled); err != nil || !strings.Contains(text, "run: B0") {
 		t.Fatalf("edited template: %q %v", text, err)
+	}
+}
+
+// Edits saved with [e] survive [p]: the new project's draft is planned from
+// the draft as saved, not from the original file.
+func TestTUIProjectSwitchKeepsEdits(t *testing.T) {
+	f := &fakeDrafter{}
+	ui, _ := scriptedTUI(f, "ep2q", "kl", func(p string) error {
+		return os.WriteFile(p, []byte("draft: dr00000001\nrev: 1\ntasks: [{run: edited, lr: 5}]\n"), 0o600)
+	})
+	if err := ui.run(); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.plans) != 2 || !strings.Contains(f.plans[1], "edited") || f.projects[1] != "eval" {
+		t.Fatalf("plans = %q, projects = %v", f.plans, f.projects)
+	}
+}
+
+// submit dr… refuses -t/-s instead of accepting and ignoring them.
+func TestSubmitDraftRefusesTargetAndSection(t *testing.T) {
+	reset := func() {
+		for _, name := range []string{"target", "section"} {
+			f := submitCmd.Flags().Lookup(name)
+			_ = f.Value.Set("")
+			f.Changed = false
+		}
+		rootCmd.SetArgs(nil)
+	}
+	defer reset()
+	for flag, want := range map[string]string{"-t": "keeps the target", "-s": "section is part of the draft"} {
+		reset()
+		rootCmd.SetArgs([]string{"submit", "dr00000001", flag, "x"})
+		if err := rootCmd.Execute(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("submit dr… %s: got %v, want %q", flag, err, want)
+		}
 	}
 }

@@ -139,17 +139,24 @@ func (s *Store) SumResultsDropped(ctx context.Context, jobID string) (int64, err
 		SELECT COALESCE(SUM(fi.dropped_count), 0)
 		FROM file_ingest fi
 		JOIN tasks t ON t.id = fi.task_id
-		WHERE t.job_id = ? AND fi.file = ?`, jobID, IngestFileResults).Scan(&n)
+		WHERE t.job_id = ? AND t.superseded_by IS NULL AND fi.file = ?`, jobID, IngestFileResults).Scan(&n)
 	return n, err
 }
 
-// ListResultRecords returns a job's result records ordered by task then
+// liveSourceSQL keeps record_latest rows whose task (the part of task_id
+// before "@producer") a rerun has not superseded: superseded tasks are
+// history, out of results and views.
+const liveSourceSQL = `(CASE WHEN instr(record_latest.task_id, '@') > 0
+	THEN substr(record_latest.task_id, 1, instr(record_latest.task_id, '@') - 1)
+	ELSE record_latest.task_id END) NOT IN (SELECT id FROM tasks WHERE job_id = record_latest.job_id AND superseded_by IS NOT NULL)`
+
+// ListResultRecords returns a job's live result records ordered by task then
 // record order — the raw material for the results endpoint's columnar
 // assembly (RQ2-1 c3).
 func (s *Store) ListResultRecords(ctx context.Context, jobID string) ([]ResultRecordRow, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT task_id, job_id, ts, axes_json, metrics_json, section
-		 FROM record_latest WHERE job_id = ?
+		 FROM record_latest WHERE job_id = ? AND `+liveSourceSQL+`
 		 ORDER BY task_id, section, key_json`, jobID)
 	if err != nil {
 		return nil, err

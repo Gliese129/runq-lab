@@ -47,7 +47,7 @@ func scanDraft(sc interface{ Scan(...any) error }) (*DraftRow, error) {
 		&d.ConfigJSON, &d.SourcePath, &d.SourceSHA, &created, &updated); err != nil {
 		return nil, err
 	}
-	d.CreatedAt, d.UpdatedAt = time.Unix(created, 0), time.Unix(updated, 0)
+	d.CreatedAt, d.UpdatedAt = time.Unix(created, 0), time.Unix(0, updated) // updated_at is ns: it orders edits within a second
 	return &d, nil
 }
 

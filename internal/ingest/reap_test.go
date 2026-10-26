@@ -168,3 +168,27 @@ func TestMetricsPathComesFromWorkspaceContract(t *testing.T) {
 		t.Fatalf("workspace.MetricsPath = %q", got)
 	}
 }
+
+// A null metric value (the SDK's NaN/Inf) is kept out of min/max/last
+// instead of folding in as 0.
+func TestReapMetricNullIsNotZero(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st := openMemoryStoreAndSeed(t, "t1", "j1", dir)
+	lines := `{"type":"metric","key":"loss","value":2.5,"step":1,"ts":1}
+{"type":"metric","key":"loss","value":null,"step":2,"ts":2}
+`
+	if err := os.WriteFile(workspace.MetricsPath(dir), []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReapIncremental(ctx, st, Target{TaskID: "t1", JobID: "j1", Dir: dir}, false); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.ListMetricSummaries(ctx, "j1", "loss")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Min != 2.5 || rows[0].Last != 2.5 || rows[0].Count != 1 {
+		t.Fatalf("summary = %+v, want the null left out", rows)
+	}
+}

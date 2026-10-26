@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/preflight"
@@ -191,6 +192,103 @@ func TestDraftSubmitIsIdempotent(t *testing.T) {
 	}
 	if n, _ := st.CountOpenDrafts(ctx); n != 0 {
 		t.Fatalf("open drafts = %d", n)
+	}
+}
+
+type hookLane struct {
+	*countingLane
+	hook     func(cfg job.JobConfig)
+	admitted job.JobConfig
+}
+
+func (l *hookLane) SubmitJob(ctx context.Context, cfg job.JobConfig, opts SubmitOptions) (string, int, error) {
+	id, n, err := l.countingLane.SubmitJob(ctx, cfg, opts)
+	l.admitted = cfg
+	if l.hook != nil {
+		l.hook(cfg)
+	}
+	return id, n, err
+}
+
+// An edit racing a submit waits for it and then finds the draft frozen:
+// the stored draft is the rev that was submitted.
+func TestDraftEditDuringSubmitWaits(t *testing.T) {
+	ctx := context.Background()
+	m, lane, _ := newDraftBackend(t)
+	d, err := m.CreateDraft(ctx, DraftRequest{JobYAML: sweepYAML})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := m.DraftYAML(ctx, d.Draft.ID)
+	edited := strings.Replace(string(raw), "name: kl sweep", "name: changed during submit", 1)
+	editErr := make(chan error, 1)
+	m.targets["a"] = &hookLane{countingLane: lane, hook: func(job.JobConfig) {
+		go func() { _, err := m.EditDraft(ctx, d.Draft.ID, edited); editErr <- err }()
+		time.Sleep(20 * time.Millisecond) // let the edit reach the draft lock
+	}}
+	if _, err := m.SubmitDraft(ctx, d.Draft.ID, DraftSubmitOptions{Rev: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-editErr; !errors.Is(err, store.ErrDraftSubmitted) {
+		t.Fatalf("edit during submit = %v, want ErrDraftSubmitted", err)
+	}
+	got, _ := m.GetDraft(ctx, d.Draft.ID)
+	if got.Draft.Rev != 1 || got.Draft.Name != "kl sweep" {
+		t.Fatalf("stored draft = rev %d %q, want the submitted rev 1", got.Draft.Rev, got.Draft.Name)
+	}
+}
+
+// A submit whose caller goes away after the job landed still marks the
+// draft; and a retry over a landed-but-unmarked draft returns that job.
+func TestDraftSubmitSurvivesCancelAfterAdmission(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m, lane, st := newDraftBackend(t)
+	d, err := m.CreateDraft(ctx, DraftRequest{JobYAML: sweepYAML})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.targets["a"] = &hookLane{countingLane: lane, hook: func(job.JobConfig) { cancel() }}
+	first, err := m.SubmitDraft(ctx, d.Draft.ID, DraftSubmitOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := m.SubmitDraft(context.Background(), d.Draft.ID, DraftSubmitOptions{})
+	if err != nil || !again.AlreadySubmitted || again.JobID != first.JobID || lane.submits.Load() != 1 {
+		t.Fatalf("retry = %+v, %v (admissions %d)", again, err, lane.submits.Load())
+	}
+
+	// The job row landed but the mark did not (the daemon died in between).
+	d2, err := m.CreateDraft(context.Background(), DraftRequest{JobYAML: sweepYAML})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.InsertJob(context.Background(), &store.JobRow{ID: "jblanded1", ProjectName: "kl", ConfigJSON: "{}", Status: "pending",
+		Target: "a", CreatedAt: time.Now(), TotalTasks: 4, DraftID: d2.Draft.ID}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := m.SubmitDraft(context.Background(), d2.Draft.ID, DraftSubmitOptions{})
+	if err != nil || !res.AlreadySubmitted || res.JobID != "jblanded1" || res.TotalTasks != 4 || lane.submits.Load() != 1 {
+		t.Fatalf("submit over a landed job = %+v, %v (admissions %d)", res, err, lane.submits.Load())
+	}
+	if got, _ := m.GetDraft(context.Background(), d2.Draft.ID); got.Draft.Status != "submitted" {
+		t.Fatalf("draft status = %s", got.Draft.Status)
+	}
+}
+
+// updated_at is stored in ns; reads must agree with the create response.
+func TestDraftTimestampsAgree(t *testing.T) {
+	m, _, _ := newDraftBackend(t)
+	d, err := m.CreateDraft(context.Background(), DraftRequest{JobYAML: sweepYAML})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.GetDraft(context.Background(), d.Draft.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Draft.UpdatedAt != d.Draft.UpdatedAt {
+		t.Fatalf("updated_at: create %d, reread %d", d.Draft.UpdatedAt, got.Draft.UpdatedAt)
 	}
 }
 

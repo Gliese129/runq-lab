@@ -156,7 +156,8 @@ export interface TaskView {
 /** One metric sample (mirrors backend.MetricPoint). */
 export interface MetricPoint {
   key: string
-  value: number
+  /** null: the SDK recorded a NaN/Inf (JSON has no NaN) */
+  value: number | null
   step?: number
   ts: number
 }
@@ -538,7 +539,6 @@ export interface AppendSummary {
   skipped_existing: number
   skipped_failed: number
   rerun_failed: number
-  differs: { command: boolean; overrides: boolean }
   cells: Array<{ run: string; class: CellClass; task_id?: string; status?: string }>
   renamed?: Record<string, string>
 }

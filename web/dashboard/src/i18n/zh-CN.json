@@ -453,6 +453,7 @@
   "common.browse": "浏览",
   "a11y.open_project": "打开项目 {name}",
   "task.all_series_hidden": "已隐藏全部序列——在上方选择一个指标",
+  "task.metric_nonfinite": "{key}：{n} 个 NaN/Inf 值，首次出现在 step {step}，图上显示为断点",
   "statusbar.connected": "已连接",
   "statusbar.reconnecting": "daemon 连接断开 — 自动重连中…",
   "statusbar.reconnect_banner": "daemon 连接已断开 — 正在自动重连。下方数据为最后已知状态。",
@@ -770,7 +771,7 @@
   "drafts.discard_title": "丢弃这个草稿？",
   "drafts.discard_body": "计划会被删除；没有提交过任何东西。",
   "drafts.edit_title": "编辑计划",
-  "drafts.edit_hint": "与 runq draft show --yaml 相同的 YAML；可改行、参数、基线、名称。",
+  "drafts.edit_hint": "与 runq show dr… --yaml 相同的 YAML；可改行、参数、基线、名称。",
   "drafts.revert": "撤销修改",
   "drafts.reload": "加载最新版本",
   "drafts.conflict": "这个草稿已被别处修改或提交：{msg}",
@@ -791,7 +792,5 @@
   "drafts.append": "追加 {n} 个",
   "drafts.append_title": "追加到这个 job？",
   "drafts.append_body": "将向 {id}（{target}）追加 {n} 个任务；已有的格子会跳过。",
-  "drafts.nothing_to_append": "所有格子都已在 job 里",
-  "drafts.differs_command": "命令与该 job 的第一批不同",
-  "drafts.differs_overrides": "overrides 与该 job 的第一批不同"
+  "drafts.nothing_to_append": "所有格子都已在 job 里"
 }

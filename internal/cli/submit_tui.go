@@ -196,6 +196,11 @@ func (t *submitTUI) pickProject() {
 		return
 	}
 	if t.draft != nil {
+		// Re-plan from the draft as saved, not the original file: edits
+		// made with [e] move to the new project with it.
+		if y, err := t.d.DraftYAML(t.ctx, t.draft.Draft.ID); err == nil {
+			t.req.JobYAML = string(y)
+		}
 		_ = t.d.DiscardDraft(t.ctx, t.draft.Draft.ID)
 	}
 	t.req.Project = chosen

@@ -1,6 +1,11 @@
 package job
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
 
 func TestClassifyCells(t *testing.T) {
 	existing := []ExistingCell{
@@ -51,5 +56,50 @@ func TestSummarizeCellsRenamesTakenNames(t *testing.T) {
 	}
 	if cells[2].Run != "x" {
 		t.Error("a rerun keeps its cell's name")
+	}
+}
+
+// Cell identity keeps scalar types apart and only folds numbers.
+func TestCellKeyIsTyped(t *testing.T) {
+	if CellKey(TaskParams{"x": true}, nil) == CellKey(TaskParams{"x": "true"}, nil) {
+		t.Fatal(`true and "true" must be different cells`)
+	}
+	if CellKey(TaskParams{"x": 1}, nil) != CellKey(TaskParams{"x": 1.0}, nil) {
+		t.Fatal("1 and 1.0 must be the same cell")
+	}
+	if CellKey(TaskParams{"x": []any{1, "a"}}, nil) == CellKey(TaskParams{"x": []any{"1", "a"}}, nil) {
+		t.Fatal("list elements keep their types")
+	}
+}
+
+// Two rows that only differ in scheduler params are one cell: a plan error.
+func TestDistinctCells(t *testing.T) {
+	params := []TaskParams{{"lr": 1, "h_rt": "1h"}, {"lr": 1.0, "h_rt": "2h"}}
+	err := DistinctCells([]string{"A", "B"}, params, map[string]bool{"h_rt": true})
+	if err == nil || !strings.Contains(err.Error(), `"A" and "B"`) || !strings.Contains(err.Error(), "h_rt") {
+		t.Fatalf("err = %v", err)
+	}
+	if err := DistinctCells([]string{"A", "B"}, params, nil); err != nil {
+		t.Fatalf("h_rt counts when it is not a scheduler param: %v", err)
+	}
+}
+
+// Export leaves out only values that are really the baseline's, so a
+// string "true" survives the round trip as a string.
+func TestExportKeepsParamTypes(t *testing.T) {
+	raw, err := ExportYAML(ExportInput{Project: "p", Rows: []Row{{Run: "A", Params: TaskParams{"x": true}}, {Run: "B", Params: TaskParams{"x": "true"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg JobConfig
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := Rows(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rows[1].Params["x"].(string); !ok {
+		t.Fatalf("row B x = %#v after round trip:\n%s", rows[1].Params["x"], raw)
 	}
 }

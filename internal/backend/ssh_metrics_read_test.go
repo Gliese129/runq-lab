@@ -44,7 +44,7 @@ func TestSSHTaskMetricsReadIsPure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TaskMetrics: %v", err)
 	}
-	if len(points) != 1 || points[0].Key != "loss" || points[0].Value != 0.5 {
+	if len(points) != 1 || points[0].Key != "loss" || points[0].Value == nil || *points[0].Value != 0.5 {
 		t.Fatalf("points = %+v", points)
 	}
 	mark, err := st.GetIngestMark(ctx, "t1")

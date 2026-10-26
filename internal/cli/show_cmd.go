@@ -39,7 +39,7 @@ draft (dr…), or a project (pj… or its name).`,
 		case strings.HasPrefix(ref, "tk"):
 			return runTaskShow(cmd, args)
 		case strings.HasPrefix(ref, "dr"):
-			return draftShowCmd.RunE(cmd, args)
+			return showDraft(cmd, args)
 		case strings.HasPrefix(ref, "cs"):
 			return consumerRetired(ref)
 		}
@@ -65,6 +65,7 @@ func showJob(cmd *cobra.Command, be backend.Backend, ref string, jsonOut bool) e
 	if err != nil {
 		return err
 	}
+	applyFresh(cmd, be, id)
 	wait, err := runWait(cmd, func(ctx context.Context) (waitSnapshot, error) {
 		d, err := be.GetJob(ctx, id)
 		if err != nil {

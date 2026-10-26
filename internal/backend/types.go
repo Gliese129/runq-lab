@@ -177,10 +177,10 @@ type JobBatchView struct {
 }
 
 type MetricPoint struct {
-	Key   string  `json:"key"`
-	Value float64 `json:"value"`
-	Step  *int    `json:"step,omitempty"`
-	TS    int64   `json:"ts"`
+	Key   string   `json:"key"`
+	Value *float64 `json:"value"` // nil: the SDK wrote null for a NaN/Inf
+	Step  *int     `json:"step,omitempty"`
+	TS    int64    `json:"ts"`
 }
 
 type CompareRow struct {
