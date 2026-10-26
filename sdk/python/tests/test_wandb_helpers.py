@@ -46,13 +46,12 @@ def test_wandb_like_cfg_manual_mode(clean_env, tmp_path, monkeypatch):
     assert cfg["config"] == {}
 
 
-def test_wandb_like_cfg_daemon_mode_shape(clean_env, tmp_path, monkeypatch):
-    """Daemon mode: project / job_id / task_id present → all fields populated."""
+def test_wandb_like_cfg_task_mode_shape(clean_env, tmp_path, monkeypatch):
+    """Task mode: project / job_id / task_id present → all fields populated."""
     monkeypatch.setenv("RUNQ_TASK_ID", "t1")
     monkeypatch.setenv("RUNQ_JOB_ID", "j-abc")
     monkeypatch.setenv("RUNQ_PROJECT_NAME", "myproj")
     monkeypatch.setenv("RUNQ_TASK_DIR", str(tmp_path))
-    monkeypatch.setenv("RUNQ_SOCKET_PATH", "/fake")
     ctx = runq.context()
     cfg = ctx.wandb_like_cfg
     assert cfg["project"] == "myproj"
@@ -89,7 +88,6 @@ def test_wandb_like_cfg_project_default_when_unset(clean_env, tmp_path, monkeypa
     """Missing RUNQ_PROJECT_NAME → 'runq' fallback (sensible default)."""
     monkeypatch.setenv("RUNQ_TASK_ID", "t1")
     monkeypatch.setenv("RUNQ_TASK_DIR", str(tmp_path))
-    monkeypatch.setenv("RUNQ_SOCKET_PATH", "/fake")
     ctx = runq.context()
     assert ctx.wandb_like_cfg["project"] == "runq"
 
@@ -183,14 +181,55 @@ def test_link_wandb_uses_real_url_only_on_global_main(clean_env, tmp_path, monke
     monkeypatch.setenv("RUNQ_METRICS_FILE", str(tmp_path / "metrics.jsonl"))
     ctx = runq.context()
     run = SimpleNamespace(id="custom", url="https://wandb.ai/custom/entity/runs/custom")
-    ctx.link_wandb(run, global_rank=1)
-    assert not ctx.links_file.exists()
-    ctx.link_wandb(SimpleNamespace(url=None), global_rank=0)
-    assert not ctx.links_file.exists()
-    ctx.link_wandb(run, global_rank=0)
+    with pytest.warns(DeprecationWarning, match=r'runq.link\("wandb", run\)'):
+        ctx.link_wandb(run, global_rank=1)
+    assert json.loads(ctx.links_file.read_text()) == {}
+    with pytest.warns(DeprecationWarning):
+        ctx.link_wandb(SimpleNamespace(url=None), global_rank=0)
+    assert json.loads(ctx.links_file.read_text()) == {}
+    with pytest.warns(DeprecationWarning):
+        ctx.link_wandb(run, global_rank=0)
     assert json.loads(ctx.links_file.read_text())["wandb"] == run.url
-    ctx.link_wandb(SimpleNamespace(url=""), global_rank=0)
+    with pytest.warns(DeprecationWarning):
+        ctx.link_wandb(SimpleNamespace(url=""), global_rank=0)
     assert json.loads(ctx.links_file.read_text())["wandb"] == run.url
+
+
+def test_link_accepts_a_run_and_skips_missing_urls(clean_env, tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    monkeypatch.setenv("RUNQ_TASK_ID", "tk1")
+    monkeypatch.setenv("RUNQ_TASK_DIR", str(tmp_path))
+    monkeypatch.setenv("RUNQ_METRICS_FILE", str(tmp_path / "metrics.jsonl"))
+    ctx = runq.context()
+    runq.link("wandb", None)                        # no-ops, not errors
+    runq.link("wandb", "")
+    runq.link("wandb", SimpleNamespace(url=None))   # offline / disabled run
+    runq.link("wandb", SimpleNamespace(url="  "))
+    assert json.loads(ctx.links_file.read_text()) == {}
+    runq.link("wandb", SimpleNamespace(url="https://wandb.ai/a/b/runs/c"))
+    assert json.loads(ctx.links_file.read_text()) == {"wandb": "https://wandb.ai/a/b/runs/c"}
+    with pytest.raises(ValueError, match=r"URL string or an object with \.url"):
+        runq.link("wandb", 42)
+
+
+def test_link_has_no_in_place_fallback(clean_env, tmp_path, monkeypatch, capsys):
+    """A temp file that cannot be created (no inodes) leaves links.json as it was."""
+    import json
+    import tempfile
+    monkeypatch.setenv("RUNQ_TASK_ID", "tk1")
+    monkeypatch.setenv("RUNQ_TASK_DIR", str(tmp_path))
+    monkeypatch.setenv("RUNQ_METRICS_FILE", str(tmp_path / "metrics.jsonl"))
+    ctx = runq.context()
+    runq.link("tb", "http://tb/1")
+
+    def no_inodes(*a, **k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(tempfile, "mkstemp", no_inodes)
+    runq.link("wandb", "https://wandb.ai/a/b/runs/c")
+    assert json.loads(ctx.links_file.read_text()) == {"tb": "http://tb/1"}
+    assert "failed to write" in capsys.readouterr().err
 
 
 def test_wandb_like_cfg_uses_run_and_job_names(clean_env, tmp_path, monkeypatch):

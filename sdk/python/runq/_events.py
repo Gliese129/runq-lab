@@ -6,7 +6,9 @@ API boundary and downstream never disambiguates:
 - ``metrics.jsonl`` — pure per-step metric stream (``report`` /
   ``report``); unbounded, summarized on ingest (+ pyramid).
 - ``results.jsonl`` — ``runq.record`` data plane; bounded facts,
-  ingested in full (see :mod:`runq._record`).
+  ingested in full (see :mod:`runq._record`). ``results.<producer>.jsonl``
+  is the same format, written for a task by a script that read the job
+  with ``runq.job()``.
 
 JSONL contract for metric events (matches daemon-side reap):
 
@@ -60,7 +62,7 @@ def _append_jsonl_line(path, obj: dict, kind: str) -> None:
         return
     try:
         # Append-and-flush per event. Slight overhead but guarantees
-        # tail -f gives a live view in daemon mode (Codex review #1).
+        # tail -f gives a live view (Codex review #1).
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(obj, separators=(",", ":")) + "\n")
             f.flush()
@@ -74,18 +76,12 @@ def _append_jsonl_line(path, obj: dict, kind: str) -> None:
 def _append_event(event: dict) -> None:
     """Append one metric event to metrics.jsonl.
 
-    Result records never come through here — ``record`` writes via
-    :func:`_append_result`.
+    Result records never come through here — ``record`` writes through
+    :class:`runq._record._ResultsWriter`.
     """
     if event.get("type") != "metric":
         raise ValueError(f"runq: unsupported event type {event.get('type')!r}")
     _append_jsonl_line(get_ctx().metrics_file, event, "metrics")
-
-
-def _append_result(record: dict) -> None:
-    """Append one ``runq.record`` result record to results.jsonl."""
-    ctx = get_ctx()
-    _append_jsonl_line(ctx.results_file, record, "results")
 
 
 # ---- testing helper ----

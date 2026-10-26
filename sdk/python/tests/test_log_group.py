@@ -17,7 +17,6 @@ import threading
 import pytest
 
 import runq
-from runq._report import latest_report_metrics
 
 
 def _read_events(path):
@@ -156,17 +155,6 @@ def test_log_group_applies_to_report(clean_env, tmp_path, monkeypatch):
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     keys = sorted(e["key"] for e in events)
     assert keys == ["train/acc", "train/loss"]
-
-
-def test_log_group_report_history_keeps_unprefixed_keys(clean_env, tmp_path, monkeypatch):
-    """Prefix is an emission-only concept; the latest snapshot keeps clean keys."""
-    monkeypatch.chdir(tmp_path)
-    runq.context()
-    with runq.log_group("train"):
-        runq.report({"loss": 0.5}, step=1)
-    latest = latest_report_metrics()
-    assert "loss" in latest
-    assert "train/loss" not in latest
 
 
 # ---- thread isolation via contextvars ----

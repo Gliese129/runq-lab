@@ -35,15 +35,28 @@ across retries, so a `resume.extra_args` restart can find them). runq does not
 manage checkpoint lifecycle or early stopping — those belong to your training
 script.
 
-## Three modes
+## Two modes
 
 Detected automatically at `runq.context()`:
 
-- `daemon` — running under a runq daemon (`RUNQ_TASK_ID` + `RUNQ_SOCKET_PATH` set)
-- `no_daemon` — running on HPC compute node (`RUNQ_TASK_ID` set, no socket / `RUNQ_NO_DAEMON=1`)
+- `task` — started by runq (`RUNQ_TASK_ID` set); every write is a file in the task directory
 - `manual` — running outside runq (no `RUNQ_TASK_ID`); useful for local debugging
 
 `ctx.mode` exposes which mode is active.
+
+## Scoring scripts: read a job
+
+```python
+job = runq.job("/path/to/job_dir")          # the folder holding job.json
+for t in job.tasks:
+    if t.status == "success":
+        t.record({"acc": score(t.output_dir)}, section="math")
+```
+
+`t.record` is `runq.record` for that task, written to
+`<task_dir>/results.<producer>.jsonl` (producer = the script's name); runq
+ingests it like the task's own results. See
+[scoring scripts](../../docs/views.md#scoring-scripts-with-runqjob).
 
 ## Output and W&B directories (RC3)
 
@@ -56,7 +69,7 @@ by the SDK.
 ```python
 import wandb
 run = wandb.init(**ctx.wandb_like_cfg)
-ctx.link_wandb(run)  # global rank 0; ignores missing offline/disabled URLs
+runq.link("wandb", run)  # global rank 0; no URL (offline/disabled) = no-op
 ```
 
 The SDK still works without W&B installed. Retries keep outputs and offline

@@ -4,6 +4,11 @@
 
 ### Breaking
 
+- SDK: removed `ctx.job_tasks()` (→ `runq.job()`), `runq.params`/`runq.seed`
+  (→ `ctx.params`/`ctx.seed`), `latest_report_metrics`, the `Context`/
+  `ParamDict`/`get_ctx` exports, daemon mode and `ctx.socket_path` (modes are
+  `task`/`manual`), and the httpx dependency. `ctx.link_wandb(run)` warns
+  (DeprecationWarning → `runq.link("wandb", run)`).
 - runq no longer runs consumers. `runq consumer add/ls/show` and `cs…` ids in
   show/logs/kill fail with the replacement: run the scoring script yourself; it
   reads the job with `runq.job()` and writes results runq ingests. job.yaml
@@ -204,6 +209,11 @@
   submit and when runq sees the job change. `<task_dir>/results.<producer>.jsonl`
   is ingested like `results.jsonl` (also after the task finished), as source
   `<task_id>@<producer>`, shown in views with the task's params.
+- SDK `runq.job(path | jb… | None, producer=...)`: `job.tasks[i].record(...)`
+  writes `<task_dir>/results.<producer>.jsonl` with `runq.record`'s rules.
+  `runq.link(name, value)` takes a URL or an object with `.url` (no URL = no-op).
+  `runq.context()` creates metrics.jsonl, results.jsonl and links.json up front
+  and warns once per filesystem under 5% free space or inodes.
 
 
 ## v0.6.0 — 2026-10-16

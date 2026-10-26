@@ -9,16 +9,9 @@ requires-python = ">=3.10"
 license = "MIT"
 authors = [{name = "runq contributors"}]
 
-# httpx for HTTP-over-unix-socket. Pulls in httpcore + h11 + anyio +
-# idna + sniffio — about 1 MB total. Lab user envs almost always have
-# these already (transitively via wandb / transformers / fastapi).
-# Worth the dep for cleaner code than hand-rolled framing.
-#
-# torch is intentionally NOT pinned — safe_save's size estimator
-# imports it lazily, missing torch falls back to size_hint requirement.
-dependencies = [
-    "httpx>=0.24",
-]
+# No runtime dependencies: every write is a file in the task directory, and
+# runq.job("jb…") talks to the local service with the standard library.
+dependencies = []
 
 [project.optional-dependencies]
 dev = [

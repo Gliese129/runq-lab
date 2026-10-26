@@ -3,7 +3,6 @@ import json
 import pytest
 
 import runq
-from runq._report import latest_report_metrics
 
 
 def _read_events(path):
@@ -98,16 +97,6 @@ def test_report_returns_none(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
     assert runq.report({"loss": 0.5}, step=1) is None
-
-
-def test_latest_report_metrics_is_last_call_and_a_copy(clean_env, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    runq.context()
-    runq.report({"loss": 0.5}, step=1)
-    metrics = {"loss": 0.4}
-    runq.report(metrics, step=2)
-    metrics["loss"] = 9999.0  # caller mutation must not poison the snapshot
-    assert latest_report_metrics() == {"loss": 0.4}
 
 
 # ---- value coercion ----------------------------------------------

@@ -1,5 +1,9 @@
 """runq.record — result-record emission to results.jsonl.
 
+The same writer serves ``runq.job()`` tasks: ``job.tasks[i].record(...)``
+writes ``<task_dir>/results.<producer>.jsonl`` with identical validation and
+schema freezing (see :class:`_ResultsWriter`).
+
 ``record(metrics, **axes)`` is the data-plane counterpart of ``report``:
 ``report`` streams unbounded per-step training metrics (summarized on
 ingest), ``record`` emits evaluation results and progress snapshots.
@@ -37,8 +41,10 @@ import math
 import time
 import warnings
 
+from pathlib import Path
+
 from ._context import get_ctx
-from ._events import _append_result
+from ._events import _append_jsonl_line
 
 
 def _coerce_scalar(value):
@@ -98,105 +104,137 @@ def record(metrics: dict | None = None, *, section: str | None = None, **axes) -
     been called (same as every other logging helper).
     """
     ctx = get_ctx()
+    _writer(ctx.results_file).write(
+        metrics, section, axes, current_step=ctx.current_step, stacklevel=3
+    )
 
-    provided = 0
-    kept_metrics: dict = {}
-    if metrics is None:
-        pass
-    elif not isinstance(metrics, dict):
-        provided += 1
-        warnings.warn(
-            f"runq.record: metrics must be a dict or None, "
-            f"got {type(metrics).__name__} — ignored",
-            stacklevel=2,
-        )
-    else:
-        for key, value in metrics.items():
-            provided += 1
-            ok, v = _coerce_metric(value)
-            if ok:
-                kept_metrics[str(key)] = v
-            else:
-                warnings.warn(
-                    f"runq.record: metric {key!r} dropped "
-                    f"(value {value!r} is not a finite number)",
-                    stacklevel=2,
-                )
 
-    kept_axes: dict = {}
-    for key, value in axes.items():
-        provided += 1
-        ok, v = _coerce_scalar(value)
-        if ok:
-            kept_axes[key] = v
-        else:
-            warnings.warn(
-                f"runq.record: axis {key!r} dropped "
-                f"(value {value!r} is not a str/bool/finite number)",
-                stacklevel=2,
-            )
+# One writer per file, so every handle on a file (the task's own results,
+# or several runq.job() objects for the same task) shares its frozen schemas.
+_writers: dict = {}
 
-    if provided > 0 and not kept_metrics and not kept_axes:
-        warnings.warn(
-            "runq.record: every provided key was invalid — record discarded",
-            stacklevel=2,
-        )
-        return
 
-    # Auto-fill the loop cursor when the caller didn't pass step at all.
-    # Checked against the RAW kwargs (not kept_axes): an explicitly passed
-    # but invalid step means the user's intent was a different value —
-    # silently substituting the cursor would fabricate data.
-    if "step" not in axes and ctx.current_step is not None:
-        kept_axes["step"] = ctx.current_step
+def _writer(path) -> _ResultsWriter:
+    key = None if path is None else Path(path)
+    w = _writers.get(key)
+    if w is None:
+        w = _writers[key] = _ResultsWriter(key)
+    return w
 
-    axis_keys = sorted(k for k in kept_axes if k != "step")
-    metric_keys = sorted(kept_metrics)
-    signature = [axis_keys, metric_keys]
-    if section is None:
-        raw = json.dumps(signature, separators=(",", ":"), ensure_ascii=False)
-        section = "auto-" + hashlib.sha1(raw.encode()).hexdigest()[:8]
-    elif not isinstance(section, str) or not section.strip():
-        warnings.warn("runq.record: section must be a non-empty string", stacklevel=2)
-        return
-    if not hasattr(ctx, "_record_schemas"):
-        ctx._record_schemas = {}
-        ctx._record_warnings = set()
+
+class _ResultsWriter:
+    """Validates, schema-freezes and appends records to one results file."""
+
+    def __init__(self, path: Path | None):
+        self.path = path
+        self.schemas: dict | None = None  # section → [axis keys, metric keys]
+        self.warned: set = set()
+
+    def _load_schemas(self) -> dict:
         # A restarted writer must preserve the source's first schema.
-        if ctx.results_file and ctx.results_file.exists():
-            with ctx.results_file.open(encoding="utf-8") as stream:
+        self.schemas = {}
+        if self.path is not None and self.path.exists():
+            with self.path.open(encoding="utf-8") as stream:
                 for line in stream:
                     try:
                         old = json.loads(line)
                         name = old.get("section")
-                        if name and name not in ctx._record_schemas:
-                            ctx._record_schemas[name] = [
+                        if name and name not in self.schemas:
+                            self.schemas[name] = [
                                 sorted(k for k in old.get("axes", {}) if k != "step"),
                                 sorted(old.get("metrics", {})),
                             ]
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError, AttributeError):
                         continue
-    frozen = ctx._record_schemas.setdefault(section, signature)
-    if frozen != signature:
-        warning = (section, "schema")
-        if warning not in ctx._record_warnings:
-            warnings.warn(f"runq.record: section {section!r} keys changed; missing keys become null, new keys are ignored", stacklevel=2)
-            ctx._record_warnings.add(warning)
-    if section.startswith("auto-"):
-        for other, keys in ctx._record_schemas.items():
-            if other == section:
-                continue
-            a, m = map(set, signature)
-            oa, om = map(set, keys)
-            if (a <= oa and m <= om) or (a >= oa and m >= om):
-                warning = (section, other)
-                if warning not in ctx._record_warnings:
-                    warnings.warn(f'record keys differ from section "{other}"; pass section= or write null', stacklevel=2)
-                    ctx._record_warnings.add(warning)
-    normalized_axes = {k: kept_axes.get(k) for k in frozen[0]}
-    if "step" in kept_axes:
-        normalized_axes["step"] = kept_axes["step"]
-    _append_result({"ts": int(time.time()), "section": section,
-                    "section_keys": {"axes": frozen[0], "metrics": frozen[1]},
-                    "axes": normalized_axes,
-                    "metrics": {k: kept_metrics.get(k) for k in frozen[1]}})
+        return self.schemas
+
+    def write(self, metrics, section, axes: dict, *, current_step=None, stacklevel: int = 2) -> None:
+        provided = 0
+        kept_metrics: dict = {}
+        if metrics is None:
+            pass
+        elif not isinstance(metrics, dict):
+            provided += 1
+            warnings.warn(
+                f"runq.record: metrics must be a dict or None, "
+                f"got {type(metrics).__name__} — ignored",
+                stacklevel=stacklevel,
+            )
+        else:
+            for key, value in metrics.items():
+                provided += 1
+                ok, v = _coerce_metric(value)
+                if ok:
+                    kept_metrics[str(key)] = v
+                else:
+                    warnings.warn(
+                        f"runq.record: metric {key!r} dropped "
+                        f"(value {value!r} is not a finite number)",
+                        stacklevel=stacklevel,
+                    )
+
+        kept_axes: dict = {}
+        for key, value in axes.items():
+            provided += 1
+            ok, v = _coerce_scalar(value)
+            if ok:
+                kept_axes[key] = v
+            else:
+                warnings.warn(
+                    f"runq.record: axis {key!r} dropped "
+                    f"(value {value!r} is not a str/bool/finite number)",
+                    stacklevel=stacklevel,
+                )
+
+        if provided > 0 and not kept_metrics and not kept_axes:
+            warnings.warn(
+                "runq.record: every provided key was invalid — record discarded",
+                stacklevel=stacklevel,
+            )
+            return
+
+        # Auto-fill the loop cursor when the caller didn't pass step at all.
+        # Checked against the RAW kwargs (not kept_axes): an explicitly passed
+        # but invalid step means the user's intent was a different value —
+        # silently substituting the cursor would fabricate data.
+        if "step" not in axes and current_step is not None:
+            kept_axes["step"] = current_step
+
+        axis_keys = sorted(k for k in kept_axes if k != "step")
+        metric_keys = sorted(kept_metrics)
+        signature = [axis_keys, metric_keys]
+        if section is None:
+            raw = json.dumps(signature, separators=(",", ":"), ensure_ascii=False)
+            section = "auto-" + hashlib.sha1(raw.encode()).hexdigest()[:8]
+        elif not isinstance(section, str) or not section.strip():
+            warnings.warn("runq.record: section must be a non-empty string", stacklevel=stacklevel)
+            return
+        schemas = self.schemas if self.schemas is not None else self._load_schemas()
+        frozen = schemas.setdefault(section, signature)
+        if frozen != signature:
+            warning = (section, "schema")
+            if warning not in self.warned:
+                warnings.warn(f"runq.record: section {section!r} keys changed; missing keys become null, new keys are ignored", stacklevel=stacklevel)
+                self.warned.add(warning)
+        if section.startswith("auto-"):
+            for other, keys in schemas.items():
+                if other == section:
+                    continue
+                a, m = map(set, signature)
+                oa, om = map(set, keys)
+                if (a <= oa and m <= om) or (a >= oa and m >= om):
+                    warning = (section, other)
+                    if warning not in self.warned:
+                        warnings.warn(f'record keys differ from section "{other}"; pass section= or write null', stacklevel=stacklevel)
+                        self.warned.add(warning)
+        normalized_axes = {k: kept_axes.get(k) for k in frozen[0]}
+        if "step" in kept_axes:
+            normalized_axes["step"] = kept_axes["step"]
+        _append_jsonl_line(self.path, {"ts": int(time.time()), "section": section,
+                                       "section_keys": {"axes": frozen[0], "metrics": frozen[1]},
+                                       "axes": normalized_axes,
+                                       "metrics": {k: kept_metrics.get(k) for k in frozen[1]}}, "results")
+
+
+def _reset_for_tests() -> None:
+    _writers.clear()

@@ -1,8 +1,7 @@
 """Canonical multi-metric reporting — ``runq.report``.
 
 ``report`` is the "I finished a step / epoch, here are my metrics" call.
-It writes one jsonl event per metric, owns the step write-back, and
-remembers the latest dict.
+It writes one jsonl event per metric and owns the step write-back.
 
 runq does not decide when training stops: early stopping belongs to the
 training script (or its framework), not to the scheduler.
@@ -14,11 +13,6 @@ import time
 from ._context import get_ctx
 from ._events import _append_event
 from ._prefix import apply_prefix
-
-# Metrics dict from the most recent report() call (user-facing keys, no
-# log_group prefix). Reset between tests.
-_latest: dict = {}
-
 
 def report(
     metrics: dict,
@@ -55,18 +49,6 @@ def report(
             }
         )
 
-    global _latest
-    _latest = dict(metrics)  # copy so caller mutation can't poison it
-
-
-def latest_report_metrics() -> dict:
-    """Return a copy of the metrics dict from the most recent ``report``.
-
-    ``{}`` before the first call. 
-    """
-    return dict(_latest)
-
 
 def _reset_for_tests() -> None:
-    global _latest
-    _latest = {}
+    return
