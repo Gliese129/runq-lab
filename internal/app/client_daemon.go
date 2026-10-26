@@ -224,6 +224,11 @@ func synthLocalRunqdTarget(tc config.TargetConfig, dataDir string) (config.Targe
 	out.Name = tc.Name
 	out.GPUs = tc.GPUs // informational; allocation is runqd's job
 	out.MaxInflight = tc.MaxInflight
+	// What the user configured on the target survives the preset: where task
+	// data lives (the storage contract's one decision point) and the shell
+	// setup run.sh needs.
+	out.DataPath, out.Workspace = tc.DataPath, tc.Workspace
+	out.EnvSetup = tc.EnvSetup
 	out.DoneDir = filepath.Join(dataDir, "runq-done")
 	// Metrics indexing remains runq-lab-owned. A local task's compute node is
 	// this machine, so retain the client's absolute path for that optional

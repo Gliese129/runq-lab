@@ -268,6 +268,8 @@
   add`).
 - View expressions take `` `field` `` for names that are not bare words
   (`` `eval/acc` ``, `` `auto-1a2b.loss` ``).
+- A local (runqd) target keeps its own `data_path` (or pre-rc6 `workspace`)
+  and `env_setup`: task data no longer falls back to `<working_dir>/.runq`.
 
 
 ## v0.6.0 — 2026-10-16

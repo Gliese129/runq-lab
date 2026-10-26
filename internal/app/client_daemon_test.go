@@ -103,3 +103,24 @@ func TestSynthLocalRunqdTargetDoesNotLocateOrRewriteAdapter(t *testing.T) {
 		}
 	}
 }
+
+// The preset supplies the runqd plumbing; the target's own data_path and
+// env_setup are kept (a local target used to drop them, so task data
+// landed in <working_dir>/.runq).
+func TestSynthLocalRunqdTargetKeepsUserSettings(t *testing.T) {
+	target, err := synthLocalRunqdTarget(config.TargetConfig{Name: "local", GPUs: []int{0}, MaxInflight: 2,
+		DataPath: "/data/runq", EnvSetup: "source ~/venv/bin/activate"}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.StorageRoot() != "/data/runq" || target.EnvSetup != "source ~/venv/bin/activate" || target.MaxInflight != 2 {
+		t.Fatalf("target = data %q, env_setup %q, max_inflight %d", target.StorageRoot(), target.EnvSetup, target.MaxInflight)
+	}
+	legacy, err := synthLocalRunqdTarget(config.TargetConfig{Name: "local", Workspace: "/old/ws"}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.StorageRoot() != "/old/ws" {
+		t.Fatalf("pre-rc6 workspace key: data root %q", legacy.StorageRoot())
+	}
+}
