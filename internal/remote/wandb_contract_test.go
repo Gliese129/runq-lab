@@ -44,22 +44,22 @@ func TestWandbPreviewAndPrepareDirectoryContract(t *testing.T) {
 
 	// Redirecting a runq-owned directory is refused at preview and submit.
 	bad := job.JobConfig{Project: "p", Overrides: &job.Overrides{Env: map[string]string{"WANDB_DIR": "tracking"}}}
-	if _, _, err = b.CompilePreview(ctx, bad, proj, true); err == nil || !strings.Contains(err.Error(), "WANDB_DIR") {
+	if _, _, err = b.CompilePreview(ctx, bad, proj); err == nil || !strings.Contains(err.Error(), "WANDB_DIR") {
 		t.Fatalf("preview must reject the override, got %v", err)
 	}
-	if _, _, err = b.Prepare(ctx, bad, proj, SubmitOpts{SkipPreflight: true}); err == nil {
+	if _, _, err = b.Prepare(ctx, bad, proj, SubmitOpts{}); err == nil {
 		t.Fatal("prepare must reject the override")
 	}
 
 	jcfg := job.JobConfig{Project: "p"}
-	_, plan, err := b.CompilePreview(ctx, jcfg, proj, true)
+	_, plan, err := b.CompilePreview(ctx, jcfg, proj)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = os.Stat(cfg.DataPath); !os.IsNotExist(err) {
 		t.Fatal("preview materialized task dirs")
 	}
-	_, rows, err := b.Prepare(ctx, jcfg, proj, SubmitOpts{SkipPreflight: true})
+	_, rows, err := b.Prepare(ctx, jcfg, proj, SubmitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}

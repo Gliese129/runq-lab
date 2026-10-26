@@ -156,7 +156,8 @@ type TargetConfig struct {
 	SignalMap map[string]string `yaml:"signal_map,omitempty" json:"signal_map,omitempty"`
 	// KillTemplate cancels a queued/running job. Var: {{ext_id}}.
 	KillTemplate string `yaml:"kill_template,omitempty" json:"kill_template,omitempty"`
-	// PreflightLocal controls whether local preflight checks run on the submit node.
+	// PreflightLocal: false skips preflight's env activation on the login node
+	// (for clusters that forbid it); the file checks still run.
 	PreflightLocal *bool `yaml:"preflight_local,omitempty" json:"preflight_local,omitempty"`
 }
 

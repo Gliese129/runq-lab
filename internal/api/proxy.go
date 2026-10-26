@@ -13,6 +13,7 @@ import (
 	"github.com/gliese129/runq-lab/internal/backend"
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/logfile"
+	"github.com/gliese129/runq-lab/internal/preflight"
 	"github.com/gliese129/runq-lab/internal/project"
 	"github.com/gliese129/runq-lab/internal/store"
 	"github.com/gliese129/runq-lab/internal/workspace"
@@ -533,27 +534,30 @@ func (p *Proxy) KillJob(ctx context.Context, jobID string) error {
 
 // submitWireBody matches the server's submitBody.
 type submitWireBody struct {
-	Config        job.JobConfig `json:"config"`
-	Target        string        `json:"target,omitempty"`
-	SkipPreflight bool          `json:"skip_preflight,omitempty"`
+	Config job.JobConfig `json:"config"`
+	Target string        `json:"target,omitempty"`
 }
 
 func (p *Proxy) SubmitJob(ctx context.Context, cfg job.JobConfig, opts backend.SubmitOptions) (string, int, error) {
 	var resp struct {
-		JobID      string `json:"job_id"`
-		TotalTasks int    `json:"total_tasks"`
+		JobID      string           `json:"job_id"`
+		TotalTasks int              `json:"total_tasks"`
+		Preflight  preflight.Report `json:"preflight"`
 	}
-	body := submitWireBody{Config: cfg, Target: opts.Target, SkipPreflight: opts.SkipPreflight}
+	body := submitWireBody{Config: cfg, Target: opts.Target}
 	if err := p.doWithTimeout(ctx, "POST", "/api/v1/jobs", body, &resp, proxySubmitTimeout); err != nil {
 		return "", 0, err
+	}
+	if opts.Preflight != nil {
+		*opts.Preflight = resp.Preflight
 	}
 	return resp.JobID, resp.TotalTasks, nil
 }
 
 // PreviewSubmit routes through POST /jobs/preview, which delegates to the
 // target backend (full run.sh + submit command rendering).
-func (p *Proxy) PreviewSubmit(ctx context.Context, cfg job.JobConfig, skipPreflight bool) (backend.PreviewResult, error) {
-	body := submitWireBody{Config: cfg, Target: p.SubmitTarget, SkipPreflight: skipPreflight}
+func (p *Proxy) PreviewSubmit(ctx context.Context, cfg job.JobConfig) (backend.PreviewResult, error) {
+	body := submitWireBody{Config: cfg, Target: p.SubmitTarget}
 	var resp backend.PreviewResult
 	if err := p.do(ctx, "POST", "/api/v1/jobs/preview", body, &resp); err != nil {
 		return backend.PreviewResult{}, err

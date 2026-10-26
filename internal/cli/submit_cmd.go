@@ -52,7 +52,6 @@ task; the failed one stays as history. Nothing new → an error, no batch.`,
 			if _, err := os.Stat(file); err != nil {
 				var opts backend.DraftSubmitOptions
 				opts.Rev, _ = cmd.Flags().GetInt("rev")
-				opts.SkipPreflight, _ = cmd.Flags().GetBool("no-preflight")
 				opts.Into, _ = cmd.Flags().GetString("into")
 				opts.RerunFailed, _ = cmd.Flags().GetBool("rerun-failed")
 				jsonOut, _ := cmd.Flags().GetBool("json")
@@ -89,23 +88,19 @@ func init() {
 	submitCmd.Flags().String("project", "", "")
 	submitCmd.Flags().StringP("note", "n", "", "")
 	submitCmd.Flags().String("project-file", "", "")
+	submitCmd.Flags().Bool("no-preflight", false, "")
 	retireFlag(submitCmd, "dry", "`runq draft <job.yaml>` shows the plan and keeps it as a draft")
 	retireFlag(submitCmd, "dry-run", "`runq draft <job.yaml>` shows the plan and keeps it as a draft")
 	retireFlag(submitCmd, "watch", "follow progress with `runq ps <jb…>` or on the dashboard")
 	retireFlag(submitCmd, "project", "set project: in the job file (or `runq draft -p <project>`)")
 	retireFlag(submitCmd, "note", "set name: in the job file")
 	retireFlag(submitCmd, "project-file", "register or update the project first with `runq project <project.yaml>`")
+	retireFlag(submitCmd, "no-preflight", "preflight only warns now; nothing to skip")
 	submitCmd.Flags().Int("rev", 0, "with dr…: refuse unless the draft is still at this rev")
 	submitCmd.Flags().StringP("section", "s", "", "Section to file the job under (must exist; default: the project's rules, else unsorted)")
 	submitCmd.Flags().String("into", "", "append to this job (jb…): cells it already has are skipped")
 	submitCmd.Flags().Bool("rerun-failed", false, "with --into: also rerun the job's failed and killed cells")
 	submitCmd.Flags().Bool("json", false, "output raw JSON")
-	submitCmd.Flags().Bool(
-		"no-preflight",
-		false,
-		"Skip submit-time checks (imports, pip check, path args, writability). "+
-			"Use when preflight misclassifies a runtime-only path or conditional import.",
-	)
 	submitCmd.Flags().StringP("target", "t", "", "Execution target override (-t > job.target > project.target)")
 
 	submitCmd.GroupID = groupCore
@@ -137,7 +132,6 @@ func printGPUHint(ctx context.Context, be backend.Backend) {
 // (a file, stdin, or a fresh template in $EDITOR), then hand it to the TUI.
 func runSubmitTUI(cmd *cobra.Command, tty *os.File, file string) error {
 	section, _ := cmd.Flags().GetString("section")
-	noPreflight, _ := cmd.Flags().GetBool("no-preflight")
 	into, _ := cmd.Flags().GetString("into")
 	rerunFailed, _ := cmd.Flags().GetBool("rerun-failed")
 	edit := openEditor(tty)
@@ -179,8 +173,7 @@ func runSubmitTUI(cmd *cobra.Command, tty *os.File, file string) error {
 		}
 		ui := &submitTUI{
 			ctx: ctx, d: d, out: os.Stdout, key: ttyKey(tty), edit: edit, projects: candidates,
-			skipPreflight: noPreflight,
-			fileWarning:   func(project string) string { return projectFileWarning(cmd, project) },
+			fileWarning: func(project string) string { return projectFileWarning(cmd, project) },
 			req: backend.DraftRequest{JobYAML: text, SourcePath: sourcePathFor(file), Section: section,
 				Target: explicitSubmitTarget(cmd), Project: defaultProject(ctx, be, text, candidates),
 				Into: into, RerunFailed: rerunFailed},

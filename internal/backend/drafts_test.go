@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gliese129/runq-lab/internal/job"
+	"github.com/gliese129/runq-lab/internal/preflight"
 	"github.com/gliese129/runq-lab/internal/project"
 	"github.com/gliese129/runq-lab/internal/store"
 )
@@ -22,6 +23,10 @@ type countingLane struct {
 func (l *countingLane) SubmitJob(ctx context.Context, cfg job.JobConfig, opts SubmitOptions) (string, int, error) {
 	n := l.submits.Add(1)
 	l.received = cfg
+	if opts.Preflight != nil {
+		*opts.Preflight = preflight.Report{Results: []preflight.CheckResult{
+			{Name: "entry", Status: "warning", Detail: "t.py does not exist"}, {Name: "data_dirs", Status: "passed"}}}
+	}
 	return fmt.Sprintf("jb%08d", n), len(cfg.Tasks), nil
 }
 
@@ -143,7 +148,7 @@ func TestDraftSubmitIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{Rev: 7, SkipPreflight: true}); !errors.Is(err, store.ErrDraftChanged) {
+	if _, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{Rev: 7}); !errors.Is(err, store.ErrDraftChanged) {
 		t.Fatalf("wrong rev must be refused, got %v", err)
 	}
 
@@ -153,7 +158,7 @@ func TestDraftSubmitIsIdempotent(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			r, err := m.SubmitDraft(ctx, res.Draft.ID[:5], DraftSubmitOptions{SkipPreflight: true})
+			r, err := m.SubmitDraft(ctx, res.Draft.ID[:5], DraftSubmitOptions{})
 			if err != nil {
 				t.Error(err)
 				return
@@ -173,7 +178,7 @@ func TestDraftSubmitIsIdempotent(t *testing.T) {
 	if lane.received.DraftID != res.Draft.ID || len(lane.received.Tasks) != 4 {
 		t.Fatalf("lane got %+v", lane.received)
 	}
-	again, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{SkipPreflight: true})
+	again, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{})
 	if err != nil || !again.AlreadySubmitted || again.JobID != ids[0] {
 		t.Fatalf("resubmit = %+v, %v", again, err)
 	}
@@ -186,5 +191,33 @@ func TestDraftSubmitIsIdempotent(t *testing.T) {
 	}
 	if n, _ := st.CountOpenDrafts(ctx); n != 0 {
 		t.Fatalf("open drafts = %d", n)
+	}
+}
+
+// Drafts run preflight (they used to skip it): the result carries every
+// check, and a submit hands back its warnings without blocking.
+func TestDraftRunsPreflightAndSubmitWarns(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newDraftBackend(t)
+	res, err := m.CreateDraft(ctx, DraftRequest{JobYAML: sweepYAML})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry *preflight.CheckResult
+	for i, c := range res.Preflight {
+		if c.Name == "entry" {
+			entry = &res.Preflight[i]
+		}
+	}
+	if entry == nil || entry.Status != "warning" || !strings.Contains(entry.Detail, "t.py does not exist") {
+		t.Fatalf("draft preflight: %+v", res.Preflight)
+	}
+
+	sub, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{})
+	if err != nil {
+		t.Fatalf("warnings must not block the submit: %v", err)
+	}
+	if len(sub.PreflightWarnings) != 1 || sub.PreflightWarnings[0].Name != "entry" {
+		t.Fatalf("submit warnings: %+v", sub.PreflightWarnings)
 	}
 }

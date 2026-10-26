@@ -11,13 +11,15 @@ import (
 	"sync"
 
 	"github.com/gliese129/runq-lab/internal/job"
+	"github.com/gliese129/runq-lab/internal/preflight"
 	"github.com/gliese129/runq-lab/internal/remote"
 	"github.com/gliese129/runq-lab/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
 // Drafts (rc6): `runq draft job.yaml` plans and validates without side
-// effects (no sync, no preflight, no scheduler, no repo writes) and keeps
+// effects (no sync, no scheduler, no repo writes; preflight runs and only
+// warns) and keeps
 // the plan server-side as dr…; `runq submit dr…` freezes it into a job.
 // Humans and agents edit the same draft (rev-checked).
 
@@ -46,12 +48,12 @@ type DraftRequest struct {
 }
 
 // DraftSubmitOptions: Rev > 0 must match the draft's rev; Into and
-// RerunFailed set (or confirm) the draft's append.
+// RerunFailed set (or confirm) the draft's append. (A pre-rc6 client's
+// no_preflight is ignored: preflight only warns.)
 type DraftSubmitOptions struct {
-	Rev           int    `json:"rev,omitempty"`
-	SkipPreflight bool   `json:"no_preflight,omitempty"`
-	Into          string `json:"into,omitempty"`
-	RerunFailed   bool   `json:"rerun_failed,omitempty"`
+	Rev         int    `json:"rev,omitempty"`
+	Into        string `json:"into,omitempty"`
+	RerunFailed bool   `json:"rerun_failed,omitempty"`
 }
 
 type DraftView struct {
@@ -75,13 +77,16 @@ type DraftView struct {
 }
 
 type DraftResult struct {
-	Draft     DraftView `json:"draft"`
-	Table     string    `json:"table"` // plan table (run × varying params)
-	Rows      []job.Row `json:"rows"`  // the same plan, structured (dashboard)
-	Baseline  string    `json:"baseline"`
-	Preview   string    `json:"preview,omitempty"` // full rendered preview (create/edit)
-	Warnings  []string  `json:"warnings,omitempty"`
-	Discarded []string  `json:"discarded,omitempty"`
+	Draft    DraftView `json:"draft"`
+	Table    string    `json:"table"` // plan table (run × varying params)
+	Rows     []job.Row `json:"rows"`  // the same plan, structured (dashboard)
+	Baseline string    `json:"baseline"`
+	Preview  string    `json:"preview,omitempty"` // full rendered preview (create/edit)
+	Warnings []string  `json:"warnings,omitempty"`
+	// Preflight is every check's result for this plan (warnings only, never
+	// blocking).
+	Preflight []preflight.CheckResult `json:"preflight,omitempty"`
+	Discarded []string                `json:"discarded,omitempty"`
 	// Append is set for a draft with into: what each row would do now.
 	Append *job.AppendSummary `json:"append,omitempty"`
 }
@@ -93,6 +98,9 @@ type DraftSubmitResult struct {
 	AlreadySubmitted bool   `json:"already_submitted,omitempty"`
 	// Append is set when the draft was appended to an existing job.
 	Append *job.AppendSummary `json:"append,omitempty"`
+	// PreflightWarnings are the submit's preflight warnings (it went
+	// through anyway).
+	PreflightWarnings []preflight.CheckResult `json:"preflight_warnings,omitempty"`
 }
 
 var draftLocks sync.Map // draft id → *sync.Mutex: one submit at a time
@@ -135,7 +143,7 @@ func (m *MultiBackend) CreateDraft(ctx context.Context, req DraftRequest) (*Draf
 	if err != nil {
 		return nil, err
 	}
-	res.Preview, res.Warnings, res.Discarded = out.Preview, warns, discarded
+	res.Preview, res.Warnings, res.Discarded, res.Preflight = out.Preview, warns, discarded, out.Preflight.Results
 	if out.Append != nil {
 		res.Append = out.Append
 	}
@@ -143,7 +151,7 @@ func (m *MultiBackend) CreateDraft(ctx context.Context, req DraftRequest) (*Draf
 }
 
 // planDraft validates cfg exactly as submit would (target, section, rows,
-// templates, choices, types) without preflight or side effects, and returns
+// templates, choices, types; preflight warns) without side effects, and returns
 // the frozen form: every row explicit under tasks:, sweep and fixed_params
 // folded in.
 func (m *MultiBackend) planDraft(ctx context.Context, cfg job.JobConfig, target string) (PreviewResult, job.JobConfig, error) {
@@ -163,7 +171,7 @@ func (m *MultiBackend) planDraft(ctx context.Context, cfg job.JobConfig, target 
 	if err != nil {
 		return PreviewResult{}, job.JobConfig{}, err
 	}
-	out, err := m.PreviewSubmitForTarget(ctx, target, cfg, true)
+	out, err := m.PreviewSubmitForTarget(ctx, target, cfg)
 	if err != nil {
 		return PreviewResult{}, job.JobConfig{}, err
 	}
@@ -334,7 +342,7 @@ func (m *MultiBackend) EditDraft(ctx context.Context, ref, yamlText string) (*Dr
 	if err != nil {
 		return nil, err
 	}
-	res.Preview, res.Warnings = out.Preview, warns
+	res.Preview, res.Warnings, res.Preflight = out.Preview, warns, out.Preflight.Results
 	return res, nil
 }
 
@@ -379,7 +387,8 @@ func (m *MultiBackend) SubmitDraft(ctx context.Context, ref string, opts DraftSu
 	cfg.RerunFailed = cfg.RerunFailed || opts.RerunFailed
 	cfg.Project, cfg.DraftID = d.Project, d.ID
 	var appended job.AppendSummary
-	sub := SubmitOptions{SkipPreflight: opts.SkipPreflight, Target: d.Target}
+	var report preflight.Report
+	sub := SubmitOptions{Target: d.Target, Preflight: &report}
 	if cfg.Into != "" {
 		sub.Append = &appended
 	}
@@ -390,7 +399,7 @@ func (m *MultiBackend) SubmitDraft(ctx context.Context, ref string, opts DraftSu
 	if err := m.store.MarkDraftSubmitted(ctx, d.ID, jobID); err != nil && !errors.Is(err, store.ErrDraftSubmitted) {
 		return nil, err
 	}
-	out := &DraftSubmitResult{JobID: jobID, TotalTasks: n, DraftID: d.ID}
+	out := &DraftSubmitResult{JobID: jobID, TotalTasks: n, DraftID: d.ID, PreflightWarnings: report.Warnings()}
 	if sub.Append != nil {
 		out.Append = sub.Append
 	}

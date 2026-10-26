@@ -57,7 +57,7 @@ func TestPrepareRefreshKill(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	jobID, rows, err := b.Prepare(ctx, jobCfg, proj, SubmitOpts{SkipPreflight: true})
+	jobID, rows, err := b.Prepare(ctx, jobCfg, proj, SubmitOpts{})
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}

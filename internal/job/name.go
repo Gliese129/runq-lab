@@ -12,8 +12,8 @@ import (
 //   - name: next to note: was the scheduler job-name override → ignored;
 //     scheduler names come from project.yaml job_name
 //   - {{…}} in the name: note templates are gone; shown as written
-//   - preflight: (job level) → dropped with a warning; with extra_run it is
-//     an error instead (see Rows), since dropping it changes what runs
+//   - preflight: (job level) → dropped with a warning: preflight always
+//     runs, only warns, and is configured in project.yaml (hf:)
 func (c *JobConfig) NormalizeLegacy() []string {
 	var warns []string
 	if c.Note != "" {
@@ -23,8 +23,8 @@ func (c *JobConfig) NormalizeLegacy() []string {
 		warns = append(warns, `"note" is renamed to "name"; rename the key`)
 		c.Name, c.Note = c.Note, ""
 	}
-	if p := c.Preflight; p != nil && p.ExtraRun == nil {
-		warns = append(warns, `job-level "preflight:" is no longer applied (preflight settings live in project.yaml; skip it for one job with runq submit --no-preflight); remove it`)
+	if c.Preflight != nil {
+		warns = append(warns, `job-level "preflight:" is no longer applied (preflight always runs and only warns; declare hf: repos in project.yaml); remove it`)
 		c.Preflight = nil
 	}
 	if strings.Contains(c.Name, "{{") {

@@ -33,7 +33,7 @@ func TestPrepareRollsBackWholeSweepWhenAnyTaskInsertFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	jobID, rows, err := b.Prepare(context.Background(), jobCfg, proj, SubmitOpts{SkipPreflight: true})
+	jobID, rows, err := b.Prepare(context.Background(), jobCfg, proj, SubmitOpts{})
 	if err == nil || !strings.Contains(err.Error(), "persist job and tasks atomically") {
 		t.Fatalf("Prepare error = %v, want atomic persistence failure", err)
 	}
@@ -60,7 +60,7 @@ func TestV2PreparePersistsEffectiveSnapshot(t *testing.T) {
 	input.Command = "echo {{lr}}"
 	input.Target = "hpc"
 	input.TargetSource = "cli"
-	jobID, rows, err := b.Prepare(context.Background(), input, proj, SubmitOpts{SkipPreflight: true})
+	jobID, rows, err := b.Prepare(context.Background(), input, proj, SubmitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}

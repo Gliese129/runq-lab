@@ -60,7 +60,6 @@ func TestBuildDeterministicPlan(t *testing.T) {
 			WorkspaceRoot: jobRoot,
 			LogRoot:       filepath.Join(workDir, "logs"),
 		},
-		SkipPreflight: true,
 	})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -134,10 +133,9 @@ func TestBuildUsesInjectedJobID(t *testing.T) {
 
 	jobRoot := filepath.Join(workDir, "JOBID")
 	plan, err := Build(context.Background(), cfg, proj, Deps{
-		JobID:         "JOBID",
-		IDGen:         nextID,
-		Paths:         Paths{WorkspaceRoot: jobRoot, LogRoot: jobRoot},
-		SkipPreflight: true,
+		JobID: "JOBID",
+		IDGen: nextID,
+		Paths: Paths{WorkspaceRoot: jobRoot, LogRoot: jobRoot},
 	})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -161,7 +159,7 @@ func TestEnvFileResolution(t *testing.T) {
 	proj := &project.Config{ProjectName: "p", WorkingDir: dir, CmdTemplate: "echo {{lr}}"}
 	cfg := job.JobConfig{Project: "p", Sweep: []job.SweepBlock{{Method: "grid",
 		Parameters: map[string]job.ParameterSpec{"lr": {Values: []any{0.1}}}}}}
-	deps := Deps{Paths: Paths{WorkspaceRoot: dir, LogRoot: dir}, SkipPreflight: true}
+	deps := Deps{Paths: Paths{WorkspaceRoot: dir, LogRoot: dir}}
 
 	plan, err := Build(context.Background(), cfg, proj, deps)
 	if err != nil {
@@ -204,7 +202,7 @@ func TestStrictChoices(t *testing.T) {
 			{Name: "provider", Type: "str", Choices: []string{"vllm", "openai"}},
 		},
 	}
-	deps := Deps{Paths: Paths{WorkspaceRoot: dir, LogRoot: dir}, SkipPreflight: true}
+	deps := Deps{Paths: Paths{WorkspaceRoot: dir, LogRoot: dir}}
 	cfgFor := func(v string) job.JobConfig {
 		return job.JobConfig{Project: "p", Sweep: []job.SweepBlock{{Method: "grid",
 			Parameters: map[string]job.ParameterSpec{"provider": {Values: []any{v}}}}}}
@@ -236,7 +234,7 @@ func TestSchedulerScopeDeclaration(t *testing.T) {
 		FixedParams: map[string]any{"h_rt": "8:00:00"},
 		Sweep: []job.SweepBlock{{Method: "grid",
 			Parameters: map[string]job.ParameterSpec{"lr": {Values: []any{0.1}}}}}}
-	deps := Deps{Paths: Paths{WorkspaceRoot: dir, LogRoot: dir}, SkipPreflight: true}
+	deps := Deps{Paths: Paths{WorkspaceRoot: dir, LogRoot: dir}}
 
 	plan, err := Build(context.Background(), cfg, proj, deps)
 	if err != nil {
@@ -257,7 +255,7 @@ func TestPlannedTaskName(t *testing.T) {
 	cfg := job.JobConfig{Project: "p",
 		Sweep: []job.SweepBlock{{Method: "grid",
 			Parameters: map[string]job.ParameterSpec{"lr": {Values: []any{0.1}}}}}}
-	deps := Deps{Paths: Paths{WorkspaceRoot: dir, LogRoot: dir}, SkipPreflight: true}
+	deps := Deps{Paths: Paths{WorkspaceRoot: dir, LogRoot: dir}}
 
 	// default: rq-<task_id> — never digit-first
 	plan, err := Build(context.Background(), cfg, proj, deps)

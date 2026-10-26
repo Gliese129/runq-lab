@@ -17,9 +17,9 @@ type v2PreviewLane struct {
 	received job.JobConfig
 }
 
-func (l *v2PreviewLane) PreviewSubmit(ctx context.Context, cfg job.JobConfig, skip bool) (PreviewResult, error) {
+func (l *v2PreviewLane) PreviewSubmit(ctx context.Context, cfg job.JobConfig) (PreviewResult, error) {
 	l.received = cfg
-	plan, err := submitplan.Build(ctx, cfg, cfg.EffectiveConfig, submitplan.Deps{SkipPreflight: skip})
+	plan, err := submitplan.Build(ctx, cfg, cfg.EffectiveConfig, submitplan.Deps{})
 	return PreviewResult{Plan: &plan, Preflight: plan.Preflight}, err
 }
 func (l *v2PreviewLane) SubmitJob(_ context.Context, cfg job.JobConfig, _ SubmitOptions) (string, int, error) {
@@ -46,7 +46,7 @@ func TestV2TargetPrecedenceAndThreeExperimentPreviews(t *testing.T) {
 		{"echo train", "", "", "a", "project"}, {"echo smoke", "b", "", "b", "job"}, {"echo resume", "b", "a", "a", "cli"},
 	} {
 		cfg := job.JobConfig{Project: "p", Command: tt.command, Target: tt.jobTarget, FixedParams: map[string]any{"seed": 1}}
-		out, err := m.PreviewSubmitForTarget(context.Background(), tt.cliTarget, cfg, true)
+		out, err := m.PreviewSubmitForTarget(context.Background(), tt.cliTarget, cfg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,10 +59,10 @@ func TestV2TargetPrecedenceAndThreeExperimentPreviews(t *testing.T) {
 	}
 	for _, target := range []string{"other", "missing"} {
 		cfg := job.JobConfig{Project: "p", Command: "echo train", Target: target}
-		if _, err := m.PreviewSubmit(context.Background(), cfg, true); err == nil {
+		if _, err := m.PreviewSubmit(context.Background(), cfg); err == nil {
 			t.Fatalf("preview accepted %s", target)
 		}
-		if _, _, err := m.SubmitJob(context.Background(), cfg, SubmitOptions{SkipPreflight: true}); err == nil {
+		if _, _, err := m.SubmitJob(context.Background(), cfg, SubmitOptions{}); err == nil {
 			t.Fatalf("submit accepted %s", target)
 		}
 	}
@@ -97,7 +97,7 @@ func TestV2ForwardBoundarySurvivesSecondResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := WithSubmitTargetBoundary(context.Background(), "a")
-	if _, err := m.PreviewSubmit(ctx, job.JobConfig{Project: "p", Command: "echo hi"}, true); !errors.Is(err, ErrForbidden) {
+	if _, err := m.PreviewSubmit(ctx, job.JobConfig{Project: "p", Command: "echo hi"}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("cross-boundary preview: %v", err)
 	}
 	if _, _, err := m.SubmitJob(ctx, job.JobConfig{Project: "p", Command: "echo hi"}, SubmitOptions{}); !errors.Is(err, ErrForbidden) {

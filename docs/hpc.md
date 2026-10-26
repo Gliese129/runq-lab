@@ -188,11 +188,12 @@ else `<working_dir>/.runq`).
 
 ## Preflight on strict login nodes
 
-Preflight results are three-state (passed / failed / skipped) and label
-local checks with their scope — a login node without `nvidia-smi` needs no
-special-casing; the GPU check honestly reports "skipped: not applicable
-here". For clusters that restrict login-node work, set
-`hpc: preflight_local: false` in config rather than `--no-preflight`.
+Preflight runs on the login node and only warns (passed / warning / skipped);
+results that passed say "on <target> login node", since the compute node's
+environment may still differ. For clusters that forbid activating environments
+on the login node, set `hpc: preflight_local: false`: `env_activation` (and an
+`interpreter` lookup that needs the env) then report skipped; the file checks
+still run.
 
 ## Debugging a failed submit
 

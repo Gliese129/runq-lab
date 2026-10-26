@@ -1,181 +1,273 @@
 package preflight
 
-// Test spec for preflight.go — for Codex to flesh out.
-//
-// The functions under test are unit-testable as pure-ish funcs:
-// checkWritable / checkPathArgs / extractImports / topLevelModule.
-// checkImports and checkPipCheck shell out to `python` and need to be
-// either skipped when python is unavailable, or driven by a fake
-// python binary on $PATH (see the t.Setenv("PATH", ...) trick at the
-// bottom of this file).
-//
-// The cases below are the spec; the file lives here so `go test
-// ./internal/preflight/...` discovers it. Codex: please flesh out the
-// bodies.
-
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/project"
+	"github.com/gliese129/runq-lab/internal/rfs"
 )
 
-// ----------------------------------------------------------------------
-// (1) checkWritable
-// ----------------------------------------------------------------------
-//
-//	- Empty dir string → finding with "working_dir is empty".
-//	- Dir that does not exist → finding with "does not exist".
-//	- Path that is a file, not a dir → finding with "not a directory".
-//	- Dir that exists + writable → 0 findings.
-//	- Dir that exists but read-only (chmod 0555) → finding "not writable".
-//	  (Skip on Windows.)
-//
-// The OS-permission test should restore mode in t.Cleanup so a CI
-// failure doesn't leave un-deletable temp dirs behind.
-
-func TestCheckWritable_Missing(t *testing.T) {
-	t.Skip("TODO(codex)")
-}
-
-func TestCheckWritable_File(t *testing.T) {
-	t.Skip("TODO(codex)")
-}
-
-func TestCheckWritable_OK(t *testing.T) {
-	t.Skip("TODO(codex)")
-}
-
-func TestCheckWritable_ReadOnly(t *testing.T) {
-	t.Skip("TODO(codex)")
-}
-
-// ----------------------------------------------------------------------
-// (2) checkPathArgs
-// ----------------------------------------------------------------------
-//
-//	- Command with `--data /missing/path` (path doesn't exist) → finding.
-//	- Command with `--data=/missing/path` (=-form) → finding.
-//	- Command with `--data /tmp` (always-OK path) → 0 findings.
-//	- Command with an existing absolute path → 0 findings.
-//	- Multiple references to the same missing path → deduped to 1 finding.
-//	- Allowlisted paths (/dev/null, /tmp) → 0 findings.
-//	- Relative paths are ignored (../foo, configs/x.yaml).
-//	- Trailing punctuation in tokens (`/abs/path.` from a comment-style
-//	  end of line) → stripped before stat.
-
-func TestCheckPathArgs_MissingPath(t *testing.T) {
-	t.Skip("TODO(codex)")
-}
-
-func TestCheckPathArgs_EqualsForm(t *testing.T) {
-	t.Skip("TODO(codex)")
-}
-
-func TestCheckPathArgs_AllowlistedDevNull(t *testing.T) {
-	t.Skip("TODO(codex)")
-}
-
-func TestCheckPathArgs_ExistingPathOK(t *testing.T) {
-	t.Skip("TODO(codex)")
-}
-
-func TestCheckPathArgs_RelativePathIgnored(t *testing.T) {
-	t.Skip("TODO(codex)")
-}
-
-func TestCheckPathArgs_DuplicatesDeduped(t *testing.T) {
-	t.Skip("TODO(codex)")
-}
-
-// ----------------------------------------------------------------------
-// (3) extractImports + topLevelModule
-// ----------------------------------------------------------------------
-//
-//	- `python script.py` with `import torch` and `from transformers
-//	  import AutoModel` → modules = {"torch", "transformers"}; path is
-//	  resolved against workingDir.
-//	- Dotted name `import torch.nn.functional` → contributes "torch".
-//	- `import a, b, c` → all three captured.
-//	- `from a.b import x as y` → contributes "a".
-//	- Indented imports inside functions / classes are NOT extracted
-//	  (only top-level imports get checked).
-//	- `python3 -u path/to/main.py` (extra flags) → still picks the .py.
-//	- Absolute script path in command → used directly, not joined with
-//	  workingDir.
-//	- Missing script file → returns the path AND a non-nil error so the
-//	  caller can record a clean finding.
-//	- topLevelModule("a.b.c") → "a"; topLevelModule("a") → "a".
-
-// ----------------------------------------------------------------------
-// (4) RunPreflight orchestration
-// ----------------------------------------------------------------------
-//
-//	- pf.Skip=true → always returns nil, even with broken project.
-//	- Empty taskParams → no sample command; only writable + pip check
-//	  paths exercised; should still work without panic.
-//	- Multiple findings from different checks → all surface in the
-//	  combined error message.
-//	- Findings are formatted as "  - <kind>: <detail>" so the operator
-//	  can read them quickly.
-
-func TestRunPreflight_Skip(t *testing.T) {
-	t.Skip("TODO(codex)")
-}
-
-func TestRunPreflight_AggregatesFindings(t *testing.T) {
-	t.Skip("TODO(codex)")
-}
-
-// Three-state report: skips are honest non-failures, never blockers.
-func TestThreeStateReport(t *testing.T) {
-	dir := t.TempDir()
-	proj := &project.Config{ProjectName: "p", WorkingDir: dir, CmdTemplate: "echo hi"}
-
-	// Skip flag → single skipped entry, OK.
-	pf := DefaultPreflight()
-	pf.Skip = true
-	rep := pf.RunPreflight(context.Background(), proj, "echo hi")
-	if !rep.OK() || len(rep.Results) != 1 || rep.Results[0].Status != "skipped" {
-		t.Fatalf("skip: %+v", rep.Results)
+func write(t *testing.T, p, body string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.WriteFile(p, []byte(body), mode); err != nil {
+		t.Fatal(err)
+	}
+}
 
-	// DisableLocal → probe checks skipped with config reason; still OK.
-	pf = DefaultPreflight()
-	pf.DisableLocal = true
-	pf.Scope = "on this login node"
-	rep = pf.RunPreflight(context.Background(), proj, "echo hi")
-	statuses := map[string]string{}
+// run checks proj with one task and returns results by name.
+func run(t *testing.T, p Preflight, proj *project.Config, params job.TaskParams) map[string]CheckResult {
+	t.Helper()
+	if params == nil {
+		params = job.TaskParams{}
+	}
+	rep, err := p.Run(context.Background(), proj, []job.TaskParams{params})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]CheckResult{}
+	var names []string
 	for _, c := range rep.Results {
-		statuses[c.Name] = c.Status
+		got[c.Name] = c
+		names = append(names, c.Name)
+		if c.Status != "passed" && c.Status != "warning" && c.Status != "skipped" {
+			t.Errorf("%s: status %q is not warning-only grammar", c.Name, c.Status)
+		}
 	}
-	if statuses["imports"] != "skipped" || statuses["huggingface"] != "skipped" {
-		t.Errorf("disable_local: %+v", rep.Results)
+	// Five target checks, in order; shell_syntax is added by the backend.
+	if want := CheckNames[:5]; !slices.Equal(names, want) {
+		t.Fatalf("checks = %v, want %v", names, want)
 	}
-	if statuses["writable"] != "passed" || statuses["paths"] != "passed" {
-		t.Errorf("free tier should still run: %+v", rep.Results)
-	}
-	// gpus_per_task=0 → gpu skipped with its reason.
-	if statuses["gpu"] != "skipped" {
-		t.Errorf("gpu should skip when none requested: %+v", rep.Results)
-	}
-	if !rep.OK() {
-		t.Error("skips must never block")
+	return got
+}
+
+func want(t *testing.T, got map[string]CheckResult, name, status, detail string) {
+	t.Helper()
+	c := got[name]
+	if c.Status != status || !strings.Contains(c.Detail, detail) {
+		t.Errorf("%s = %s %q, want %s containing %q", name, c.Status, c.Detail, status, detail)
 	}
 }
 
-// Regression: absolute-path extraction must respect token boundaries —
-// relative paths and HF model ids must never be mangled into bogus
-// absolute paths (real false positives from an HPC eval command).
-func TestCheckPathArgsTokenBoundaries(t *testing.T) {
-	cmd := `bash scripts/qsub/evaluate_lighteval.sh --model-name tokyotech-llm/Qwen3-Swallow-8B-RL-v0.2 --repo-path .`
-	if f := (Preflight{}).checkPathArgs(cmd); len(f) != 0 {
-		t.Fatalf("relative paths / model ids flagged: %+v", f)
+// cleanPath keeps a local conda / pyenv out of the tests' way.
+var cleanPath = map[string]string{"PATH": "/usr/bin:/bin"}
+
+func TestEntry(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "train.py"), "", 0o644)
+	p := Preflight{Env: cleanPath}
+	proj := &project.Config{WorkingDir: dir, CmdTemplate: "python train.py --lr 1"}
+	want(t, run(t, p, proj, nil), "entry", "passed", filepath.Join(dir, "train.py"))
+
+	proj.CmdTemplate = "bash scripts/missing.sh"
+	want(t, run(t, p, proj, nil), "entry", "warning", "scripts/missing.sh does not exist")
+
+	proj.CmdTemplate = "python -m pkg.train"
+	want(t, run(t, p, proj, nil), "entry", "skipped", "-m pkg.train")
+}
+
+// fakeVenv makes <dir>/.venv with an activate script and a python that
+// reports prefix as its sys.prefix.
+func fakeVenv(t *testing.T, dir, activate, prefix string) {
+	t.Helper()
+	write(t, filepath.Join(dir, ".venv/bin/activate"), activate, 0o644)
+	write(t, filepath.Join(dir, ".venv/bin/python"), "#!/bin/sh\necho "+prefix+"\n", 0o755)
+}
+
+func TestInterpreterAndEnvActivationVenv(t *testing.T) {
+	dir := t.TempDir()
+	proj := &project.Config{WorkingDir: dir, CmdTemplate: "python train.py", PythonEnv: project.PythonEnvConfig{Type: "venv"}}
+	p := Preflight{Env: cleanPath}
+
+	// No venv at all: the interpreter is missing; activation fails too.
+	got := run(t, p, proj, nil)
+	want(t, got, "interpreter", "warning", filepath.Join(dir, ".venv/bin/python")+" is missing")
+	want(t, got, "env_activation", "warning", "did not activate in a non-interactive shell")
+
+	venv := filepath.Join(dir, ".venv")
+	fakeVenv(t, dir, "true\n", venv)
+	got = run(t, p, proj, nil)
+	want(t, got, "interpreter", "passed", "is executable")
+	want(t, got, "env_activation", "passed", "venv at "+venv)
+
+	// An activate that fails says why (its stderr's last line).
+	fakeVenv(t, dir, "echo 'activate: broken on purpose' >&2; return 3\n", venv)
+	want(t, run(t, p, proj, nil), "env_activation", "warning", "exit 3: activate: broken on purpose")
+
+	// Activates, but into another python: warn, never block.
+	fakeVenv(t, dir, "true\n", "/somewhere/else")
+	want(t, run(t, p, proj, nil), "env_activation", "warning", "expected the venv")
+}
+
+func TestEnvActivationCondaNotInNonInteractiveShell(t *testing.T) {
+	proj := &project.Config{WorkingDir: t.TempDir(), CmdTemplate: "python x.py", PythonEnv: project.PythonEnvConfig{Type: "conda", Name: "torch"}}
+	got := run(t, Preflight{Env: cleanPath}, proj, nil)
+	want(t, got, "env_activation", "warning", "conda registered only in ~/.bashrc")
+	want(t, got, "interpreter", "skipped", "did not activate")
+
+	got = run(t, Preflight{Env: cleanPath, DisableLocal: true}, proj, nil)
+	want(t, got, "env_activation", "skipped", "preflight_local")
+}
+
+func TestInterpreterOnPath(t *testing.T) {
+	bin := t.TempDir()
+	write(t, filepath.Join(bin, "python3.42"), "#!/bin/sh\necho /opt/py\n", 0o755)
+	proj := &project.Config{WorkingDir: t.TempDir(), CmdTemplate: "python3.42 x.py"}
+	p := Preflight{Env: map[string]string{"PATH": bin + ":/usr/bin:/bin"}}
+	got := run(t, p, proj, nil)
+	want(t, got, "interpreter", "passed", filepath.Join(bin, "python3.42"))
+	want(t, got, "env_activation", "skipped", "no python_env")
+
+	proj.CmdTemplate = "python9 x.py"
+	want(t, run(t, p, proj, nil), "interpreter", "warning", "python9 is not on PATH")
+
+	proj.CmdTemplate = "/nope/bin/python x.py"
+	want(t, run(t, p, proj, nil), "interpreter", "warning", "/nope/bin/python is missing")
+
+	proj.CmdTemplate = "echo hi"
+	want(t, run(t, p, proj, nil), "interpreter", "skipped", "runs no python")
+}
+
+func TestDataDirs(t *testing.T) {
+	root := t.TempDir()
+	proj := &project.Config{WorkingDir: root, CmdTemplate: "echo hi"}
+	p := Preflight{Env: cleanPath, DataDir: filepath.Join(root, "a/b/jb1")}
+	want(t, run(t, p, proj, nil), "data_dirs", "passed", root+" is writable")
+
+	ro := filepath.Join(root, "ro")
+	if err := os.Mkdir(ro, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ro, 0o755) })
+	p.DataDir = filepath.Join(ro, "jb1")
+	want(t, run(t, p, proj, nil), "data_dirs", "warning", "nearest existing parent "+ro+" is not a writable directory")
+}
+
+func TestHuggingFaceCacheFilesOnly(t *testing.T) {
+	hub := t.TempDir()
+	write(t, filepath.Join(hub, "models--org--cached/snapshots/abc/config.json"), "{}", 0o644)
+	write(t, filepath.Join(hub, "datasets--org--data/snapshots/def/x"), "", 0o644)
+	if err := os.MkdirAll(filepath.Join(hub, "models--org--empty/snapshots"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"PATH": "/usr/bin:/bin", "HF_HUB_CACHE": hub}
+	proj := &project.Config{WorkingDir: t.TempDir(), CmdTemplate: "echo {{model}}",
+		Preflight: &project.PreflightConfig{HF: []string{"org/data", "{{param.model}}"}}}
+
+	want(t, run(t, Preflight{Env: env}, proj, job.TaskParams{"model": "org/cached"}), "huggingface", "passed", "2 declared repo(s)")
+
+	got := run(t, Preflight{Env: env}, proj, job.TaskParams{"model": "org/empty"})
+	want(t, got, "huggingface", "warning", "org/empty is not in the HF cache ("+hub+")")
+	if c := got["huggingface"]; !slices.Equal(c.Commands, []string{"huggingface-cli download org/empty"}) {
+		t.Errorf("pre-download hint: %v", c.Commands)
 	}
 
-	// Genuine absolute paths are still checked: token-initial, after = and quotes.
-	bad := (Preflight{}).checkPathArgs(`run --out=/definitely-missing-zz/x '/also-missing-zz/y' /missing-zz/z`)
-	if len(bad) != 3 {
-		t.Fatalf("want 3 findings, got %+v", bad)
+	proj.Preflight = nil
+	want(t, run(t, Preflight{Env: env}, proj, job.TaskParams{"model": "x"}), "huggingface", "skipped", "no preflight.hf")
+}
+
+func TestShellSyntax(t *testing.T) {
+	ctx := context.Background()
+	names := []string{"run.sh", "submit line"}
+	ok := ShellSyntax(ctx, names, map[string]string{"run.sh": "set -e\necho hi\n", "submit line": "qsub -N a run.sh"})
+	if ok.Name != "shell_syntax" || ok.Status != "passed" {
+		t.Fatalf("good scripts: %+v", ok)
+	}
+	bad := ShellSyntax(ctx, names, map[string]string{"run.sh": "echo hi\n", "submit line": "qsub -v 'A=1 run.sh"})
+	if bad.Status != "warning" || !strings.Contains(bad.Detail, "submit line:") || strings.Contains(bad.Detail, "run.sh:") {
+		t.Fatalf("bad submit line: %+v", bad)
+	}
+}
+
+// A timeout learns nothing: every target check is skipped, none warns.
+func TestTimeoutSkipsNeverWarns(t *testing.T) {
+	proj := &project.Config{WorkingDir: t.TempDir(), CmdTemplate: "python x.py", PythonEnv: project.PythonEnvConfig{Type: "venv"}}
+	p := Preflight{Env: cleanPath, EnvSetup: "sleep 5", Timeout: 300 * time.Millisecond, DataDir: t.TempDir()}
+	start := time.Now()
+	for name, c := range run(t, p, proj, nil) {
+		if name != "huggingface" && (c.Status != "skipped" || !strings.Contains(c.Detail, "timed out")) {
+			t.Errorf("%s = %s %q, want skipped (timed out)", name, c.Status, c.Detail)
+		}
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatalf("timeout not enforced: %s", time.Since(start))
+	}
+}
+
+type countFS struct {
+	rfs.FS
+	execs []string
+}
+
+func (f *countFS) Exec(ctx context.Context, cmd string, args ...string) ([]byte, []byte, int, error) {
+	f.execs = append(f.execs, cmd+" "+strings.Join(args, " "))
+	return f.FS.Exec(ctx, cmd, args...)
+}
+
+// The target checks are ONE exec on the target, whatever is declared.
+func TestTargetChecksAreOneExec(t *testing.T) {
+	dir := t.TempDir()
+	fakeVenv(t, dir, "true\n", filepath.Join(dir, ".venv"))
+	fs := &countFS{FS: rfs.NewLocalFS()}
+	proj := &project.Config{WorkingDir: dir, CmdTemplate: "python x.py", PythonEnv: project.PythonEnvConfig{Type: "venv"},
+		Preflight: &project.PreflightConfig{HF: []string{"org/a", "org/b"}}}
+	got := run(t, Preflight{FS: fs, Env: cleanPath, DataDir: filepath.Join(dir, "jb")}, proj, nil)
+	if len(fs.execs) != 1 {
+		t.Fatalf("execs = %d, want 1: %v", len(fs.execs), fs.execs)
+	}
+	want(t, got, "env_activation", "passed", "venv at")
+	want(t, got, "entry", "warning", "x.py does not exist")
+}
+
+// A target shell that answers nothing (transport trouble) skips, never warns.
+func TestNoAnswerSkips(t *testing.T) {
+	proj := &project.Config{WorkingDir: "/w", CmdTemplate: "python x.py"}
+	got := run(t, Preflight{FS: silentFS{}}, proj, nil)
+	for _, name := range []string{"entry", "interpreter"} {
+		want(t, got, name, "skipped", "no answer from the target shell")
+	}
+}
+
+type silentFS struct{ rfs.FS }
+
+func (silentFS) Exec(context.Context, string, ...string) ([]byte, []byte, int, error) {
+	return nil, nil, 0, nil
+}
+
+func TestExpandContractHF(t *testing.T) {
+	refs, problems := expandContractHF([]string{"org/a", "{{param.m}}", "{{param.none}}", "./local"},
+		[]job.TaskParams{{"m": "org/b"}, {"m": "org/a"}})
+	var ids []string
+	for _, r := range refs {
+		ids = append(ids, r.RepoID)
+	}
+	if !slices.Equal(ids, []string{"org/a", "org/b"}) || len(problems) != 2 {
+		t.Fatalf("refs %v problems %v", ids, problems)
+	}
+}
+
+func TestReportWarningsAndFormat(t *testing.T) {
+	r := Report{Results: []CheckResult{
+		{Name: "entry", Status: "passed", Detail: "ok"},
+		{Name: "huggingface", Status: "warning", Detail: "org/m missing", Commands: []string{"huggingface-cli download org/m"}},
+		{Name: "gpu", Status: "skipped"},
+	}}
+	if w := r.Warnings(); len(w) != 1 || w[0].Name != "huggingface" {
+		t.Fatalf("warnings: %+v", w)
+	}
+	out := Format(r.Results)
+	for _, s := range []string{"✓ entry", "! huggingface", "$ huggingface-cli download org/m", "- gpu"} {
+		if !strings.Contains(out, s) {
+			t.Errorf("format missing %q:\n%s", s, out)
+		}
 	}
 }

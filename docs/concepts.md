@@ -18,7 +18,7 @@ How runq-lab thinks about experiments, and what each piece does.
 
 A **project** is one codebase with stable execution configuration (`project.yaml`). It holds the code source/default target and optional parameter constraints; parameter defaults belong in code.
 
-A **job** is one experiment (`job.yaml`): command/target/preflight overrides plus explicit parameters and sweep structure. Train, smoke and reservation changes reuse the same project.
+A **job** is one experiment (`job.yaml`): command/target overrides plus explicit parameters and sweep structure. Train, smoke and reservation changes reuse the same project.
 
 A **task** is one run with one set of parameters. Each task gets its own
 workspace, log, and parameter snapshot. Tasks are the atomic unit — they
@@ -64,7 +64,7 @@ YAML to run on several targets.
 | Setting | Order |
 |---|---|
 | Target | `-t` > `job.target` > `project.target` |
-| Command / preflight | `job.yaml` > `project.yaml` |
+| Command | `job.yaml` > `project.yaml` |
 | Resources (gpus, timeout, retries, env) | `job.overrides` > `project.defaults` / `environment` > built-in |
 | Parameter values | the job's `fixed_params` / `sweep`; defaults live in the training code |
 

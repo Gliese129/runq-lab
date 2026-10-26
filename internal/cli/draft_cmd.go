@@ -13,6 +13,7 @@ import (
 
 	"github.com/gliese129/runq-lab/internal/backend"
 	"github.com/gliese129/runq-lab/internal/dashboard"
+	"github.com/gliese129/runq-lab/internal/preflight"
 	"github.com/gliese129/runq-lab/internal/utils"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -130,6 +131,16 @@ func submittedLine(res *backend.DraftSubmitResult) string {
 		return fmt.Sprintf("appended %d task(s) to job %s as batch %d (%s) from draft %s", res.TotalTasks, utils.IDColor(res.JobID), res.Append.Batch, res.Append.Line(), res.DraftID)
 	}
 	return fmt.Sprintf("submitted job %s (%d tasks) from draft %s", utils.IDColor(res.JobID), res.TotalTasks, res.DraftID)
+}
+
+// printPreflightWarnings lists a submit's preflight warnings — it went
+// through anyway; they say what may fail once it runs.
+func printPreflightWarnings(w io.Writer, warns []preflight.CheckResult) {
+	if len(warns) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "preflight: %d warning(s) — submitted anyway; a smoke job tells you whether it runs\n", len(warns))
+	fmt.Fprint(w, preflight.Format(warns))
 }
 
 func withDrafter(cmd *cobra.Command, fn func(backend.Drafter) error) error {
@@ -356,6 +367,7 @@ func submitDraft(cmd *cobra.Command, ref string, opts backend.DraftSubmitOptions
 			return nil
 		}
 		fmt.Println(submittedLine(res))
+		printPreflightWarnings(os.Stdout, res.PreflightWarnings)
 		if target != "" {
 			fmt.Printf("target: %s (%s)\n", target, source)
 		}

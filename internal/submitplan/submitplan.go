@@ -31,20 +31,19 @@ type Deps struct {
 	// its workspace on the job id (HPC uses ~/.runq/<job_id>/<task_id>), so it
 	// must know the id before Build computes task dirs. When empty, Build falls
 	// back to IDGen for backward compatibility.
-	JobID         string
-	IDGen         func() string // used for task ids (and job id only when JobID is empty)
-	Paths         Paths
-	SkipPreflight bool
-	// PreflightDisableLocal skips the local-subprocess checks (imports,
-	// pip) — wired from hpc `preflight_local: false` for strict login nodes.
+	JobID string
+	IDGen func() string // used for task ids (and job id only when JobID is empty)
+	Paths Paths
+	// PreflightDisableLocal skips env activation on the target — wired
+	// from hpc `preflight_local: false` for strict login nodes.
 	PreflightDisableLocal bool
-	// PreflightScope labels where local checks ran (e.g. "on login node").
+	// PreflightScope labels where target checks ran (e.g. "on login node").
 	PreflightScope string
 	// PreflightFS is the filesystem preflight checks run against — the
-	// TARGET's rfs.FS for remote targets (paths statted remotely, script
-	// read remotely, probes executed on the login node). nil = local os.
+	// TARGET's rfs.FS for remote targets (one exec on the login node).
+	// nil = local os.
 	PreflightFS rfs.FS
-	// PreflightEnvSetup is the target's env_setup fragment: the probe
+	// PreflightEnvSetup is the target's env_setup fragment: preflight
 	// runs it before env activation, exactly like run.sh — ONE injection
 	// point shared by preflight and run (RQ-76 core contract).
 	PreflightEnvSetup string
@@ -76,8 +75,9 @@ type Plan struct {
 	// Baseline is the reference run (rows describe themselves against it).
 	Baseline  string   `json:"baseline"`
 	SweepKeys []string `json:"sweep_keys"` // swept parameter names (sorted), for WANDB_TAGS/RUN_NAME
-	// Preflight is the full three-state report (failed entries already
-	// aborted Build) — callers print it so skips stay visible.
+	// Preflight is the warning-only report (passed / warning / skipped);
+	// it never aborts Build. Callers print it so skips stay visible; the
+	// target backend adds shell_syntax once run.sh is rendered.
 	Preflight preflight.Report `json:"preflight"`
 	// Env is the merged JOB-level environment (project environment +
 	// override env + the reserved RUNQ_ENV_FILE) — what setup_command and
@@ -349,7 +349,6 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 	}
 
 	pf := preflight.DefaultPreflight()
-	pf.Skip = d.SkipPreflight
 	pf.DisableLocal = d.PreflightDisableLocal
 	pf.Scope = d.PreflightScope
 	pf.ExcludeParams = schedParams
@@ -358,15 +357,10 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 	// (project + overrides + RUNQ_ENV_FILE) and the target's env_setup.
 	pf.Env = env
 	pf.EnvSetup = d.PreflightEnvSetup
+	pf.DataDir = d.Paths.WorkspaceRoot
 	pfReport, err := pf.Run(ctx, proj, taskParams)
 	if err != nil {
 		return Plan{}, err
-	}
-	if err := pfReport.Err(); err != nil {
-		// The structured report travels WITH the error (Codex r1 #6):
-		// a failed preview must still show which checks failed, not a
-		// bare error string.
-		return Plan{Preflight: pfReport}, err
 	}
 
 	jobID := d.JobID

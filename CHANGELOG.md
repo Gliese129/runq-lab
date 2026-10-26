@@ -4,6 +4,13 @@
 
 ### Breaking
 
+- Preflight only warns and always runs, on every `runq draft` and `runq submit
+  dr…`: entry script, interpreter, env activation, data dirs writable, `hf:`
+  models cached, script syntax. The import probe and the paths/outputs/gpu/
+  extra_run checks are gone — submit a smoke job to know a job runs.
+  `runq submit --no-preflight` is retired; the API ignores `no_preflight`.
+  project.yaml `preflight.enabled/imports/extra_run` and a job-level
+  `preflight:` are warned and dropped; `preflight.hf` stays.
 - Removed commands fail with the replacement in the error:
   - `runq submit job.yaml` outside a terminal and `submit --dry` → `runq draft
     job.yaml`, then `runq submit dr…`; `submit --project-file` → `runq project
@@ -186,6 +193,8 @@
   says so in its failure reason: inodes, space or quota, and which mount.
 - `runq clean --checkpoints` deletes only `checkpoints/*` of the selected
   tasks; `--show` lists checkpoint sizes per job and free space per filesystem.
+- Drafts show every preflight result (`--json`: `preflight`); `runq submit dr…`
+  prints the warnings (`--json`: `preflight_warnings`).
 
 
 ## v0.6.0 — 2026-10-16

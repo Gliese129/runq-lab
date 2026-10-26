@@ -32,7 +32,7 @@ func TestStorageContractLayout(t *testing.T) {
 	b := &Backend{Cfg: cfg, Store: st, FS: rfs.NewLocalFS()}
 	proj := &project.Config{ProjectName: "kl", WorkingDir: working, CmdTemplate: "true"}
 
-	jobID, rows, err := b.Prepare(ctx, job.JobConfig{Project: "kl", Name: "A1 原始基线"}, proj, SubmitOpts{SkipPreflight: true})
+	jobID, rows, err := b.Prepare(ctx, job.JobConfig{Project: "kl", Name: "A1 原始基线"}, proj, SubmitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}

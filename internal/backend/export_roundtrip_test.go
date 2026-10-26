@@ -93,7 +93,7 @@ sweep:
 		}
 		want := shapeOf(t, cfg)
 		p := *proj
-		jobID, _, err := lane.Prepare(ctx, cfg, &p, remote.SubmitOpts{SkipPreflight: true})
+		jobID, _, err := lane.Prepare(ctx, cfg, &p, remote.SubmitOpts{})
 		if err != nil {
 			t.Fatal(err)
 		}

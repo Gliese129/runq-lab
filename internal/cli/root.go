@@ -64,7 +64,7 @@ var rootCmd = &cobra.Command{
 	// main() prints the returned error; without this cobra prints it too
 	// and every failure shows up twice.
 	SilenceErrors: true,
-	// Business errors (preflight failed, target unreachable) are not usage
+	// Business errors (a plan error, target unreachable) are not usage
 	// errors — burying them under 30 lines of flags helps nobody (RQ-65
 	// #6). Cobra checks Root().SilenceUsage, so this covers every command;
 	// genuine usage errors (unknown flag) get a --help hint via the

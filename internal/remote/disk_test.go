@@ -258,7 +258,7 @@ func TestPreviewDiskWarningInTextAndFailedProbeSilent(t *testing.T) {
 		cfg := &config.TargetConfig{Name: "tsubame", Scheduler: "sge", DataPath: "/gs/bs/lab/runq", SubmitTemplate: "qsub {{run_sh}}", SubmitIDRegex: "([0-9]+)", KillTemplate: "qdel {{ext_id}}"}
 		b := &Backend{Cfg: cfg, Store: st, FS: newTestFSFromRunner(run)}
 		proj := &project.Config{ProjectName: "p", WorkingDir: t.TempDir(), CmdTemplate: "python train.py"}
-		text, _, err := b.CompilePreview(ctx, job.JobConfig{Project: "p"}, proj, true)
+		text, _, err := b.CompilePreview(ctx, job.JobConfig{Project: "p"}, proj)
 		if err != nil {
 			t.Fatalf("probeWorks=%v: preview failed: %v", probeWorks, err)
 		}

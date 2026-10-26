@@ -169,11 +169,17 @@ enforced. Keep each param in one sweep block. Target precedence: `-t` > `job.tar
 
 Read the `runq draft` output before submitting — task count, target, section, the run
 table, generated run.sh / submit line, how each param reaches the code (flag or
-`ctx.params`), rows that need code, pending code sync — and tell the user the arithmetic
+`ctx.params`), rows that need code, pending code sync, preflight warnings — and tell the user the arithmetic
 (`kl(3) × seed(2) = 6`). Give the researcher the draft id when they should look before
 it runs; they may edit it. Submit with `runq submit dr…` (add `--rev N` to refuse if
 someone edited it since you read rev N). After the researcher edits a plan you
 submitted, `runq export jb… -o <job.yaml>` brings it back into the repo.
+
+Preflight runs on every draft and submit and only warns about deterministic
+problems: a missing entry script or interpreter, an env that does not activate in
+a non-interactive shell, an unwritable data dir, an uncached `hf:` repo, a run.sh
+syntax error. Fix what it names before submitting. It does not tell you the job
+runs — to know that, submit a smoke job first.
 
 ## 3. Let runq carry the setup
 
@@ -190,7 +196,7 @@ setting visible in the draft's preview, and applies it the same way to every tas
 | `source .venv/bin/activate` | `python_env: { type: uv, path: .venv }` (or `venv`; conda: `{ type: conda, name: … }`) |
 | one-off install / model download | `setup_command` (once per submit, on the login node) |
 | `mkdir -p $OUT $CKPT` | already done — `ctx.output_dir` / `ctx.checkpoint_dir` exist at start |
-| `test -f …`, `python -c 'import x'` | `preflight: { extra_run: "test -f …", imports: true, hf: [repo] }` |
+| `test -f …`, `python -c 'import x'` | a smoke job (same command, small `fixed_params`); `preflight: { hf: [repo] }` for models that must be cached |
 | building `--lr $LR --seed $SEED` | `fixed_params` / `sweep`, passed as `{{args}}` (or `ctx.params` for a one-off test) |
 | choosing `--resume` | a resume job: `fixed_params: { resume_from: <checkpoint path> }`, passed as `--resume_from {{resume_from}}` |
 | rsync to another cluster | project `targets:` + `<working_dir>/.rsync` (mirrored on submit) |

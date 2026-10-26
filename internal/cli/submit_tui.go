@@ -20,15 +20,14 @@ import (
 // `runq draft` would; then one key decides — submit, edit, switch project,
 // or quit keeping the draft. Everything it touches is injected for tests.
 type submitTUI struct {
-	ctx           context.Context
-	d             backend.Drafter
-	out           io.Writer
-	key           func() (byte, error)     // one keypress
-	edit          func(path string) error  // $EDITOR on a file
-	projects      func() ([]string, error) // candidates, best first
-	req           backend.DraftRequest
-	skipPreflight bool
-	fileWarning   func(project string) string // project.yaml changed since registration
+	ctx         context.Context
+	d           backend.Drafter
+	out         io.Writer
+	key         func() (byte, error)     // one keypress
+	edit        func(path string) error  // $EDITOR on a file
+	projects    func() ([]string, error) // candidates, best first
+	req         backend.DraftRequest
+	fileWarning func(project string) string // project.yaml changed since registration
 
 	draft   *backend.DraftResult
 	planErr error
@@ -49,12 +48,13 @@ func (t *submitTUI) run() error {
 				fmt.Fprintln(t.out, "nothing to submit yet — fix the plan with [e] or pick a project with [p]")
 				continue
 			}
-			res, err := t.d.SubmitDraft(t.ctx, t.draft.Draft.ID, backend.DraftSubmitOptions{Rev: t.draft.Draft.Rev, SkipPreflight: t.skipPreflight})
+			res, err := t.d.SubmitDraft(t.ctx, t.draft.Draft.ID, backend.DraftSubmitOptions{Rev: t.draft.Draft.Rev})
 			if err != nil {
 				fmt.Fprintf(t.out, "submit failed: %v\nthe draft is kept: runq submit %s\n", err, t.draft.Draft.ID)
 				return err
 			}
 			fmt.Fprintln(t.out, submittedLine(res))
+			printPreflightWarnings(t.out, res.PreflightWarnings)
 			return nil
 		case 'e', 'E':
 			t.editPlan()

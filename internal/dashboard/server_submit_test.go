@@ -11,6 +11,7 @@ import (
 	"github.com/gliese129/runq-lab/internal/backend"
 	"github.com/gliese129/runq-lab/internal/config"
 	"github.com/gliese129/runq-lab/internal/job"
+	"github.com/gliese129/runq-lab/internal/preflight"
 )
 
 type submitCaptureBackend struct {
@@ -22,6 +23,9 @@ type submitCaptureBackend struct {
 func (b *submitCaptureBackend) SubmitJob(_ context.Context, cfg job.JobConfig, opts backend.SubmitOptions) (string, int, error) {
 	b.cfg = cfg
 	b.opts = opts
+	if opts.Preflight != nil {
+		*opts.Preflight = preflight.Report{Results: []preflight.CheckResult{{Name: "entry", Status: "warning", Detail: "x.py does not exist"}}}
+	}
 	return "job-test", 1, nil
 }
 
@@ -37,44 +41,22 @@ func (b *renameCaptureBackend) RenameProject(_ context.Context, oldName, newName
 	return nil
 }
 
-func TestHandleSubmitJobPropagatesPreflightOption(t *testing.T) {
-	// v1: options ride the BODY (D12) — {config, target?, skip_preflight?}.
-	tests := []struct {
-		name     string
-		body     string
-		wantSkip bool
-	}{
-		{name: "default preflight",
-			body:     `{"config":{"project":"pytrain-example","fixed_params":{"epochs":30},"sweep":[]}}`,
-			wantSkip: false},
-		{name: "skip preflight",
-			body:     `{"config":{"project":"pytrain-example","fixed_params":{"epochs":30},"sweep":[]},"skip_preflight":true}`,
-			wantSkip: true},
+// Preflight cannot be skipped: a pre-rc6 skip_preflight is ignored, and the
+// submit's warnings come back with the job.
+func TestHandleSubmitJobReturnsPreflightWarnings(t *testing.T) {
+	be := &submitCaptureBackend{UnavailableBackend: backend.NewUnavailableBackend(errors.New("unused"))}
+	server := NewServer(be, &config.GlobalConfig{})
+	body := `{"config":{"project":"pytrain-example","fixed_params":{"epochs":30},"sweep":[]},"skip_preflight":true}`
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			backend := &submitCaptureBackend{
-				UnavailableBackend: backend.NewUnavailableBackend(errors.New("unused")),
-			}
-			server := NewServer(backend, &config.GlobalConfig{})
-
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(tt.body))
-			req.Header.Set("Content-Type", "application/json")
-			rec := httptest.NewRecorder()
-
-			server.Handler().ServeHTTP(rec, req)
-
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-			}
-			if backend.cfg.Project != "pytrain-example" {
-				t.Fatalf("project = %q, want pytrain-example", backend.cfg.Project)
-			}
-			if backend.opts.SkipPreflight != tt.wantSkip {
-				t.Fatalf("SkipPreflight = %v, want %v", backend.opts.SkipPreflight, tt.wantSkip)
-			}
-		})
+	if be.cfg.Project != "pytrain-example" || be.opts.Preflight == nil {
+		t.Fatalf("submit not routed with a preflight out-param: %+v %+v", be.cfg, be.opts)
+	}
+	if !strings.Contains(rec.Body.String(), `"name":"entry","status":"warning"`) {
+		t.Fatalf("preflight warnings missing from the response: %s", rec.Body.String())
 	}
 }
 

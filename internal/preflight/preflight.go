@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path"
 	"regexp"
@@ -17,52 +16,45 @@ import (
 	"github.com/gliese129/runq-lab/internal/utils"
 )
 
-// Preflight is the L2-C step 10 fail-fast check that runs **before** a
-// job is persisted + queued. The failure classes caught at submit time,
-// instead of after the task waits 2 hours in a queue:
+// Preflight runs on every `runq draft` and `runq submit dr…` and only
+// WARNS: it looks for deterministic problems — a missing file, an env that
+// does not activate, a directory runq cannot write — and never blocks.
+// Whether the job actually runs (imports, data, GPUs) is a smoke job's
+// question, not preflight's.
 //
-//  1. **Imports**: the target script imports a module that the project
-//     Python env cannot resolve.
-//  2. **Path args**: the rendered command references an absolute path
-//     that does not exist on disk.
-//  3. **Writability**: working_dir is not writable.
-//  4. **HuggingFace repos** (RQ-76): the script references a Hub repo
-//     that does not exist / is gated — or is not cached, in which case
-//     the compute node will try to download it at run time (legitimate
-//     on clusters with internet; fatal on air-gapped ones — surfaced as
-//     a warning with a ready-made pre-download command, never a block).
-//  5. **Python env**: the interpreter/env activates in a non-login,
-//     non-interactive shell — the shell class the compute node gives
-//     the task (a conda registered only in ~/.bashrc fails here).
+// Six checks, reported by these names (CheckNames):
 //
-// Imports, HF, and env checks run as ONE generated python probe file
-// executed in ONE shell (single env activation) — see probe.go. The
-// old per-module subprocess design paid a conda activation per import
-// and routinely blew request timeouts.
+//	entry           the script the command runs (.py / .sh, relative to
+//	                working_dir) exists — test -f
+//	interpreter     the configured python interpreter exists and is
+//	                executable — test -x (looked up inside the env for
+//	                conda / system)
+//	env_activation  python_env activates in a NON-interactive shell, the
+//	                shell class compute nodes give the task (no ~/.bashrc)
+//	data_dirs       the task data directory's nearest existing parent is
+//	                writable
+//	huggingface     each project.yaml `preflight.hf` repo is in the HF
+//	                cache (files only: no python, no network)
+//	shell_syntax    bash -n on run.sh and the submit line, locally — added
+//	                by the target backend once it has rendered both
+//	                (ShellSyntax)
 //
-// Each check folds into a `CheckResult`; the final `Report` aggregates
-// them. Only "failed" entries block submission.
-//
-// The `Skip` flag lets the CLI bypass the whole thing with
-// `runq submit --no-preflight`; users with conditional imports or
-// runtime path inference can opt out.
+// The first five are target-side and run as ONE exec on the target (one
+// SSH round trip, one env activation); the activation is the only part
+// that takes more than a few milliseconds.
 type Preflight struct {
-	// Skip disables every check and makes RunPreflight a no-op. Wired
-	// to the CLI's --no-preflight flag.
-	Skip bool
+	// Timeout caps the target exec. Checks whose markers did not arrive
+	// report as skipped (a timeout learns nothing). Default 20s, under the
+	// dashboard's 30s request timeout.
+	Timeout time.Duration
 
-	// ProbeTimeout caps the single probe execution (env activation +
-	// all imports + HF lookups). A timeout is never a failure — checks
-	// whose markers did not arrive report as skipped. Default 30s.
-	ProbeTimeout time.Duration
-
-	// DisableLocal turns the probe-based checks (imports, hf, env) into
-	// skipped results — for clusters whose login-node policy forbids
-	// running subprocesses there (hpc: preflight_local: false).
+	// DisableLocal skips env_activation (and the interpreter lookup that
+	// needs the activated env) — for login nodes whose policy forbids
+	// running the env there (hpc: preflight_local: false).
 	DisableLocal bool
 
-	// Scope labels where probe checks ran (e.g. "on login node") so HPC
-	// users see the verification boundary in passed results.
+	// Scope labels where target checks ran (e.g. "on tsubame login node"):
+	// login-node facts do not guarantee the compute node.
 	Scope string
 
 	// ExcludeParams are scheduler-consumed params (submit_template's
@@ -70,1008 +62,468 @@ type Preflight struct {
 	ExcludeParams map[string]bool
 
 	// Env is the merged task environment (project environment + job
-	// overrides, incl. the reserved RUNQ_ENV_FILE) and EnvSetup the
-	// target's env_setup fragment: the probe assembles THE SAME
-	// environment run.sh gives the task — one injection point, so
-	// preflight and run can never disagree about what is exported.
+	// overrides, incl. RUNQ_ENV_FILE) and EnvSetup the target's env_setup:
+	// the exec assembles THE SAME environment run.sh gives the task.
 	Env      map[string]string
 	EnvSetup string
 
-	// FS is the filesystem THE TASK will run against. nil = local os
-	// semantics (current machine). For remote targets this is the target's
-	// rfs.FS: path/writability checks stat the REMOTE filesystem, the
-	// script is read from it, and the probe executes on the remote
-	// login node — checking the client machine would answer a question
-	// nobody asked. GPU checks are skipped for remote (login nodes have no
-	// GPUs; the probe would only produce noise).
+	// DataDir is the task data directory (the job root) data_dirs checks.
+	// Disk space and inode headroom are internal/diskspace's, reported
+	// next to these results by the target backend — data_dirs answers only
+	// "can runq create it".
+	DataDir string
+
+	// FS is the filesystem THE TASK runs against; its Exec runs the target
+	// checks. nil = this machine.
 	FS rfs.FS
-
-	// taskParams is the full expanded sweep, set by Run — "{{param.X}}"
-	// entries in the project's preflight.hf contract expand against EVERY
-	// task's value, not just the sample command's.
-	taskParams []job.TaskParams
 }
 
-// fsys returns the filesystem checks run against (local when unset).
-func (p Preflight) fsys() rfs.FS {
-	if p.FS != nil {
-		return p.FS
-	}
-	return rfs.NewLocalFS()
+// CheckNames are the checks a report contains, in report order.
+var CheckNames = []string{"entry", "interpreter", "env_activation", "data_dirs", "huggingface", "shell_syntax"}
+
+// CheckResult is one check: passed / warning / skipped. skipped means
+// "could not be checked here" (nothing to check, disabled by target
+// policy, timeout). Nothing blocks a submit.
+type CheckResult struct {
+	Name   string `json:"name"`   // one of CheckNames
+	Status string `json:"status"` // passed | warning | skipped
+	Detail string `json:"detail,omitempty"`
+	// Commands are ready-made remediation commands (e.g. the HF
+	// pre-download). The CLI prints them; the dashboard can offer them.
+	Commands []string `json:"commands,omitempty"`
 }
 
-// runShell executes a probe command where the task will run: locally via
-// bash, remotely via FS.Exec. Returns (combined output, exit code, err).
-// err non-nil means the probe COULD NOT RUN (transport/env problem) — no
-// fact was learned, and per the no-false-positive discipline that is never
-// a finding. A non-zero exit code is the probe's own verdict. Partial
-// output is returned in every case (a timed-out probe still yields the
-// markers that made it out).
-func (p Preflight) runShell(ctx context.Context, cmd string) (string, int, error) {
-	if p.FS == nil {
-		c := exec.CommandContext(ctx, "bash", "-c", cmd)
-		// ProbeTimeout is a WALL-CLOCK contract (Codex r1 #5): killing
-		// only the outer bash leaves grandchildren holding the output
-		// pipe, and CombinedOutput then blocks until THEY exit. Kill the
-		// whole process group on cancel, and cap the post-cancel pipe
-		// wait as a backstop.
-		setupProcessGroup(c)
-		c.WaitDelay = time.Second
-		out, err := c.CombinedOutput()
-		if err != nil {
-			var ee *exec.ExitError
-			if errors.As(err, &ee) {
-				return string(out), ee.ExitCode(), nil
-			}
-			return string(out), -1, err
+// Report is every check's result, in CheckNames order.
+type Report struct {
+	Results []CheckResult `json:"results"`
+}
+
+// Warnings returns the results that found something.
+func (r Report) Warnings() []CheckResult {
+	var out []CheckResult
+	for _, c := range r.Results {
+		if c.Status == "warning" {
+			out = append(out, c)
 		}
-		return string(out), 0, nil
 	}
-	stdout, stderr, code, err := p.FS.Exec(ctx, "sh", "-c", cmd)
-	return string(stdout) + string(stderr), code, err
+	return out
 }
 
-// DefaultPreflight returns a preflight runner with sane defaults. 20s
-// keeps the whole preflight under the dashboard's 30s request timeout
-// even with slow login-node imports (Codex r1 #5: probe timeout must
-// undercut the transport timeout, or the browser gives up first).
+// Add appends a result computed outside Run (shell_syntax).
+func (r *Report) Add(c CheckResult) { r.Results = append(r.Results, c) }
+
+// DefaultPreflight returns a runner with the default timeout.
 func DefaultPreflight() Preflight {
-	return Preflight{
-		ProbeTimeout: 20 * time.Second,
-	}
+	return Preflight{Timeout: 20 * time.Second}
 }
 
-// Run executes preflight against a project and expanded task params,
-// rendering the sample command internally ("first task is representative").
-// Returns the four-state report; report.Err() is the blocking error.
+// Run checks a project against its first task's rendered command (all
+// tasks share script and env; only arg values differ). The error is a
+// render failure only — findings are warnings in the report.
 func (p Preflight) Run(ctx context.Context, proj *project.Config, taskParams []job.TaskParams) (Report, error) {
 	sampleCmd, err := renderSampleCommand(proj, taskParams, p.ExcludeParams)
 	if err != nil {
 		return Report{}, err
 	}
-	p.taskParams = taskParams
-	return p.RunPreflight(ctx, proj, sampleCmd), nil
+	refs, hfIssues := expandContractHF(proj.Preflight.HFRepos(), taskParams)
+	return p.check(ctx, proj, sampleCmd, refs, hfIssues), nil
 }
 
-// PreflightFinding is one failed check.
-type PreflightFinding struct {
-	Kind   string // "import" | "path" | "writable" | "hf"
-	Detail string
+// targetPlan is what the target exec looks at, decided Go-side from the
+// project and the sample command.
+type targetPlan struct {
+	entry     string // absolute script path; "" = none
+	entryWhy  string // why entry is skipped
+	interp    string // interpreter the command runs; "" = none
+	interpAbs string // test -x this path outside the env ("" = look it up in the env)
+	envType   string // "" = no python_env
+	needEnv   bool   // run the activation subshell
+	refs      []HFRef
 }
 
-func (f PreflightFinding) String() string {
-	return fmt.Sprintf("  - %s: %s", f.Kind, f.Detail)
+func (p Preflight) plan(proj *project.Config, sampleCmd string, refs []HFRef) targetPlan {
+	pl := targetPlan{refs: refs, envType: proj.PythonEnv.Type}
+	if pl.envType == "system" {
+		pl.envType = ""
+	}
+	switch e, why := entryScript(sampleCmd); {
+	case e == "":
+		pl.entryWhy = why
+	case path.IsAbs(e):
+		pl.entry = e
+	default:
+		pl.entry = path.Join(proj.WorkingDir, e)
+	}
+	interp, named := pythonInterpreterIn(sampleCmd)
+	switch {
+	case named && path.IsAbs(interp):
+		pl.interp, pl.interpAbs = interp, interp
+	case pl.envType == "venv" || pl.envType == "uv":
+		pl.interp, pl.interpAbs = interp, path.Join(venvDir(proj), "bin", interp)
+	case named || pl.envType != "":
+		pl.interp = interp // conda / system: whatever PATH gives inside the env
+	}
+	pl.needEnv = !p.DisableLocal && (pl.envType != "" || (pl.interp != "" && pl.interpAbs == ""))
+	return pl
 }
 
-// CheckResult is one check in the four-state grammar: passed / failed /
-// warning / skipped. skipped means "could not be checked HERE" (missing
-// prerequisite, disabled by config, probe timeout); warning means "found
-// something, but it correlates too weakly with task runnability to
-// block". Only "failed" blocks a submit.
-type CheckResult struct {
-	Name   string `json:"name"`   // writable | paths | python_env | imports | huggingface | gpu
-	Status string `json:"status"` // passed | failed | warning | skipped
-	Detail string `json:"detail,omitempty"`
-	// Commands are ready-made remediation commands for this result (e.g.
-	// `huggingface-cli download org/model` for an uncached Hub repo).
-	// The CLI prints them; the WebUI offers one-click insertion into the
-	// project's setup command.
-	Commands []string `json:"commands,omitempty"`
+func venvDir(proj *project.Config) string {
+	d := proj.PythonEnv.Path
+	if d == "" {
+		d = ".venv"
+	}
+	if !path.IsAbs(d) {
+		d = path.Join(proj.WorkingDir, d)
+	}
+	return d
 }
 
-// Report aggregates all check results. Only failed entries block.
-type Report struct {
-	Results []CheckResult `json:"results"`
-	// HomeDir / PythonPrefix are facts the probe learned about the target
-	// environment (login node): the absolute $HOME (used by run.sh HOME
-	// restoration, RQ-76 ①) and the resolved sys.prefix. Informational.
-	HomeDir      string `json:"home_dir,omitempty"`
-	PythonPrefix string `json:"python_prefix,omitempty"`
-}
-
-func (r Report) OK() bool {
-	for _, c := range r.Results {
-		if c.Status == "failed" {
-			return false
-		}
-	}
-	return true
-}
-
-// Err converts failed results to an error for SubmitJob to return.
-func (r Report) Err() error {
-	if r.OK() {
-		return nil
-	}
-	lines := []string{"preflight failed:"}
-	for _, c := range r.Results {
-		if c.Status == "failed" {
-			lines = append(lines, fmt.Sprintf("  - %s: %s", c.Name, c.Detail))
-		}
-	}
-	lines = append(lines, "", "Run with --no-preflight to skip this check (not recommended).")
-	return errors.New(strings.Join(lines, "\n"))
-}
-
-// fold collapses a category's findings into one result. scope ("on login
-// node") is appended to passed checks — login-node facts do not
-// guarantee the compute-node environment, and the report should say so
-// rather than imply more than was verified.
-func fold(name string, findings []PreflightFinding, scope string) CheckResult {
-	if len(findings) > 0 {
-		details := make([]string, 0, len(findings))
-		for _, f := range findings {
-			details = append(details, f.Detail)
-		}
-		return CheckResult{Name: name, Status: "failed", Detail: strings.Join(details, "; ")}
-	}
-	detail := "ok"
-	if scope != "" {
-		detail = "ok (verified " + scope + ")"
-	}
-	return CheckResult{Name: name, Status: "passed", Detail: detail}
-}
-
-// RunPreflight executes all checks against the project config + a
-// **sample rendered command** (the first task's command is the natural
-// choice — all tasks in a sweep share the same script + same env, only
-// the args differ, and path-arg / import checks are independent of which
-// concrete arg values are used).
-func (p Preflight) RunPreflight(ctx context.Context, proj *project.Config, sampleCmd string) Report {
-	if p.Skip {
-		return Report{Results: []CheckResult{{Name: "preflight", Status: "skipped", Detail: "disabled by --no-preflight"}}}
-	}
-	if !proj.Preflight.EnabledOrDefault() {
-		return Report{Results: []CheckResult{{Name: "preflight", Status: "skipped", Detail: "disabled by project preflight.enabled"}}}
-	}
-	var results []CheckResult
-
-	// Tier free: filesystem checks — against the TARGET's filesystem.
-	results = append(results, fold("writable", p.checkWritable(proj.WorkingDir, "working_dir"), p.Scope))
-	results = append(results, fold("paths", p.checkPathArgs(sampleCmd), p.Scope))
-	results = append(results, p.checkOutputArgs(proj, sampleCmd))
-
-	// Tier probe: one generated python file, one shell, one env
-	// activation. Skippable by cluster policy.
-	var report Report
-	if p.DisableLocal {
-		results = append(results,
-			CheckResult{Name: "imports", Status: "skipped", Detail: "disabled by hpc preflight_local"},
-			CheckResult{Name: "huggingface", Status: "skipped", Detail: "disabled by hpc preflight_local"})
-	} else {
-		results = append(results, p.probeChecks(ctx, proj, sampleCmd, &report)...)
-	}
-
-	// GPU smoke test: probe-don't-enumerate (C2). No driver here ≠ failure.
-	// Remote targets skip outright: GPUs live on compute nodes, and probing
-	// a login node's nvidia-smi would only produce noise.
-	if p.FS != nil {
-		results = append(results, CheckResult{Name: "gpu", Status: "skipped", Detail: "remote target: GPUs live on compute nodes"})
-	} else {
-		results = append(results, checkGPU(ctx, proj, p.Scope))
-	}
-
-	report.Results = results
-	return report
-}
-
-// contractParamRegex matches "{{param.NAME}}" placeholders in declared
-// preflight.hf entries.
-var contractParamRegex = regexp.MustCompile(`^\{\{param\.(\w+)}}$`)
-
-// expandContractHF turns the declared preflight.hf list into concrete
-// refs. "{{param.NAME}}" entries expand against EVERY task's value —
-// sweep 8 models and all 8 ids are verified, not just the sample.
-// Declared entries are a contract, so malformed ones are hard findings,
-// never silently dropped.
-func expandContractHF(declared []string, taskParams []job.TaskParams) ([]HFRef, []PreflightFinding) {
-	var refs []HFRef
-	var findings []PreflightFinding
-	seen := map[string]bool{}
-	add := func(id, origin string) {
-		if !looksLikeHFRepoID(id) {
-			findings = append(findings, PreflightFinding{
-				Kind:   "hf",
-				Detail: fmt.Sprintf("preflight.hf entry %s resolves to %q — not a valid HuggingFace repo id", origin, id),
-			})
-			return
-		}
-		if !seen[id] {
-			seen[id] = true
-			refs = append(refs, HFRef{RepoID: id, RepoType: "any"})
-		}
-	}
-	for _, entry := range declared {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		m := contractParamRegex.FindStringSubmatch(entry)
-		if m == nil {
-			add(entry, "\""+entry+"\"")
-			continue
-		}
-		name := m[1]
-		found := false
-		for _, params := range taskParams {
-			if v, ok := params[name]; ok {
-				found = true
-				add(fmt.Sprintf("%v", v), entry)
-			}
-		}
-		if !found {
-			findings = append(findings, PreflightFinding{
-				Kind:   "hf",
-				Detail: fmt.Sprintf("preflight.hf entry %q references a param that no task defines", entry),
-			})
-		}
-	}
-	return refs, findings
-}
-
-// shellEntryRegex extracts the shell script path from a `bash x.sh` /
-// `sh x.sh` / `./x.sh` entry command.
-var shellEntryRegex = regexp.MustCompile(`(?:^|\s)(?:bash\s+|sh\s+)?((?:\.?/)?[^\s]+\.sh)\b`)
-
-// shellEntry resolves the entry .sh path (against workingDir) or "".
-func shellEntry(sampleCmd, workingDir string) string {
-	m := shellEntryRegex.FindStringSubmatch(sampleCmd)
-	if len(m) < 2 {
-		return ""
-	}
-	s := m[1]
-	if !strings.HasPrefix(s, "/") {
-		s = path.Join(workingDir, s)
-	}
-	return s
-}
-
-// probeChecks runs the single-probe tier (env + imports + HF + wandb +
-// extra_run contract + shell syntax) and folds the outcome into results.
-// Facts about the environment (home, prefix) land on the report.
-//
-// The contract principle (RQ-76 ②): what project.yaml DECLARES is
-// verified exactly and blocks on failure; what is not declared is
-// best-effort static analysis of a .py entry — and when there is
-// nothing to analyze (shell entry), the report says so and points at
-// the contract instead of guessing.
-func (p Preflight) probeChecks(ctx context.Context, proj *project.Config, sampleCmd string, report *Report) []CheckResult {
-	contract := proj.Preflight
-
-	// One deadline for EVERYTHING (Codex r2/r3): entry detection (the
-	// only Go-side read, ctx-bounded via readFileCtx) and the probe —
-	// whose in-process dependency walk reads project files LOCALLY on
-	// the target, under the same process-group wall-clock kill.
-	timeout := p.ProbeTimeout
+func (p Preflight) check(ctx context.Context, proj *project.Config, sampleCmd string, refs []HFRef, hfIssues []string) Report {
+	pl := p.plan(proj, sampleCmd, refs)
+	timeout := p.Timeout
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	out, runErr := p.runShell(cctx, p.script(proj, pl))
+	m := parseMarkers(out)
 
-	entry, entryErr := p.detectEntry(cctx, sampleCmd, proj.WorkingDir)
-
-	importsOn := contract.ImportsOrDefault()
-	importsSkip := ""
-	switch {
-	case !importsOn:
-		importsSkip = "disabled by preflight.imports"
-	case entryErr != nil:
-		importsSkip = fmt.Sprintf("cannot read entry script: %v", entryErr)
-	case entry.Mode == "" && entry.ShPath != "":
-		importsSkip = "no python invocation found inside the shell entry — declare preflight.hf / preflight.extra_run in project.yaml to verify what it runs"
-	case entry.Mode == "":
-		importsSkip = "no python entry — declare preflight.hf / preflight.extra_run in project.yaml to verify non-python workloads"
-	}
-	probeEntry := entry
-	if !importsOn {
-		probeEntry.Mode, probeEntry.Val = "", "" // contract switch gates the walk
-	}
-
-	// Contract HF refs expand {{param.X}} against the whole sweep here
-	// (needs taskParams); runtime-discovered refs are extracted by the
-	// probe itself over every file its walk reads.
-	contractRefs, hfContractFindings := expandContractHF(contract.HFRepos(), p.taskParams)
-	if len(hfContractFindings) > 0 {
-		// A contract that cannot be verified must not pass silently.
-		return []CheckResult{fold("huggingface", hfContractFindings, p.Scope)}
-	}
-	hfWanted := len(contractRefs) > 0 || probeEntry.Mode != ""
-
-	// rc6: preflight.wandb is retired (project.NormalizeLegacy warns and
-	// drops it); the probe no longer checks W&B credentials.
-	const wandb = false
-	extraRun := strings.TrimSpace(contract.ExtraRunOrEmpty())
-	shEntry := entry.ShPath
-	// Interpreter: the entry command's python token, else the one the
-	// shell script invokes. When NEITHER names one, the probe picks at
-	// runtime (`command -v python3 || command -v python`) — python3-only
-	// hosts have no `python` (Codex r2 #4). An EXPLICIT `python` in the
-	// command stays verbatim: probing what the task runs is the point.
-	interp, interpFound := pythonInterpreterIn(sampleCmd)
-	if !interpFound && entry.ShSrc != "" {
-		interp, interpFound = pythonInterpreterIn(entry.ShSrc)
-	}
-	interpGuessed := !interpFound
-	envDeclared := proj.PythonEnv.Type != ""
-
-	needPython := probeEntry.Mode != "" || len(contractRefs) > 0 || wandb || envDeclared
-	if !needPython && extraRun == "" && shEntry == "" {
-		return []CheckResult{{Name: "imports", Status: "skipped", Detail: importsSkip}}
-	}
-
-	out, code, runErr, writeErr := p.execProbe(cctx, proj, interp, interpGuessed, probeEntry, contractRefs, wandb, extraRun, needPython, timeout)
-	if writeErr != nil {
-		return []CheckResult{
-			{Name: "imports", Status: "skipped", Detail: fmt.Sprintf("cannot write probe file: %v", writeErr)},
-			{Name: "huggingface", Status: "skipped", Detail: "probe not run"},
-		}
-	}
-
-	res := parseProbeOutput(out)
-	report.HomeDir = res.Home
-	report.PythonPrefix = res.Prefix
-	timedOut := cctx.Err() != nil
-
-	var results []CheckResult
-
-	// Shell syntax (bash -n): runs before env activation, so its verdict
-	// survives even an activation failure. Zero false positives — the
-	// same parser that will run the script parsed it.
-	if shEntry != "" && res.ShellSyntaxRC >= 0 {
-		if res.ShellSyntaxRC == 0 {
-			results = append(results, CheckResult{Name: "shell_syntax", Status: "passed", Detail: "bash -n ok"})
-		} else {
-			results = append(results, CheckResult{Name: "shell_syntax", Status: "failed",
-				Detail: fmt.Sprintf("entry script has shell syntax errors: %s", res.ShellSyntaxDetail)})
-		}
-	}
-
-	skipRest := func(reason string) []CheckResult {
-		if importsSkip == "" {
-			importsSkip = reason
-		}
-		results = append(results, CheckResult{Name: "imports", Status: "skipped", Detail: importsSkip})
-		if hfWanted {
-			results = append(results, CheckResult{Name: "huggingface", Status: "skipped", Detail: reason})
-		}
-		if extraRun != "" {
-			results = append(results, CheckResult{Name: "extra_run", Status: "skipped", Detail: reason})
-		}
-		return results
-	}
-
-	if !res.PythonRan && !res.InnerRan {
+	// lost: a check whose marker never arrived learned nothing.
+	lost := func(name string) CheckResult {
+		detail := "no answer from the target shell: " + lastLine(out)
 		switch {
-		case timedOut:
-			return skipRest(fmt.Sprintf("probe timed out after %s (login node slow?) — nothing verified", timeout))
+		case cctx.Err() != nil:
+			detail = fmt.Sprintf("timed out after %s on the target — not checked", timeout)
 		case runErr != nil:
-			// Transport problem: probe could not run — no fact learned.
-			return skipRest(fmt.Sprintf("probe could not run: %v", runErr))
-		case code != 0 && envDeclared:
-			// The shell ran and failed before python emitted anything:
-			// env activation is broken in a non-interactive shell — the
-			// exact failure the compute node would hit (RQ-76 ①/feedback:
-			// conda registered only in ~/.bashrc).
-			results = append(results, CheckResult{Name: "python_env", Status: "failed", Detail: fmt.Sprintf(
-				"environment failed to activate in a non-interactive shell: %s — compute nodes use the same shell class (no ~/.bashrc), so the task would fail too; make the env available via env_setup / absolute paths",
-				lastLine(out))})
-			return skipRest("environment activation failed")
-		case code != 0:
-			return skipRest(fmt.Sprintf("probe shell failed: %s", lastLine(out)))
-		default:
-			return skipRest("probe produced no output")
+			detail = fmt.Sprintf("could not run on the target: %v", runErr)
 		}
+		return CheckResult{Name: name, Status: "skipped", Detail: detail}
 	}
-
-	if !res.PythonRan {
-		// The wrapped chain ran (pyexit arrived) but python emitted
-		// nothing — interpreter missing or broken.
-		if envDeclared {
-			results = append(results, CheckResult{Name: "python_env", Status: "failed", Detail: fmt.Sprintf(
-				"environment activated but %q did not run (exit %d): %s", interp, res.PyExit, lastLine(out))})
-		} else if needPython {
-			results = append(results, CheckResult{Name: "python_env", Status: "skipped", Detail: fmt.Sprintf(
-				"no usable python on the target (exit %d) — python checks skipped; use preflight.extra_run for shell-level verification", res.PyExit)})
-		}
-		if importsSkip == "" {
-			importsSkip = "python did not run"
-		}
-		results = append(results, CheckResult{Name: "imports", Status: "skipped", Detail: importsSkip})
-		if hfWanted {
-			results = append(results, CheckResult{Name: "huggingface", Status: "skipped", Detail: "python did not run"})
-		}
-	} else {
-		results = append(results, p.envCheck(proj, res.Prefix))
-		if importsSkip != "" {
-			results = append(results, CheckResult{Name: "imports", Status: "skipped", Detail: importsSkip})
-		} else {
-			results = append(results, p.importsCheck(res, timedOut, timeout))
-		}
-		switch {
-		case res.HFTotal > 0:
-			results = append(results, p.hfCheck(res, timedOut, timeout))
-		case hfWanted && !res.Done:
-			results = append(results, CheckResult{Name: "huggingface", Status: "skipped",
-				Detail: fmt.Sprintf("probe cut short before the HF check (timeout %s)", timeout)})
-		}
-	}
-
-	// extra_run contract: user-authored, runs inside the activated env in
-	// the SAME shell. Non-zero exit blocks — the whole point is that the
-	// user declared "this must hold before anything is queued".
-	if extraRun != "" {
-		switch {
-		case res.ExtraRC == 0:
-			results = append(results, CheckResult{Name: "extra_run", Status: "passed", Detail: "custom check ok"})
-		case res.ExtraRC > 0:
-			tail := res.ExtraOut
-			if len(tail) > 3 {
-				tail = tail[len(tail)-3:]
-			}
-			results = append(results, CheckResult{Name: "extra_run", Status: "failed",
-				Detail: fmt.Sprintf("custom check exited %d: %s", res.ExtraRC, strings.Join(tail, " | "))})
-		case res.ExtraStarted:
-			results = append(results, CheckResult{Name: "extra_run", Status: "skipped",
-				Detail: fmt.Sprintf("custom check cut short (probe timeout %s)", timeout)})
-		default:
-			results = append(results, CheckResult{Name: "extra_run", Status: "skipped", Detail: "custom check did not run"})
-		}
-	}
-
-	return results
-}
-
-// execProbe writes the probe file next to the project (so relative
-// resolution matches the task's world) and runs ONE shell:
-//
-//	[bash -n entry.sh]                      — outside the env (parser only)
-//	env prelude (SAME as run.sh/setup/submit, via utils.EnvPrelude)
-//	activate env → python probe → extra_run — one activation for everything
-//	rm probe
-//
-// Marker lines emitted by the shell itself (pyexit, shellsyntax, extra
-// begin/end) let the parser attribute failures precisely: activation vs
-// interpreter vs the user's custom check.
-func (p Preflight) execProbe(ctx context.Context, proj *project.Config, interp string, interpGuessed bool, entry entrySpec, contractRefs []HFRef, wandb bool, extraRun string, needPython bool, timeout time.Duration) (out string, code int, runErr, writeErr error) {
-	// The walk budget leaves headroom for env activation and the HF
-	// pass; a truncated walk reports itself (scan marker) — never fails.
-	budget := timeout.Seconds() - 8
-	if budget < 3 {
-		budget = 3
-	}
-	script := buildProbeScript(entry.Mode, entry.Val, proj.WorkingDir, contractRefs, wandb, budget, 64)
-	probePath := path.Join(proj.WorkingDir, fmt.Sprintf(".runq_preflight_%d.py", time.Now().UnixNano()))
-	// ctx-bounded like every other transport call (Codex r4): a slow
-	// SFTP write returns the caller at the deadline. Cleanup is chained
-	// AFTER the background write completes (Codex r5) — removing first
-	// was a no-op race the late write would undo, leaving the probe
-	// file behind.
-	writeErr = writeFileCtx(ctx, p.fsys(), probePath, []byte(script), 0o644, func() { p.removeProbe(probePath) })
-	if writeErr != nil {
-		return "", 0, nil, writeErr
-	}
-
-	// SAME ENVIRONMENT AS THE TASK (Codex r1 #3 / r2 #2): rendered by
-	// utils.EnvPrelude — the one injection point shared with run.sh,
-	// setup_command and the submit command. A probe that checks a
-	// DIFFERENT environment than the task runs in produces false
-	// verdicts (wandb creds exported by run.sh, reported missing here).
-	envPrefix := utils.EnvPrelude{
-		EnvSetup: p.EnvSetup,
-		EnvFile:  p.Env["RUNQ_ENV_FILE"],
-		Env:      p.Env,
-	}.Render()
-
-	// Interpreter: verbatim when the command names one; otherwise pick at
-	// runtime AFTER env activation (conda may provide it) — python3-only
-	// hosts have no `python` (Codex r2 #4).
-	invoke := interp
-	var interpPick string
-	if interpGuessed {
-		interpPick = `RUNQ_PY=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python); `
-		invoke = `"$RUNQ_PY"`
-	}
-
-	// Inner chain: python probe (+ its exit marker), then the extra_run
-	// contract bracketed by markers — all inside ONE env activation.
-	inner := interpPick + invoke + " " + shQuote(probePath) + `; printf '` + probeMarker + `\tpyexit\t-\t%s\n' "$?"`
-	if extraRun != "" {
-		inner += `; printf '` + probeMarker + `\textra\tbegin\t0\n'; { ` + extraRun + `
-} ; printf '` + probeMarker + `\textra\tend\t%s\n' "$?"`
-	}
-	if !needPython {
-		// Pure-shell contract: no python work to do; run only extra_run
-		// inside the env (activation may still matter to it).
-		inner = `printf '` + probeMarker + `\tpyexit\t-\t0\n'`
-		if extraRun != "" {
-			inner += `; printf '` + probeMarker + `\textra\tbegin\t0\n'; { ` + extraRun + `
-} ; printf '` + probeMarker + `\textra\tend\t%s\n' "$?"`
-		}
-	}
-	// Group the inner chain: WrapCommand joins with `&&`, and a bare `;`
-	// inside inner would detach the marker printfs from that chain — the
-	// pyexit marker would then fire even when ACTIVATION failed, and the
-	// parser would misread an activation failure as "python missing".
-	inner = "{ " + inner + " ; }"
-	wrapped := utils.WrapCommand(
-		proj.PythonEnv.Type, proj.PythonEnv.Path, proj.PythonEnv.Name,
-		inner,
-		proj.WorkingDir,
-	)
-
-	var pre string
-	if entry.ShPath != "" {
-		// bash -n before activation: a syntax verdict must survive an
-		// activation failure. Output flattened to one marker line.
-		pre = `__pf_out=$(bash -n ` + shQuote(entry.ShPath) + ` 2>&1); printf '` + probeMarker + `\tshellsyntax\tscript\t%s\t%s\n' "$?" "$(printf '%s' "$__pf_out" | tr '\n\t' '  ')"; `
-	}
-
-	// Group the wrapped chain so cleanup runs regardless of its verdict,
-	// while the probe's own exit code is preserved.
-	full := fmt.Sprintf("%s%s{ %s ; }; rc=$?; rm -f %s; exit $rc",
-		pre, envPrefix, wrapped, shQuote(probePath))
-	out, code, runErr = p.runShell(ctx, full)
-	if ctx.Err() != nil {
-		// The shell was killed before its own `rm -f` could run — clean
-		// the probe file up from THIS side (Codex r1 #5: 100ms-timeout
-		// runs left .runq_preflight_*.py behind).
-		p.removeProbe(probePath)
-	}
-	return out, code, runErr, nil
-}
-
-// removeProbe best-effort deletes a probe file after a killed run.
-func (p Preflight) removeProbe(probePath string) {
-	if p.FS == nil {
-		_ = os.Remove(probePath)
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, _, _, _ = p.FS.Exec(ctx, "rm", "-f", probePath)
-}
-
-// envCheck verifies the resolved sys.prefix against the declared env.
-// The probe RUNNING already proves activation works in a non-interactive
-// shell; this only cross-checks that it resolved to the env the user
-// meant. Mismatches warn (never block): activation clearly produced a
-// working python, and prefix layouts vary across conda installs.
-func (p Preflight) envCheck(proj *project.Config, prefix string) CheckResult {
 	scoped := func(d string) string {
 		if p.Scope != "" {
-			return d + " (verified " + p.Scope + ")"
+			return d + " (" + p.Scope + ")"
 		}
 		return d
 	}
-	if prefix == "" {
-		return CheckResult{Name: "python_env", Status: "passed", Detail: scoped("environment activates in a non-interactive shell")}
+	var rep Report
+
+	switch v, ok := m["entry"]; {
+	case pl.entry == "":
+		rep.Add(CheckResult{Name: "entry", Status: "skipped", Detail: pl.entryWhy})
+	case !ok:
+		rep.Add(lost("entry"))
+	case v.status == "ok":
+		rep.Add(CheckResult{Name: "entry", Status: "passed", Detail: scoped(pl.entry + " exists")})
+	default:
+		rep.Add(CheckResult{Name: "entry", Status: "warning", Detail: fmt.Sprintf(
+			"%s does not exist — the task would fail at once; paths in the command resolve from working_dir (%s)", pl.entry, proj.WorkingDir)})
+	}
+
+	act, actOK := m["activate"]
+	activated := m["activated"].status == "ok"
+	switch {
+	case pl.interp == "":
+		rep.Add(CheckResult{Name: "interpreter", Status: "skipped", Detail: "the command runs no python and no python_env is declared"})
+	case pl.interpAbs != "":
+		switch v, ok := m["interp"]; {
+		case !ok:
+			rep.Add(lost("interpreter"))
+		case v.status == "ok":
+			rep.Add(CheckResult{Name: "interpreter", Status: "passed", Detail: scoped(pl.interpAbs + " is executable")})
+		default:
+			hint := ""
+			if pl.envType == "venv" || pl.envType == "uv" {
+				hint = " — create the venv on the target (python_env.path is relative to working_dir)"
+			}
+			rep.Add(CheckResult{Name: "interpreter", Status: "warning", Detail: pl.interpAbs + " is missing or not executable" + hint})
+		}
+	case p.DisableLocal:
+		rep.Add(CheckResult{Name: "interpreter", Status: "skipped", Detail: "looked up inside the env; disabled by hpc preflight_local"})
+	case !actOK:
+		rep.Add(lost("interpreter"))
+	case !activated:
+		rep.Add(CheckResult{Name: "interpreter", Status: "skipped", Detail: "the environment did not activate (see env_activation)"})
+	case m["pyfound"].status == "ok":
+		rep.Add(CheckResult{Name: "interpreter", Status: "passed", Detail: scoped(pl.interp + " → " + m["pyfound"].detail)})
+	default:
+		where := "in the activated environment"
+		if pl.envType == "" {
+			where = "in the target's shell environment"
+		}
+		rep.Add(CheckResult{Name: "interpreter", Status: "warning", Detail: fmt.Sprintf(
+			"%s is not on PATH %s — the task's command would not find it", pl.interp, where)})
+	}
+
+	switch {
+	case pl.envType == "":
+		rep.Add(CheckResult{Name: "env_activation", Status: "skipped", Detail: "no python_env declared — the command runs in the target's plain shell environment"})
+	case p.DisableLocal:
+		rep.Add(CheckResult{Name: "env_activation", Status: "skipped", Detail: "disabled by hpc preflight_local"})
+	case !actOK:
+		rep.Add(lost("env_activation"))
+	case !activated:
+		hint := "Make the env available via the target's env_setup or absolute paths."
+		if pl.envType == "conda" {
+			hint = "A conda registered only in ~/.bashrc is invisible here: put its init in the target's env_setup."
+		}
+		rep.Add(CheckResult{Name: "env_activation", Status: "warning", Detail: fmt.Sprintf(
+			"python_env (%s) did not activate in a non-interactive shell (exit %s: %s); compute nodes use the same shell class, so the task would fail too. %s",
+			pl.envType, act.status, act.detail, hint)})
+	default:
+		rep.Add(envResult(proj, m["prefix"], scoped))
+	}
+
+	// data_dirs answers "writable"; space and inode headroom are
+	// internal/diskspace's warnings, joined by the target backend.
+	switch v, ok := m["data_dirs"]; {
+	case p.DataDir == "":
+		rep.Add(CheckResult{Name: "data_dirs", Status: "skipped", Detail: "no task data directory in this plan"})
+	case !ok:
+		rep.Add(lost("data_dirs"))
+	case v.status == "ok":
+		rep.Add(CheckResult{Name: "data_dirs", Status: "passed", Detail: scoped(v.detail + " is writable")})
+	default:
+		rep.Add(CheckResult{Name: "data_dirs", Status: "warning", Detail: fmt.Sprintf(
+			"cannot create %s: its nearest existing parent %s is not a writable directory", p.DataDir, v.detail)})
+	}
+
+	rep.Add(hfResult(pl, m, hfIssues, lost, scoped))
+	return rep
+}
+
+// envResult cross-checks the activated env's sys.prefix against the
+// declared env: a mismatch warns (activation produced A python, maybe not
+// the one meant).
+func envResult(proj *project.Config, prefix marker, scoped func(string) string) CheckResult {
+	pass := func(d string) CheckResult {
+		return CheckResult{Name: "env_activation", Status: "passed", Detail: scoped(d)}
+	}
+	pre := prefix.detail
+	if prefix.status != "ok" || pre == "" {
+		return pass(proj.PythonEnv.Type + " env activates in a non-interactive shell")
 	}
 	switch proj.PythonEnv.Type {
 	case "conda":
 		name := proj.PythonEnv.Name
-		if name != "" && name != "base" {
-			if path.Base(prefix) == name || strings.Contains(prefix, "/envs/"+name) {
-				return CheckResult{Name: "python_env", Status: "passed", Detail: scoped("conda env " + name + " at " + prefix)}
-			}
-			return CheckResult{Name: "python_env", Status: "warning", Detail: fmt.Sprintf(
-				"python resolves to %s, which does not look like conda env %q — check the env name", prefix, name)}
+		if name == "" || name == "base" || path.Base(pre) == name || strings.Contains(pre, "/envs/"+name) {
+			return pass("conda env at " + pre)
 		}
+		return CheckResult{Name: "env_activation", Status: "warning", Detail: fmt.Sprintf(
+			"python resolves to %s, which does not look like conda env %q — check the env name", pre, name)}
 	case "venv", "uv":
-		envPath := proj.PythonEnv.Path
-		if envPath == "" {
-			envPath = ".venv"
+		if path.Clean(pre) == path.Clean(venvDir(proj)) {
+			return pass("venv at " + pre)
 		}
-		if !path.IsAbs(envPath) {
-			envPath = path.Join(proj.WorkingDir, envPath)
-		}
-		if path.Clean(prefix) == path.Clean(envPath) {
-			return CheckResult{Name: "python_env", Status: "passed", Detail: scoped("venv at " + prefix)}
-		}
-		return CheckResult{Name: "python_env", Status: "warning", Detail: fmt.Sprintf(
-			"python resolves to %s, expected venv %s", prefix, envPath)}
+		return CheckResult{Name: "env_activation", Status: "warning", Detail: fmt.Sprintf(
+			"python resolves to %s, expected the venv %s", pre, venvDir(proj))}
 	}
-	return CheckResult{Name: "python_env", Status: "passed", Detail: scoped("python at " + prefix)}
+	return pass("python at " + pre)
 }
 
-// importsCheck folds the probe's per-module verdicts. A cut-short probe
-// (timeout) skips rather than passes: unverified is not verified.
-func (p Preflight) importsCheck(res probeOutcome, timedOut bool, timeout time.Duration) CheckResult {
-	var findings []PreflightFinding
-	okCount := 0
-	for _, imp := range res.Imports {
-		switch imp.Status {
-		case "fail":
-			findings = append(findings, PreflightFinding{
-				Kind:   "import",
-				Detail: fmt.Sprintf("%s: %s", imp.Module, imp.Detail),
-			})
-		case "ok":
-			okCount++
+func hfResult(pl targetPlan, m map[string]marker, issues []string, lost func(string) CheckResult, scoped func(string) string) CheckResult {
+	if len(pl.refs) == 0 && len(issues) == 0 {
+		return CheckResult{Name: "huggingface", Status: "skipped", Detail: "no preflight.hf repos declared in project.yaml"}
+	}
+	problems := append([]string(nil), issues...)
+	var cmds []string
+	for _, r := range pl.refs {
+		v, ok := m["hf:"+r.RepoID]
+		if !ok {
+			return lost("huggingface")
 		}
-	}
-	// Failures that ARRIVED block, cut short or not.
-	if len(findings) > 0 {
-		return fold("imports", findings, p.Scope)
-	}
-	if !res.ScanSeen {
-		detail := "probe cut short before the import walk finished"
-		if timedOut {
-			detail = fmt.Sprintf("probe timed out after %s — %s", timeout, detail)
-		}
-		return CheckResult{Name: "imports", Status: "skipped", Detail: detail}
-	}
-	if res.ScanTruncated {
-		return CheckResult{Name: "imports", Status: "skipped",
-			Detail: fmt.Sprintf("dependency walk truncated (budget/file cap) — %d files scanned, none failed", res.ScanFiles)}
-	}
-	if res.EntryMiss != "" {
-		// Doctrine (user ruling r4): paths resolve from working_dir and
-		// runq does not follow `cd` — an unlocatable entry is a declared
-		// BOUNDARY (skipped + guidance), never a block. False positives
-		// are bugs; false negatives here have a 30-second user-side fix.
-		return CheckResult{Name: "imports", Status: "skipped", Detail: fmt.Sprintf(
-			"entry %s not found from working_dir — runq resolves paths from working_dir (project.yaml) and does not follow `cd`; write entry paths relative to working_dir, or declare preflight.hf / preflight.extra_run for shell-managed layouts", res.EntryMiss)}
-	}
-	if okCount == 0 && res.ScanFiles == 0 {
-		return CheckResult{Name: "imports", Status: "skipped", Detail: "nothing to scan"}
-	}
-	detail := fmt.Sprintf("%d file(s) scanned, %d import(s) resolvable", res.ScanFiles, okCount)
-	if p.Scope != "" {
-		detail += " (verified " + p.Scope + ")"
-	}
-	return CheckResult{Name: "imports", Status: "passed", Detail: detail}
-}
-
-// hfCheck folds the probe's Hub verdicts:
-//
-//   - missing / gated repo → failed (the task cannot possibly load it)
-//   - reachable but not cached → warning + pre-download commands: two
-//     legitimate worlds exist (already planning to download on the
-//     compute node vs air-gapped compute), so runq surfaces instead of
-//     blocking — and hands the user the exact command to pin the data
-//     down beforehand.
-//   - all cached → passed
-//   - huggingface_hub missing / network unknown / cut short → skipped
-func (p Preflight) hfCheck(res probeOutcome, timedOut bool, timeout time.Duration) CheckResult {
-	var findings []PreflightFinding
-	var uncached []HFRef
-	var unknown, nohub, cached int
-	for _, h := range res.HF {
-		switch h.Status {
-		case "cached":
-			cached++
-		case "reachable":
-			uncached = append(uncached, h.Ref)
-		case "missing":
-			findings = append(findings, PreflightFinding{
-				Kind:   "hf",
-				Detail: fmt.Sprintf("repo %q not found on the Hub (%s)", h.Ref.RepoID, h.Detail),
-			})
-		case "gated":
-			findings = append(findings, PreflightFinding{
-				Kind:   "hf",
-				Detail: fmt.Sprintf("repo %q is gated — request access and make the HF token available where the task runs (%s)", h.Ref.RepoID, h.Detail),
-			})
-		case "nohub":
-			nohub++
-		default:
-			unknown++
-		}
-	}
-	if len(findings) > 0 {
-		return fold("huggingface", findings, p.Scope)
-	}
-	if nohub > 0 {
-		return CheckResult{Name: "huggingface", Status: "skipped",
-			Detail: fmt.Sprintf("huggingface_hub not installed in env — %d referenced repo(s) not verified", res.HFTotal)}
-	}
-	if len(uncached) > 0 {
-		cmds := make([]string, 0, len(uncached))
-		ids := make([]string, 0, len(uncached))
-		for _, r := range uncached {
+		if v.status != "ok" {
+			problems = append(problems, r.RepoID+" is not in the HF cache")
 			cmds = append(cmds, r.DownloadCommand())
-			ids = append(ids, r.RepoID)
-		}
-		return CheckResult{
-			Name:     "huggingface",
-			Status:   "warning",
-			Detail:   fmt.Sprintf("not in local HF cache: %s — the compute node will download at run time (fails on air-gapped clusters); pre-download to pin the exact revision", strings.Join(ids, ", ")),
-			Commands: cmds,
 		}
 	}
-	if len(res.HF) < res.HFTotal {
-		detail := fmt.Sprintf("checked %d/%d repo(s)", len(res.HF), res.HFTotal)
-		if timedOut {
-			detail = fmt.Sprintf("probe timed out after %s — %s", timeout, detail)
-		}
-		return CheckResult{Name: "huggingface", Status: "skipped", Detail: detail}
+	if len(problems) == 0 {
+		return CheckResult{Name: "huggingface", Status: "passed", Detail: scoped(fmt.Sprintf("%d declared repo(s) in the HF cache", len(pl.refs)))}
 	}
-	if unknown > 0 {
-		return CheckResult{Name: "huggingface", Status: "skipped",
-			Detail: fmt.Sprintf("Hub unreachable from here for %d repo(s) — nothing verified", unknown)}
+	detail := strings.Join(problems, "; ")
+	if len(cmds) > 0 {
+		detail += fmt.Sprintf(" (%s) — the task would download it at run time, which fails on compute nodes without internet; pre-download it", m["hfhub"].detail)
 	}
-	scoped := fmt.Sprintf("%d repo(s) in local HF cache", cached)
-	if p.Scope != "" {
-		scoped += " (verified " + p.Scope + ")"
-	}
-	return CheckResult{Name: "huggingface", Status: "passed", Detail: scoped}
+	return CheckResult{Name: "huggingface", Status: "warning", Detail: detail, Commands: cmds}
 }
 
-// checkGPU verifies GPU visibility when the project requests GPUs. The
-// prerequisite (nvidia-smi on PATH) is probed first — absence is an honest
-// "skipped", never a failure: on an HPC login node GPUs live elsewhere.
-func checkGPU(ctx context.Context, proj *project.Config, scope string) CheckResult {
-	if proj.Defaults.GPUsPerTask <= 0 {
-		return CheckResult{Name: "gpu", Status: "skipped", Detail: "no GPUs requested (gpus_per_task: 0)"}
-	}
-	smi, err := exec.LookPath("nvidia-smi")
-	if err != nil {
-		return CheckResult{Name: "gpu", Status: "skipped", Detail: "nvidia-smi not found on this node"}
-	}
-	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(cctx, smi, "-L").Output()
-	if err != nil {
-		return CheckResult{Name: "gpu", Status: "failed", Detail: fmt.Sprintf("nvidia-smi -L: %v", err)}
-	}
-	n := strings.Count(strings.TrimSpace(string(out)), "GPU ")
-	detail := fmt.Sprintf("%d GPU(s) visible", n)
-	if scope != "" {
-		detail += " (verified " + scope + ")"
-	}
-	if n < proj.Defaults.GPUsPerTask {
-		detail += fmt.Sprintf(" — fewer than gpus_per_task=%d", proj.Defaults.GPUsPerTask)
-	}
-	return CheckResult{Name: "gpu", Status: "passed", Detail: detail}
-}
+// ---- the target exec ----------------------------------------------
 
-// ---- (1) writability ----------------------------------------------
+// markerPrefix starts every machine-readable line the target shell
+// prints: MARKER \t key \t status \t detail. Anything else (activation
+// banners) is ignored.
+const markerPrefix = "##RUNQ_PF##"
 
-// checkWritable verifies that “dir“ exists and is writable by the
-// current user (the runqd process). Two failure modes are split into
-// distinct findings so the operator sees the actionable bit:
-//
-//   - doesn't exist → "create it"
-//   - exists but read-only → "chmod / chown it"
-//
-// We probe writability with a real file write because access(W_OK)-style
-// checks are platform-specific and unreliable on FUSE / NFS where ACLs lie.
-// The probe runs on the check filesystem: local CreateTemp, or a remote
-// WriteFile + rm through rfs.FS.
-func (p Preflight) checkWritable(dir, label string) []PreflightFinding {
-	if dir == "" {
-		return []PreflightFinding{{Kind: "writable", Detail: fmt.Sprintf("%s is empty", label)}}
-	}
-	info, err := p.fsys().Stat(dir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return []PreflightFinding{{
-				Kind:   "writable",
-				Detail: fmt.Sprintf("%s does not exist: %s", label, dir),
-			}}
-		}
-		return []PreflightFinding{{
-			Kind:   "writable",
-			Detail: fmt.Sprintf("%s stat failed: %v", label, err),
-		}}
-	}
-	if !info.IsDir() {
-		return []PreflightFinding{{
-			Kind:   "writable",
-			Detail: fmt.Sprintf("%s is not a directory: %s", label, dir),
-		}}
-	}
-	if p.FS == nil {
-		tmp, err := os.CreateTemp(dir, ".runq-preflight-*")
-		if err != nil {
-			return []PreflightFinding{{
-				Kind:   "writable",
-				Detail: fmt.Sprintf("%s not writable: %s (%v)", label, dir, err),
-			}}
-		}
-		tmpPath := tmp.Name()
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return nil
-	}
-	probe := path.Join(dir, fmt.Sprintf(".runq-preflight-%d", time.Now().UnixNano()))
-	if err := p.FS.WriteFile(probe, []byte("ok"), 0o644); err != nil {
-		return []PreflightFinding{{
-			Kind:   "writable",
-			Detail: fmt.Sprintf("%s not writable: %s (%v)", label, dir, err),
-		}}
-	}
-	_, _, _, _ = p.FS.Exec(context.Background(), "rm", "-f", probe)
-	return nil
-}
+type marker struct{ status, detail string }
 
-// ---- (2) path args -------------------------------------------------
-
-// pathArgRegex finds shell tokens that look like file/dir paths
-// inside the rendered command. Patterns it picks up:
-//
-//   - `--flag /abs/path` and `--flag=/abs/path`
-//   - bare absolute paths (`/data/imagenet`)
-//
-// Limitations (documented, not bugs):
-//
-//   - Relative paths (`./configs/foo.yaml`) are ignored — could be
-//     evaluated under working_dir but causes false positives when
-//     scripts construct paths at runtime.
-//   - Quoted paths containing spaces are not split correctly; tokens
-//     are space-separated. Real-world job configs almost never put
-//     spaces in paths, so this is acceptable.
-//
-// The leading boundary group is the load-bearing part: an absolute path
-// must START a shell token (begin of string, whitespace, `=`, or a quote).
-// Without it, relative paths (`scripts/qsub/x.sh` → "/qsub/x.sh") and
-// HuggingFace model ids (`org/model` → "/model") get mangled into bogus
-// absolute paths — exactly the false positives seen on real HPC commands.
-var pathArgRegex = regexp.MustCompile(`(?:^|[\s='"])(/[\w./_-]+)`)
-
-// pathArgIgnore filters out matches that should NOT be treated as
-// file existence assertions. Anything not on this list and matched by
-// pathArgRegex gets a stat() call.
-var pathArgIgnore = map[string]bool{
-	"/dev/null":   true,
-	"/dev/stdout": true,
-	"/dev/stderr": true,
-	"/tmp":        true,
-}
-
-// checkPathArgs scans the rendered command for absolute-path tokens
-// and refuses submission if any of them point at non-existent files —
-// statted on the TARGET's filesystem, where the task will actually look.
-// "Looks like a path" is heuristic; pathArgRegex documents the scope.
-func (p Preflight) checkPathArgs(cmd string) []PreflightFinding {
-	var findings []PreflightFinding
-	fsys := p.fsys()
-	seen := map[string]bool{}
-	for _, match := range pathArgRegex.FindAllStringSubmatch(cmd, -1) {
-		tok := match[1]
-		if seen[tok] || pathArgIgnore[tok] {
+func parseMarkers(out string) map[string]marker {
+	m := map[string]marker{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if !strings.HasPrefix(line, markerPrefix+"\t") {
 			continue
 		}
-		seen[tok] = true
-		// Trim trailing punctuation the regex might have grabbed.
-		tok = strings.TrimRight(tok, ".,;:")
-		if _, err := fsys.Stat(tok); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				findings = append(findings, PreflightFinding{
-					Kind:   "path",
-					Detail: fmt.Sprintf("path does not exist: %s", tok),
-				})
+		parts := strings.SplitN(line, "\t", 4)
+		if len(parts) < 3 {
+			continue
+		}
+		v := marker{status: parts[2]}
+		if len(parts) == 4 {
+			v.detail = parts[3]
+		}
+		m[parts[1]] = v
+	}
+	return m
+}
+
+// script renders the ONE POSIX-sh exec: the task's env prelude, the file
+// tests, then the env activation in a subshell — its stderr captured for
+// the warning, its stdout passed through for the markers.
+func (p Preflight) script(proj *project.Config, pl targetPlan) string {
+	q := utils.ShellQuote
+	var b strings.Builder
+	b.WriteString(utils.EnvPrelude{EnvSetup: p.EnvSetup, EnvFile: p.Env["RUNQ_ENV_FILE"], Env: p.Env}.Render())
+	b.WriteString(`pf() { printf '` + markerPrefix + `\t%s\t%s\t%s\n' "$1" "$2" "$(printf '%s' "$3" | tr '\t\n' '  ')"; }` + "\n")
+	if pl.entry != "" {
+		fmt.Fprintf(&b, "if [ -f %s ]; then pf entry ok; else pf entry missing; fi\n", q(pl.entry))
+	}
+	if pl.interpAbs != "" {
+		fmt.Fprintf(&b, "if [ -x %[1]s ] && [ ! -d %[1]s ]; then pf interp ok; else pf interp missing; fi\n", q(pl.interpAbs))
+	}
+	if p.DataDir != "" {
+		fmt.Fprintf(&b, `d=%s; while [ ! -e "$d" ] && [ "$d" != / ] && [ "$d" != . ]; do d=$(dirname "$d"); done
+if [ -d "$d" ] && [ -w "$d" ]; then pf data_dirs ok "$d"; else pf data_dirs no "$d"; fi
+`, q(p.DataDir))
+	}
+	if len(pl.refs) > 0 {
+		b.WriteString(`hub="${HF_HUB_CACHE:-${HUGGINGFACE_HUB_CACHE:-${HF_HOME:-$HOME/.cache/huggingface}/hub}}"; pf hfhub ok "$hub"
+hfc() { for s in "$hub/$1"/snapshots/*; do [ -e "$s" ] && return 0; done; return 1; }
+`)
+		for _, r := range pl.refs {
+			var conds []string
+			for _, d := range r.cacheDirs() {
+				conds = append(conds, "hfc "+q(d))
 			}
-			// Stat errors other than not-exist are ambiguous (permissions,
-			// transport) — no fact learned, never a finding.
+			key := q("hf:" + r.RepoID)
+			fmt.Fprintf(&b, "if %s; then pf %s ok; else pf %s missing; fi\n", strings.Join(conds, " || "), key, key)
 		}
 	}
-	return findings
+	if pl.needEnv {
+		inner := "pf activated ok"
+		switch {
+		case pl.interpAbs != "":
+			inner += "; PY=" + q(pl.interpAbs)
+		case pl.interp != "":
+			inner += fmt.Sprintf(`; PY=$(command -v %s 2>/dev/null); if [ -n "$PY" ]; then pf pyfound ok "$PY"; else pf pyfound missing; fi`, q(pl.interp))
+		default:
+			inner += `; PY=$(command -v python3 2>/dev/null || command -v python 2>/dev/null)`
+		}
+		inner += `; if [ -n "$PY" ]; then pf prefix ok "$("$PY" -c 'import sys; print(sys.prefix)' 2>/dev/null)"; fi`
+		wrapped := utils.WrapCommand(pl.envType, proj.PythonEnv.Path, proj.PythonEnv.Name, "{ "+inner+" ; }", proj.WorkingDir)
+		// stdout → fd 3 (the markers reach the output), stderr → err.
+		fmt.Fprintf(&b, "exec 3>&1; err=$( ( %s ) 2>&1 1>&3 ); rc=$?; exec 3>&-\npf activate \"$rc\" \"$(printf '%%s' \"$err\" | tail -n 1)\"\n", wrapped)
+	}
+	return b.String()
 }
 
-// outputFlagRe finds argparse flags through which a script picks where it
-// writes (--output_dir, --save-dir, --ckpt_dir, --checkpoint_path, --out …).
-var outputFlagRe = regexp.MustCompile(`add_argument\(\s*["'](--(?:output|out|save|ckpt|checkpoint)(?:[_-]?(?:dir|path|root))?)["']`)
+// runShell executes the check script where the task will run: locally via
+// sh, remotely via FS.Exec. err non-nil = the script could not run (no
+// fact learned); partial output is returned either way.
+func (p Preflight) runShell(ctx context.Context, script string) (string, error) {
+	if p.FS == nil {
+		c := exec.CommandContext(ctx, "sh", "-c", script)
+		// Kill the whole process group on timeout: an activation hook's
+		// grandchildren would otherwise hold the output pipe open.
+		setupProcessGroup(c)
+		c.WaitDelay = time.Second
+		out, err := c.CombinedOutput()
+		var ee *exec.ExitError
+		if err != nil && !errors.As(err, &ee) {
+			return string(out), err
+		}
+		return string(out), nil
+	}
+	stdout, stderr, _, err := p.FS.Exec(ctx, "sh", "-c", script)
+	return string(stdout) + string(stderr), err
+}
 
-// checkOutputArgs (storage contract, warning only): a script that defines an
-// output flag the command never passes falls back to its default, which is
-// usually inside the repo instead of the task directory. Scripts without such
-// flags are fine — passing runq's paths is a convention, not a requirement.
-func (p Preflight) checkOutputArgs(proj *project.Config, cmd string) CheckResult {
-	m := scriptRegex.FindStringSubmatch(cmd)
-	if m == nil {
-		return CheckResult{Name: "outputs", Status: "skipped", Detail: "no python script in the command"}
-	}
-	script := m[1]
-	if !path.IsAbs(script) {
-		script = path.Join(proj.WorkingDir, script)
-	}
-	src, err := p.fsys().ReadFile(script)
+// ---- shell_syntax (local) -----------------------------------------
+
+// ShellSyntax runs `bash -n` locally on each named script, in order (the
+// target backend passes run.sh and the submit line). bash -n parses
+// without executing.
+func ShellSyntax(ctx context.Context, names []string, scripts map[string]string) CheckResult {
+	bash, err := exec.LookPath("bash")
 	if err != nil {
-		return CheckResult{Name: "outputs", Status: "skipped", Detail: "script not readable here"}
+		return CheckResult{Name: "shell_syntax", Status: "skipped", Detail: "bash not found on this machine"}
 	}
-	var missing []string
-	seen := map[string]bool{}
-	for _, f := range outputFlagRe.FindAllStringSubmatch(string(src), -1) {
-		flag := f[1]
-		dashed := "--" + strings.ReplaceAll(strings.TrimPrefix(flag, "--"), "_", "-")
-		underscored := "--" + strings.ReplaceAll(strings.TrimPrefix(flag, "--"), "-", "_")
-		if seen[flag] || strings.Contains(cmd, dashed) || strings.Contains(cmd, underscored) {
-			continue
+	var bad []string
+	for _, name := range names {
+		c := exec.CommandContext(ctx, bash, "-n")
+		c.Stdin = strings.NewReader(scripts[name])
+		if out, err := c.CombinedOutput(); err != nil {
+			msg := strings.Join(strings.Fields(bashPrefix.ReplaceAllString(string(out), "")), " ")
+			bad = append(bad, name+": "+msg)
 		}
-		seen[flag] = true
-		missing = append(missing, flag)
 	}
-	if len(missing) == 0 {
-		return CheckResult{Name: "outputs", Status: "passed", Detail: "no unpassed output flags"}
+	if len(bad) > 0 {
+		return CheckResult{Name: "shell_syntax", Status: "warning", Detail: "syntax error — " + strings.Join(bad, "; ")}
 	}
-	return CheckResult{Name: "outputs", Status: "warning", Detail: fmt.Sprintf(
-		"%s defines %s but the command does not pass it, so its default (often inside the repo) is used; pass runq's task directory, e.g. %s $RUNQ_OUTPUT_DIR (checkpoints: $RUNQ_CHECKPOINT_DIR)",
-		path.Base(script), strings.Join(missing, ", "), missing[0])}
+	return CheckResult{Name: "shell_syntax", Status: "passed", Detail: "bash -n ok: " + strings.Join(names, ", ")}
 }
 
-// ---- (3) imports ---------------------------------------------------
+// bashPrefix is the "/bin/bash: " every bash -n message starts with.
+var bashPrefix = regexp.MustCompile(`(?m)^\S*bash: `)
 
-// scriptRegex extracts the python script path from a command of the
-// form `python <flags> path/to/script.py ...` or `python3 script.py`.
-// First .py token wins; flags ending in `=` (e.g. `-c=...`) are skipped.
-var scriptRegex = regexp.MustCompile(`(?:python\d*\s+(?:-\w+\s+)*)([^\s]+\.py)\b`)
+// ---- command parsing -----------------------------------------------
 
-// topLevelImportRegex catches lines that match the Python import
-// grammar at module top level. Handles:
-//
-//	import a
-//	import a.b
-//	import a, b, c
-//	from a import x
-//	from a.b import x as y
-//
-// Multi-line imports (`from x import (\n  y,\n  z\n)`) are partially
-// supported — only the module name on the first line is captured,
-// which is what we care about for the resolution check.
-var topLevelImportRegex = regexp.MustCompile(
-	`(?m)^[ \t]*(?:from[ \t]+([\w.]+)[ \t]+import\b|import[ \t]+([^\n#]+))`,
-)
+// entryRegex finds the first .py / .sh token of a command.
+var entryRegex = regexp.MustCompile(`(?:^|[\s=])['"]?([^\s'"=;&|]+\.(?:py|sh))['"]?(?:$|[\s;&|])`)
+
+// moduleRegex catches `python -m pkg.mod` entries.
+var moduleRegex = regexp.MustCompile(`\bpython[\d.]*\s+(?:-\S+\s+)*-m\s+([A-Za-z_][\w.]*)`)
+
+// entryScript returns the script token the command runs, or why there is
+// none to check.
+func entryScript(cmd string) (string, string) {
+	if m := moduleRegex.FindStringSubmatch(cmd); m != nil {
+		return "", fmt.Sprintf("the command runs a module (-m %s), not a script file", m[1])
+	}
+	m := entryRegex.FindStringSubmatch(cmd)
+	if m == nil {
+		return "", "no .py or .sh script in the command"
+	}
+	if strings.ContainsAny(m[1], "${}") {
+		return "", fmt.Sprintf("script path %s is computed at run time", m[1])
+	}
+	return m[1], ""
+}
 
 // pythonInterpreterRegex captures the python executable token in a command
-// (`python`, `python3`, `python3.11`).
-var pythonInterpreterRegex = regexp.MustCompile(`\b(python[\d.]*)\b`)
+// (`python`, `python3.11`, `/opt/py/bin/python3`).
+var pythonInterpreterRegex = regexp.MustCompile(`(?:^|[\s;&|])((?:/[\w.+-]+)*/python[\d.]*|python[\d.]*)(?:$|\s)`)
 
-// pythonInterpreterIn additionally reports whether the text actually
-// NAMED an interpreter — a guessed fallback lets the probe pick python3
-// vs python at runtime instead of hardcoding one (Codex r2 #4).
+// pythonInterpreterIn returns the interpreter the command names, and
+// whether it named one ("python" when not).
 func pythonInterpreterIn(text string) (string, bool) {
-	if m := pythonInterpreterRegex.FindStringSubmatch(text); len(m) > 1 {
+	if m := pythonInterpreterRegex.FindStringSubmatch(text); m != nil {
 		return m[1], true
 	}
 	return "python", false
 }
 
-// lastLine returns the last non-empty line of a multi-line string,
-// which for shell/activation failures is the actual error (e.g.
-// `sh: conda: command not found`). Avoids dumping a 20-line dump into
-// the user's submit error.
+// lastLine returns the last non-empty line (a shell error's useful part).
 func lastLine(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
-	if len(lines) == 0 {
-		return ""
-	}
 	return strings.TrimSpace(lines[len(lines)-1])
 }
 
-// ---- helpers for SubmitJob hookup ---------------------------------
-
-// renderSampleCommand picks the first task's rendered command from a
-// freshly-expanded sweep. Preflight checks (path-arg, imports) only
-// need one sample because all tasks in a sweep share the same script
-// + same env; only the arg values differ.
+// renderSampleCommand renders the first task's command — the same
+// command the plan submits (flag params with store_true semantics).
 func renderSampleCommand(proj *project.Config, taskParams []job.TaskParams, exclude map[string]bool) (string, error) {
 	if len(taskParams) == 0 {
 		return "", nil
 	}
-	// Flag-style params render with store_true semantics here too — the
-	// sample must be the SAME command the plan will submit.
 	var flags map[string]bool
 	for _, def := range proj.Params {
 		if def.Style == "flag" {
@@ -1082,4 +534,21 @@ func renderSampleCommand(proj *project.Config, taskParams []job.TaskParams, excl
 		}
 	}
 	return job.RenderWithFlags(proj.CmdTemplate, taskParams[0], exclude, flags)
+}
+
+// Format renders results one line each (✓ passed, ! warning, - skipped),
+// with remediation commands copy-paste ready under their check.
+func Format(results []CheckResult) string {
+	var b strings.Builder
+	for _, c := range results {
+		mark := map[string]string{"passed": "✓", "warning": "!"}[c.Status]
+		if mark == "" {
+			mark = "-"
+		}
+		fmt.Fprintf(&b, "%s %-14s %s\n", mark, c.Name, c.Detail)
+		for _, cmd := range c.Commands {
+			fmt.Fprintf(&b, "                 $ %s\n", cmd)
+		}
+	}
+	return b.String()
 }

@@ -126,9 +126,7 @@ command: python smoke.py
 fixed_params: {lr: 0.001, optimizer: adam}
 ```
 
-Preflight is configured once, in project.yaml. A job-level `preflight:` is
-ignored with a warning (with `extra_run` it is an error); to skip preflight for
-one submission, use `runq submit dr… --no-preflight`.
+A job-level `preflight:` is ignored with a warning (see Preflight below).
 Resources and environment continue to use `overrides`.
 Preview, preflight and submission use the same effective configuration. Submitted jobs save
 command, execution target, its selection source and the merged project snapshot.
@@ -239,9 +237,39 @@ To keep task workspaces on bulk storage, set `data_path` on the target (above).
 `RUNQ_OUTPUT_DIR`, `RUNQ_CHECKPOINT_DIR` and `WANDB_DIR` always point into the
 task directory; setting them in `environment:` or `overrides.env` is an error.
 Pass runq's paths to scripts that take an output flag
-(`--output_dir $RUNQ_OUTPUT_DIR`); preflight warns when a script defines such a
-flag and the command leaves it at its default. runq creates and permission-checks
-the directories on the target before submitting.
+(`--output_dir $RUNQ_OUTPUT_DIR`). runq creates the directories on the target
+before submitting; preflight warns when it could not.
+
+## Preflight
+
+Every `runq draft` and every `runq submit dr…` runs six checks against the
+target. They only **warn** — nothing is ever blocked, and there is nothing to
+switch off. They look for deterministic problems; whether the job actually runs
+(imports, data, GPUs) is a smoke job's question: submit one with small
+`fixed_params` to know.
+
+| Check | Warns when |
+|---|---|
+| `entry` | the script the command runs (`*.py` / `*.sh`, relative to `working_dir`) does not exist |
+| `interpreter` | the configured python (`python_env` venv's `bin/python`, an absolute path, or `python` on `PATH` inside the env) is missing or not executable |
+| `env_activation` | `python_env` does not activate in a non-interactive shell — the shell class compute nodes give the task (a conda set up only in `~/.bashrc` fails here) |
+| `data_dirs` | the task data directory's nearest existing parent is not writable |
+| `huggingface` | a repo listed under `preflight.hf` is not in the target's HF cache (files only; the warning carries the `huggingface-cli download` command) |
+| `shell_syntax` | `bash -n` rejects the generated run.sh or the submit line |
+
+The first five run as one shell on the target (login node for HPC); only the env
+activation takes a second or two. A check that cannot run there (timeout, an
+`hpc: preflight_local: false` target for the activation) reports `skipped`.
+`runq draft` shows every result; `runq submit dr…` prints the warnings (`--json`:
+`preflight_warnings`).
+
+```yaml
+preflight:
+  hf: [org/model, "{{param.model_name}}"]   # "{{param.X}}" checks every sweep value
+```
+
+`hf:` is the only key. `preflight.enabled`, `imports` and `extra_run` are retired:
+`runq project <file>` warns and drops them.
 
 ## Views and consumers
 

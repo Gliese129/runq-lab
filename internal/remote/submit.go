@@ -23,10 +23,8 @@ import (
 // SubmitOpts carries per-call submit options, mirroring service.SubmitJobOpts on
 // the daemon side so the two backends stay symmetric.
 type SubmitOpts struct {
-	// SkipPreflight disables the fail-before-submit checks (pip/import/path).
-	// On HPC these run on the login node, which may not match the compute node
-	// environment, so a skip flag is useful (CLI: --no-preflight).
-	SkipPreflight bool
+	// Preflight, when non-nil, receives the (warning-only) preflight report.
+	Preflight *preflight.Report
 	// Append, when non-nil, receives what an append (jobCfg.Into) did.
 	Append *job.AppendSummary
 }
@@ -87,22 +85,7 @@ func (b *Backend) envPrelude(env map[string]string) utils.EnvPrelude {
 // skipped checks stay visible — "didn't check" must look different from
 // "checked and passed".
 func printPreflight(r preflight.Report) {
-	for _, c := range r.Results {
-		mark := "-"
-		switch c.Status {
-		case "passed":
-			mark = "✓"
-		case "failed":
-			mark = "✗"
-		case "warning":
-			mark = "!"
-		}
-		fmt.Printf("%s %-10s %s\n", mark, c.Name, c.Detail)
-		// Remediation commands (e.g. HF pre-download): copy-paste ready.
-		for _, cmd := range c.Commands {
-			fmt.Printf("             $ %s\n", cmd)
-		}
-	}
+	fmt.Print(preflight.Format(r.Results))
 }
 
 // Prepare does everything up to (but NOT including) the external submission:
@@ -118,10 +101,9 @@ func printPreflight(r preflight.Report) {
 // Checks run against the TARGET: paths/script via its FS, probes on its
 // login node. The scope label is the honest caveat that the login-node
 // env may still differ from compute nodes.
-func (b *Backend) planDeps(skipPreflight bool) submitplan.Deps {
+func (b *Backend) planDeps() submitplan.Deps {
 	return submitplan.Deps{
 		IDGen:                 utils.GenerateTaskID,
-		SkipPreflight:         skipPreflight,
 		PreflightDisableLocal: b.Cfg.PreflightLocal != nil && !*b.Cfg.PreflightLocal,
 		PreflightScope:        fmt.Sprintf("on %s login node", b.Cfg.Name),
 		PreflightFS:           b.FS,
@@ -221,14 +203,18 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 		jobID, jobRoot = into.job.ID, into.root
 	}
 
-	deps := b.planDeps(opts.SkipPreflight)
+	deps := b.planDeps()
 	deps.JobID = jobID
 	deps.Paths = submitplan.Paths{WorkspaceRoot: jobRoot, LogRoot: jobRoot}
 	plan, err := submitplan.Build(ctx, planCfg, proj, deps)
 	if err != nil {
 		return "", nil, err
 	}
+	b.addShellSyntax(ctx, &plan)
 	printPreflight(plan.Preflight)
+	if opts.Preflight != nil {
+		*opts.Preflight = plan.Preflight
+	}
 
 	var supersede map[string]string
 	if into != nil {

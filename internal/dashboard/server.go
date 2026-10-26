@@ -21,6 +21,7 @@ import (
 	"github.com/gliese129/runq-lab/internal/config"
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/logfile"
+	"github.com/gliese129/runq-lab/internal/preflight"
 	"github.com/gliese129/runq-lab/internal/project"
 	"github.com/gliese129/runq-lab/internal/rfs"
 	"github.com/gliese129/runq-lab/internal/store"
@@ -793,11 +794,11 @@ func (s *Server) handleTargetGPUs(w http.ResponseWriter, r *http.Request) {
 }
 
 // submitBody is the v1 submit-family request body (spec §5.4, D12):
-// options live in the body, never in query parameters.
+// options live in the body, never in query parameters. (A pre-rc6
+// client's skip_preflight is ignored: preflight only warns.)
 type submitBody struct {
-	Config        job.JobConfig `json:"config"`
-	Target        string        `json:"target"`         // 缺省 = default_target
-	SkipPreflight bool          `json:"skip_preflight"` //nolint:tagliatelle
+	Config job.JobConfig `json:"config"`
+	Target string        `json:"target"` // 缺省 = default_target
 }
 
 func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
@@ -811,9 +812,10 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, backend.CodeBadRequest, "config.project is required")
 		return
 	}
+	var report preflight.Report
 	jobID, total, err := s.backend.SubmitJob(r.Context(), body.Config, backend.SubmitOptions{
-		SkipPreflight: body.SkipPreflight,
-		Target:        body.Target,
+		Target:    body.Target,
+		Preflight: &report,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -822,6 +824,7 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"job_id":      jobID,
 		"total_tasks": total,
+		"preflight":   report,
 	})
 }
 
@@ -891,15 +894,15 @@ func (s *Server) handlePreviewSubmit(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if body.Target != "" {
 		pt, ok := s.backend.(interface {
-			PreviewSubmitForTarget(ctx context.Context, target string, cfg job.JobConfig, skipPreflight bool) (backend.PreviewResult, error)
+			PreviewSubmitForTarget(ctx context.Context, target string, cfg job.JobConfig) (backend.PreviewResult, error)
 		})
 		if !ok {
 			writeErr(w, http.StatusBadRequest, backend.CodeBadRequest, "target scoping not supported by this backend")
 			return
 		}
-		res, err = pt.PreviewSubmitForTarget(r.Context(), body.Target, body.Config, body.SkipPreflight)
+		res, err = pt.PreviewSubmitForTarget(r.Context(), body.Target, body.Config)
 	} else {
-		res, err = s.backend.PreviewSubmit(r.Context(), body.Config, body.SkipPreflight)
+		res, err = s.backend.PreviewSubmit(r.Context(), body.Config)
 	}
 	if err != nil {
 		writeError(w, err)

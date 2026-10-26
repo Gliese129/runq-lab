@@ -68,10 +68,10 @@ func TestDraftIntoJob(t *testing.T) {
 	}
 
 	seedJob(t, st, "jb99990000", "success")
-	if _, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{Into: "jb9999", SkipPreflight: true}); err == nil || !strings.Contains(err.Error(), "appends to jb11112222") {
+	if _, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{Into: "jb9999"}); err == nil || !strings.Contains(err.Error(), "appends to jb11112222") {
 		t.Errorf("conflicting --into: %v", err)
 	}
-	if _, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{RerunFailed: true, SkipPreflight: true}); err != nil {
+	if _, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{RerunFailed: true}); err != nil {
 		t.Fatal(err)
 	}
 	if lane.received.Into != "jb11112222" || !lane.received.RerunFailed {

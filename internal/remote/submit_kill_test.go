@@ -37,7 +37,7 @@ func newTestBackend(t *testing.T, cfg *config.TargetConfig, run func(ctx context
 
 func prepareTasks(t *testing.T, b *Backend, proj *project.Config, cfg job.JobConfig) (string, []store.TaskRow) {
 	t.Helper()
-	jobID, rows, err := b.Prepare(context.Background(), cfg, proj, SubmitOpts{SkipPreflight: true})
+	jobID, rows, err := b.Prepare(context.Background(), cfg, proj, SubmitOpts{})
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestSetupCommandFailureAborts(t *testing.T) {
 	b, proj, jobCfg := newTestBackend(t, cfg, runner)
 	proj.SetupCommand = "exit 7"
 
-	_, _, err := b.Prepare(context.Background(), jobCfg, proj, SubmitOpts{SkipPreflight: true})
+	_, _, err := b.Prepare(context.Background(), jobCfg, proj, SubmitOpts{})
 	if err == nil {
 		t.Fatal("failing setup must abort the submit")
 	}
@@ -476,7 +476,7 @@ func TestPrepareRefusesArchivedProject(t *testing.T) {
 	if err := reg.Archive(context.Background(), proj.ProjectName); err != nil {
 		t.Fatalf("archive project: %v", err)
 	}
-	if _, _, err := b.Prepare(context.Background(), jobCfg, proj, SubmitOpts{SkipPreflight: true}); err == nil {
+	if _, _, err := b.Prepare(context.Background(), jobCfg, proj, SubmitOpts{}); err == nil {
 		t.Fatal("submit into an archived project must be refused")
 	} else if !strings.Contains(err.Error(), "archived") {
 		t.Fatalf("error should explain the archive state, got: %v", err)

@@ -1555,11 +1555,11 @@ func (m *MultiBackend) resolveInto(ctx context.Context, cfg *job.JobConfig, expl
 	return j.Target, nil
 }
 
-func (m *MultiBackend) PreviewSubmit(ctx context.Context, cfg job.JobConfig, skipPreflight bool) (PreviewResult, error) {
-	return m.PreviewSubmitForTarget(ctx, "", cfg, skipPreflight)
+func (m *MultiBackend) PreviewSubmit(ctx context.Context, cfg job.JobConfig) (PreviewResult, error) {
+	return m.PreviewSubmitForTarget(ctx, "", cfg)
 }
 
-func (m *MultiBackend) PreviewSubmitForTarget(ctx context.Context, explicit string, cfg job.JobConfig, skipPreflight bool) (PreviewResult, error) {
+func (m *MultiBackend) PreviewSubmitForTarget(ctx context.Context, explicit string, cfg job.JobConfig) (PreviewResult, error) {
 	m.routingMu.RLock()
 	defer m.routingMu.RUnlock()
 	given := explicit
@@ -1589,7 +1589,7 @@ func (m *MultiBackend) PreviewSubmitForTarget(ctx context.Context, explicit stri
 	} else {
 		sectionLine = "section: the job's (an append keeps it)"
 	}
-	out, err := be.PreviewSubmit(ctx, cfg, skipPreflight)
+	out, err := be.PreviewSubmit(ctx, cfg)
 	if out.Plan != nil {
 		out.Append = out.Plan.Append
 	}

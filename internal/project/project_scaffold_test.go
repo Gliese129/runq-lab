@@ -26,7 +26,7 @@ func TestWriteYAMLScaffoldsPreflight(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(buf)
-	if !strings.Contains(text, "preflight:") || !strings.Contains(text, "enabled: true") {
+	if !strings.Contains(text, "preflight:") || strings.Contains(text, "enabled:") || strings.Contains(text, "extra_run") {
 		t.Fatalf("scaffold missing:\n%s", text)
 	}
 	// model-ish param suggested, quoted (bare {{ is invalid YAML).
@@ -45,8 +45,8 @@ func TestWriteYAMLScaffoldsPreflight(t *testing.T) {
 	if pf == nil {
 		t.Fatal("scaffold block not parsed into Preflight")
 	}
-	if !pf.EnabledOrDefault() || !pf.ImportsOrDefault() || pf.ExtraRunOrEmpty() != "" {
-		t.Fatalf("scaffold semantics differ from defaults: %+v", pf)
+	if pf.Enabled != nil || pf.Imports != nil || pf.ExtraRun != nil {
+		t.Fatalf("scaffold must not write retired keys: %+v", pf)
 	}
 	if len(pf.HF) != 1 || pf.HF[0] != "{{param.model_name}}" {
 		t.Fatalf("hf suggestion parsed wrong: %+v", pf.HF)
@@ -54,9 +54,8 @@ func TestWriteYAMLScaffoldsPreflight(t *testing.T) {
 
 	// A config that already HAS a preflight block gets no scaffold text.
 	dir2 := t.TempDir()
-	on := true
 	c2 := &Config{ProjectName: "p", WorkingDir: dir2, CmdTemplate: "x",
-		Preflight: &PreflightConfig{Enabled: &on, HF: []string{"org/m"}}}
+		Preflight: &PreflightConfig{HF: []string{"org/m"}}}
 	if err := c2.WriteYAML(nil); err != nil {
 		t.Fatal(err)
 	}

@@ -44,7 +44,7 @@ func TestNewClientDaemonWithoutTargetsDoesNotRequireRunqd(t *testing.T) {
 	if _, err := d.multiBe.ListJobs(context.Background(), ""); err != nil {
 		t.Fatalf("status/list path must remain available: %v", err)
 	}
-	if _, err := d.multiBe.PreviewSubmit(context.Background(), job.JobConfig{}, true); !errors.Is(err, backend.ErrNoTargetConfigured) {
+	if _, err := d.multiBe.PreviewSubmit(context.Background(), job.JobConfig{}); !errors.Is(err, backend.ErrNoTargetConfigured) {
 		t.Fatalf("target-dependent path error = %v, want ErrNoTargetConfigured", err)
 	}
 }

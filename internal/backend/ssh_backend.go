@@ -1490,7 +1490,7 @@ func (b *SSHBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts Subm
 	if err != nil {
 		return "", 0, fmt.Errorf("project %q: %w", cfg.Project, err)
 	}
-	jobID, rows, err := b.backend.Prepare(ctx, cfg, proj, remote.SubmitOpts{SkipPreflight: opts.SkipPreflight, Append: opts.Append})
+	jobID, rows, err := b.backend.Prepare(ctx, cfg, proj, remote.SubmitOpts{Append: opts.Append, Preflight: opts.Preflight})
 	if err != nil {
 		return jobID, 0, err
 	}
@@ -1517,12 +1517,12 @@ func (b *SSHBackend) SchedulerParamRefs() []string {
 	return config.HPCTemplateParamRefs(b.backend.Cfg.SubmitTemplate)
 }
 
-func (b *SSHBackend) PreviewSubmit(ctx context.Context, cfg job.JobConfig, skipPreflight bool) (PreviewResult, error) {
+func (b *SSHBackend) PreviewSubmit(ctx context.Context, cfg job.JobConfig) (PreviewResult, error) {
 	proj, err := b.submissionProject(ctx, cfg)
 	if err != nil {
 		return PreviewResult{}, fmt.Errorf("project %q: %w", cfg.Project, err)
 	}
-	text, plan, err := b.backend.CompilePreview(ctx, cfg, proj, skipPreflight)
+	text, plan, err := b.backend.CompilePreview(ctx, cfg, proj)
 	if err != nil {
 		return PreviewResult{}, err
 	}

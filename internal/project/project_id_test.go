@@ -100,6 +100,12 @@ func TestNormalizeLegacyProjectKeys(t *testing.T) {
 	if err != nil || len(warns) != 2 || c.EnvFile != nil || c.Preflight.Wandb != nil {
 		t.Fatalf("env_file: .env and preflight.wandb drop with warnings: %v %v %+v", warns, err, c)
 	}
+	off, run := false, "exit 1"
+	c = Config{Preflight: &PreflightConfig{Enabled: &off, Imports: &off, ExtraRun: &run, HF: []string{"org/m"}}}
+	warns, err = NormalizeLegacy(&c)
+	if err != nil || len(warns) != 3 || c.Preflight.Enabled != nil || c.Preflight.Imports != nil || c.Preflight.ExtraRun != nil || len(c.Preflight.HF) != 1 {
+		t.Fatalf("preflight.enabled/imports/extra_run drop with warnings, hf stays: %v %v %+v", warns, err, c.Preflight)
+	}
 	c = Config{EnvFile: &other}
 	if _, err := NormalizeLegacy(&c); err == nil {
 		t.Fatal("another env_file changes what runs: error")

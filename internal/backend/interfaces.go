@@ -5,6 +5,7 @@ import (
 
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/logfile"
+	"github.com/gliese129/runq-lab/internal/preflight"
 	"github.com/gliese129/runq-lab/internal/project"
 	"github.com/gliese129/runq-lab/internal/store"
 	"github.com/gliese129/runq-lab/internal/workspace"
@@ -138,9 +139,9 @@ type Backend interface {
 
 	SubmitJob(ctx context.Context, cfg job.JobConfig, opts SubmitOptions) (jobID string, totalTasks int, err error)
 	// PreviewSubmit renders what WOULD be submitted (preview is truth, zero
-	// side effects), plus the structured preflight report. Backends without
-	// the concept return ErrNotSupported.
-	PreviewSubmit(ctx context.Context, cfg job.JobConfig, skipPreflight bool) (PreviewResult, error)
+	// side effects), plus the structured (warning-only) preflight report.
+	// Backends without the concept return ErrNotSupported.
+	PreviewSubmit(ctx context.Context, cfg job.JobConfig) (PreviewResult, error)
 	// Archive = hide from default lists, keep everything; reversible.
 	// ListJobs returns visible jobs only; ListArchivedJobs the rest.
 	ListArchivedJobs(ctx context.Context) ([]JobSummary, error)
@@ -162,10 +163,12 @@ type Backend interface {
 }
 
 type SubmitOptions struct {
-	SkipPreflight bool
-	Target        string // compute target name; empty = job.target > project.target
+	Target string // compute target name; empty = job.target > project.target
 	// Append, when non-nil, receives what an append (cfg.Into) did.
 	Append *job.AppendSummary
+	// Preflight, when non-nil, receives the submit's preflight report
+	// (warnings never block).
+	Preflight *preflight.Report
 }
 
 // JobRenamer changes a job's display name (ref = id or unique id prefix)

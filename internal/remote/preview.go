@@ -18,12 +18,12 @@ import (
 // representative run.sh (first task) and its submit command — with zero
 // side effects: nothing written, nothing persisted, nothing queued.
 // The dry-run contract: preview is truth, disk stays untouched (C5/U1).
-func (b *Backend) Preview(ctx context.Context, jobCfg job.JobConfig, proj *project.Config, skipPreflight bool) (string, preflight.Report, error) {
-	text, plan, err := b.CompilePreview(ctx, jobCfg, proj, skipPreflight)
+func (b *Backend) Preview(ctx context.Context, jobCfg job.JobConfig, proj *project.Config) (string, preflight.Report, error) {
+	text, plan, err := b.CompilePreview(ctx, jobCfg, proj)
 	return text, plan.Preflight, err
 }
 
-func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj *project.Config, skipPreflight bool) (string, submitplan.Plan, error) {
+func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj *project.Config) (string, submitplan.Plan, error) {
 	warns := jobCfg.NormalizeLegacy()
 	var into *appendTarget
 	if jobCfg.Into != "" {
@@ -35,7 +35,7 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	} else {
 		warns = append(warns, duplicateNameWarnings(ctx, b.Store, jobCfg)...)
 	}
-	deps := b.planDeps(skipPreflight)
+	deps := b.planDeps()
 	deps.JobID = utils.GenerateJobID()
 	// Use the same root and layout as Prepare without materializing it.
 	root, err := b.WorkspaceRoot(ctx, proj, false)
@@ -49,29 +49,9 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	deps.Paths = submitplan.Paths{WorkspaceRoot: jobRoot, LogRoot: jobRoot}
 	plan, err := submitplan.Build(ctx, jobCfg, proj, deps)
 	if err != nil {
-		// A preflight failure is a RESULT for a dry-run, not an error
-		// (Codex r1 #6): return the structured report + readable text so
-		// the WebUI replaces last round's findings instead of keeping
-		// them next to a bare error string. Other Build errors (render,
-		// validation) still propagate.
-		if len(plan.Preflight.Results) > 0 && !plan.Preflight.OK() {
-			var s strings.Builder
-			s.WriteString("preflight failed — nothing would be submitted:\n\n")
-			for _, c := range plan.Preflight.Results {
-				mark := map[string]string{"passed": "✓", "failed": "✗", "warning": "!"}[c.Status]
-				if mark == "" {
-					mark = "-"
-				}
-				fmt.Fprintf(&s, "%s %-10s %s\n", mark, c.Name, c.Detail)
-				for _, rc := range c.Commands {
-					fmt.Fprintf(&s, "             $ %s\n", rc)
-				}
-			}
-			s.WriteString("\nFix the failed checks, or submit with --no-preflight.")
-			return s.String(), plan, nil
-		}
 		return "", submitplan.Plan{}, err
 	}
+	b.addShellSyntax(ctx, &plan)
 
 	var s strings.Builder
 	if into != nil {
@@ -99,17 +79,7 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	} else {
 		fmt.Fprintf(&s, "data: %s/ (preview job id; regenerated at submit)\n\n", jobRoot)
 	}
-	for _, c := range plan.Preflight.Results {
-		mark := map[string]string{"passed": "✓", "failed": "✗", "warning": "!"}[c.Status]
-		if mark == "" {
-			mark = "-"
-		}
-		fmt.Fprintf(&s, "%s %-10s %s\n", mark, c.Name, c.Detail)
-		// Remediation commands (e.g. HF pre-download): copy-paste ready.
-		for _, rc := range c.Commands {
-			fmt.Fprintf(&s, "             $ %s\n", rc)
-		}
-	}
+	s.WriteString(preflight.Format(plan.Preflight.Results))
 
 	if len(plan.Tasks) == 0 {
 		return "", submitplan.Plan{}, fmt.Errorf("sweep expands to zero tasks — check sweep parameters (nothing would be submitted)")

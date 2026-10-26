@@ -73,14 +73,14 @@ func TestQueryTargetFilterDoesNotChooseSubmitOrPreview(t *testing.T) {
 	if _, _, err := proxy.SubmitJob(context.Background(), cfg, backend.SubmitOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := proxy.PreviewSubmit(context.Background(), cfg, true); err != nil {
+	if _, err := proxy.PreviewSubmit(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	if bodies[0].Target != "" || bodies[1].Target != "" || bodies[1].Config.Target != "job-target" {
 		t.Fatalf("query filter changed submission: %+v", bodies)
 	}
 	proxy.SubmitTarget = "explicit"
-	if _, err := proxy.PreviewSubmit(context.Background(), cfg, true); err != nil {
+	if _, err := proxy.PreviewSubmit(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	if bodies[2].Target != "explicit" {

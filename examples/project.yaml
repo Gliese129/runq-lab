@@ -4,7 +4,7 @@
 # After editing:  runq submit job.yaml --project-file project.yaml   (upserts)
 #
 # One project per code base. Experiments differ by job.yaml (which may set
-# its own command / target / preflight), never by a new project.
+# its own command / target), never by a new project.
 # Config priority: CLI flag > job.yaml override > this file > built-in default.
 
 project_name: resnet50

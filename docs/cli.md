@@ -15,11 +15,11 @@ When the service serves the dashboard, `submit`, `ps` and `show` JSON carry a
 
 | Command | What it does |
 |---|---|
-| `runq draft <job.yaml \| . \| -> [-p project] [-s section] [-t target]` | Plan: expanded tasks, run table, chosen target and section, rendered command (HPC: run.sh + submit line), params that reach the code only via `ctx.params`. Submits nothing; keeps the plan as draft `dr…` (5 open per project) |
+| `runq draft <job.yaml \| . \| -> [-p project] [-s section] [-t target]` | Plan: expanded tasks, run table, chosen target and section, rendered command (HPC: run.sh + submit line), params that reach the code only via `ctx.params`, preflight results (warnings only; `--json`: `preflight`). Submits nothing; keeps the plan as draft `dr…` (5 open per project) |
 | `runq draft ps` / `runq draft show dr… [--yaml]` | Open drafts / one draft's run table (`--yaml`: its editable form) |
 | `runq draft edit dr… [-f file]` | Replace the plan from the edited YAML (rev-checked) or in `$EDITOR` |
 | `runq draft discard dr…` | Delete an open draft |
-| `runq submit dr… [--rev N] --json` | Freeze the draft into a job → `{"job_id", "total_tasks", "draft_id", "url"}`; submitting it again returns the same job |
+| `runq submit dr… [--rev N] --json` | Freeze the draft into a job → `{"job_id", "total_tasks", "draft_id", "url", "preflight_warnings"}`; submitting it again returns the same job. Preflight runs again and only warns (see [configuration](configuration.md#preflight)) |
 | `runq draft <job.yaml> --into <jb…> [--rerun-failed]` | Plan an append to an existing job (same project and target): each row is new, already there (done, running, queued) or failed — skipped unless `--rerun-failed`. Params only the scheduler reads don't make a cell new |
 | `runq submit dr… --into <jb…> [--rerun-failed]` | Append the draft to that job as its next batch → `{"job_id", "total_tasks", "append": {"new", "skipped_existing", "skipped_failed", "rerun_failed", "batch"}}`. A rerun is a new task; the failed one stays as history. Nothing new → an error, no batch |
 | `runq submit [job.yaml \| . \| -]` (at a terminal) | Plan the file as a draft and show it, then one key: `s` submit, `e` edit in `$EDITOR`, `p` pick the project, `q` quit keeping the draft. No argument starts from a template. Outside a terminal a job file is refused — use `runq draft` |
@@ -63,7 +63,7 @@ When the service serves the dashboard, `submit`, `ps` and `show` JSON carry a
 | `runq section sort <project>` | Apply the rules to the project's unsorted jobs |
 
 A new project must declare `target`. Experiments differ by job, not by project:
-a job may carry its own `command`, `target` and `preflight`.
+a job may carry its own `command` and `target`.
 
 ## Targets (where tasks run)
 

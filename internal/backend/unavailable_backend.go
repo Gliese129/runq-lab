@@ -117,7 +117,7 @@ func (b *UnavailableBackend) ArchiveProject(context.Context, string) error { ret
 
 func (b *UnavailableBackend) UnarchiveProject(context.Context, string) error { return b.wrap() }
 
-func (b *UnavailableBackend) PreviewSubmit(context.Context, job.JobConfig, bool) (PreviewResult, error) {
+func (b *UnavailableBackend) PreviewSubmit(context.Context, job.JobConfig) (PreviewResult, error) {
 	return PreviewResult{}, b.wrap()
 }
 

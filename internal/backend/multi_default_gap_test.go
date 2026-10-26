@@ -49,7 +49,7 @@ func TestDefaultBackendReconcileGap(t *testing.T) {
 	if _, lerr := m.ListProjects(ctx); lerr != nil {
 		t.Fatal("project snapshots must survive routing gaps")
 	}
-	if _, derr := m.PreviewSubmit(ctx, job.JobConfig{}, true); derr == nil {
+	if _, derr := m.PreviewSubmit(ctx, job.JobConfig{}); derr == nil {
 		t.Fatal("gap DryRun must return an error, not panic")
 	}
 }
@@ -81,7 +81,7 @@ func TestMultiBackendUnconfiguredState(t *testing.T) {
 		t.Fatalf("empty GPU aggregate = %+v, err %v", gpus, err)
 	}
 
-	_, err = m.PreviewSubmit(ctx, job.JobConfig{}, true)
+	_, err = m.PreviewSubmit(ctx, job.JobConfig{})
 	if !errors.Is(err, ErrNoTargetConfigured) {
 		t.Fatalf("DryRun error = %v, want ErrNoTargetConfigured", err)
 	}

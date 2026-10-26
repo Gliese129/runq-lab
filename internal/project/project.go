@@ -79,21 +79,17 @@ func (c *Config) preflightScaffold() string {
 			hfLines += fmt.Sprintf("    - \"{{param.%s}}\"  # suggested from param names — remove if this is not a HuggingFace repo id\n", p.Name)
 		}
 	}
-	hfBlock := "  hf: []              # HuggingFace repos to verify; \"{{param.NAME}}\" checks every sweep value\n"
+	hfBlock := "  hf: []              # HuggingFace repos that must be in the HF cache; \"{{param.NAME}}\" checks every sweep value\n"
 	if hfLines != "" {
-		hfBlock = "  hf:                 # HuggingFace repos to verify; \"{{param.NAME}}\" checks every sweep value\n" + hfLines
+		hfBlock = "  hf:                 # HuggingFace repos that must be in the HF cache; \"{{param.NAME}}\" checks every sweep value\n" + hfLines
 	}
 	return `
-# Submit-time checks (preflight). Declared entries are a contract: they are
-# verified inside the task's env in a NON-INTERACTIVE shell (the shell class
-# compute nodes use — no ~/.bashrc) on every submit; failures block before
-# anything is queued. Undeclared checks fall back to best-effort static
-# analysis of the entry .py.
+# Preflight runs on every runq draft and runq submit and only warns about
+# deterministic problems (entry script, interpreter, env activation in a
+# non-interactive shell, data dir, HF cache, run.sh syntax). To know the
+# job runs, submit a smoke job.
 preflight:
-  enabled: true       # master switch; runq submit --no-preflight still skips per-run
-  imports: true       # probe top-level imports of the entry .py (best effort)
-` + hfBlock + `  extra_run: ""       # custom shell check; non-zero exit blocks submission
-`
+` + hfBlock
 }
 
 // Config represents a parsed project.yaml file.
@@ -146,45 +142,25 @@ type Config struct {
 	PythonEnv PythonEnvConfig `yaml:"python_env,omitempty" json:"python_env,omitempty"`
 	Wandb     *WandbConfig    `yaml:"wandb,omitempty" json:"wandb,omitempty"`
 	Params    []ParamDef      `yaml:"params,omitempty" json:"params,omitempty"`
-	// Preflight is the project's submit-time check CONTRACT (RQ-76 ②).
-	// nil = the same defaults the scaffold makes visible — an absent block
-	// never means a second set of semantics.
+	// Preflight declares what the (warning-only) submit-time checks look
+	// for beyond what the command itself names: the HF repos to find cached.
 	Preflight *PreflightConfig `yaml:"preflight,omitempty" json:"preflight,omitempty"`
 }
 
-// PreflightConfig declares what preflight verifies for this project.
-// Principle: what is DECLARED is a contract (verified exactly, failures
-// block); what is not declared is best-effort static analysis. The
-// checks run inside the task's env in a NON-INTERACTIVE shell — the
-// shell class compute nodes give the task — which is what a manual
-// login-shell check can never prove.
+// PreflightConfig is project.yaml's preflight block. Preflight always
+// runs and only warns; the block only adds what to look for.
 type PreflightConfig struct {
-	// Enabled is the project-level master switch. nil/true = on.
-	// `runq submit --no-preflight` still skips per-run.
-	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	// Imports probes top-level imports of the entry .py (best effort;
-	// shell entries have nothing to statically analyze). nil/true = on.
-	Imports *bool `yaml:"imports,omitempty" json:"imports,omitempty"`
-	// Wandb is retired in rc6 (warned and ignored, see NormalizeLegacy).
-	Wandb *bool `yaml:"wandb,omitempty" json:"wandb,omitempty"`
-	// HF lists HuggingFace repos to verify. "{{param.NAME}}" entries
-	// expand against the sweep — EVERY value is checked. Declared repos
-	// that are missing or gated block the submit.
+	// HF lists HuggingFace repos that must be in the target's HF cache.
+	// "{{param.NAME}}" entries expand against the sweep — EVERY value is
+	// checked. A missing repo warns with its pre-download command.
 	HF []string `yaml:"hf,omitempty" json:"hf,omitempty"`
-	// ExtraRun is a custom shell check executed inside the activated env
-	// in the same probe shell; non-zero exit blocks the submit. The
-	// catch-all for anything runq cannot see statically.
-	ExtraRun string `yaml:"extra_run,omitempty" json:"extra_run,omitempty"`
-}
 
-// EnabledOrDefault: absent block / absent key = enabled.
-func (p *PreflightConfig) EnabledOrDefault() bool {
-	return p == nil || p.Enabled == nil || *p.Enabled
-}
-
-// ImportsOrDefault: absent = on (best-effort static analysis).
-func (p *PreflightConfig) ImportsOrDefault() bool {
-	return p == nil || p.Imports == nil || *p.Imports
+	// Retired (warned and ignored, see NormalizeLegacy): preflight cannot
+	// be switched off, and imports / extra_run are a smoke job's job now.
+	Enabled  *bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Imports  *bool   `yaml:"imports,omitempty" json:"imports,omitempty"`
+	ExtraRun *string `yaml:"extra_run,omitempty" json:"extra_run,omitempty"`
+	Wandb    *bool   `yaml:"wandb,omitempty" json:"wandb,omitempty"`
 }
 
 // HFRepos returns the declared repo list (nil-safe).
@@ -193,14 +169,6 @@ func (p *PreflightConfig) HFRepos() []string {
 		return nil
 	}
 	return p.HF
-}
-
-// ExtraRunOrEmpty returns the custom check command (nil-safe).
-func (p *PreflightConfig) ExtraRunOrEmpty() string {
-	if p == nil {
-		return ""
-	}
-	return p.ExtraRun
 }
 
 // ParamDef declares submission semantics. Defaults belong in research code.
@@ -296,11 +264,28 @@ type PythonEnvConfig struct {
 //   - env_file: .env → dropped with a warning (runq always reads
 //     <working_dir>/.env); any other value (including "") → error.
 //   - preflight.wandb → dropped with a warning (no credential check).
+//   - preflight.enabled / imports / extra_run → dropped with a warning:
+//     preflight always runs and only warns; a smoke job answers "does it
+//     run".
 func NormalizeLegacy(c *Config) ([]string, error) {
 	var warns []string
-	if c.Preflight != nil && c.Preflight.Wandb != nil {
-		warns = append(warns, `"preflight.wandb" is no longer checked; remove it`)
-		c.Preflight.Wandb = nil
+	if p := c.Preflight; p != nil {
+		if p.Wandb != nil {
+			warns = append(warns, `"preflight.wandb" is no longer checked; remove it`)
+			p.Wandb = nil
+		}
+		if p.Enabled != nil {
+			warns = append(warns, `"preflight.enabled" is no longer used (preflight always runs and only warns); remove it`)
+			p.Enabled = nil
+		}
+		if p.Imports != nil {
+			warns = append(warns, `"preflight.imports" is no longer checked (to know the imports resolve, submit a smoke job); remove it`)
+			p.Imports = nil
+		}
+		if p.ExtraRun != nil {
+			warns = append(warns, `"preflight.extra_run" is no longer run (put the check in a smoke job); remove it`)
+			p.ExtraRun = nil
+		}
 	}
 	if c.EnvFile != nil {
 		switch strings.TrimSpace(*c.EnvFile) {

@@ -54,7 +54,7 @@ func TestAppendIntoJob(t *testing.T) {
 	b, proj := appendFixture(t)
 	first := gridCfg([]any{0, 1}, nil)
 	first.Name = "A1 seeds"
-	jobID, rows, err := b.Prepare(ctx, first, proj, SubmitOpts{SkipPreflight: true})
+	jobID, rows, err := b.Prepare(ctx, first, proj, SubmitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestAppendIntoJob(t *testing.T) {
 	more := gridCfg([]any{0, 1, 2}, map[string]any{"h_rt": "4:00:00"})
 	more.Name, more.Into = "more seeds", jobID
 
-	text, plan, err := b.CompilePreview(ctx, more, proj, true)
+	text, plan, err := b.CompilePreview(ctx, more, proj)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestAppendIntoJob(t *testing.T) {
 	}
 
 	var summary job.AppendSummary
-	gotID, added, err := b.Prepare(ctx, more, proj, SubmitOpts{SkipPreflight: true, Append: &summary})
+	gotID, added, err := b.Prepare(ctx, more, proj, SubmitOpts{Append: &summary})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestAppendIntoJob(t *testing.T) {
 	// --rerun-failed: only the failed cell runs again, as a new task.
 	more.RerunFailed = true
 	summary = job.AppendSummary{}
-	_, rerun, err := b.Prepare(ctx, more, proj, SubmitOpts{SkipPreflight: true, Append: &summary})
+	_, rerun, err := b.Prepare(ctx, more, proj, SubmitOpts{Append: &summary})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestAppendIntoJob(t *testing.T) {
 	}
 
 	// Everything exists now: nothing to append, no batch.
-	_, _, err = b.Prepare(ctx, more, proj, SubmitOpts{SkipPreflight: true})
+	_, _, err = b.Prepare(ctx, more, proj, SubmitOpts{})
 	if !errors.Is(err, job.ErrNothingToAppend) || !strings.Contains(err.Error(), "all 9 cells already exist") {
 		t.Fatalf("err = %v", err)
 	}
@@ -145,7 +145,7 @@ func TestAppendIntoJob(t *testing.T) {
 func TestAppendRefusesOtherProjectAndTarget(t *testing.T) {
 	ctx := context.Background()
 	b, proj := appendFixture(t)
-	jobID, _, err := b.Prepare(ctx, gridCfg([]any{0}, nil), proj, SubmitOpts{SkipPreflight: true})
+	jobID, _, err := b.Prepare(ctx, gridCfg([]any{0}, nil), proj, SubmitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,13 +153,13 @@ func TestAppendRefusesOtherProjectAndTarget(t *testing.T) {
 	other.ProjectName, other.ID = "other", ""
 	cfg := gridCfg([]any{1}, nil)
 	cfg.Project, cfg.Into = "other", jobID
-	if _, _, err := b.Prepare(ctx, cfg, &other, SubmitOpts{SkipPreflight: true}); err == nil || !strings.Contains(err.Error(), "belongs to project") {
+	if _, _, err := b.Prepare(ctx, cfg, &other, SubmitOpts{}); err == nil || !strings.Contains(err.Error(), "belongs to project") {
 		t.Errorf("other project: %v", err)
 	}
 	b2 := &Backend{Cfg: &config.TargetConfig{Name: "elsewhere", SubmitTemplate: "echo 1", SubmitIDRegex: "([0-9]+)", KillTemplate: "true"}, Store: b.Store, FS: b.FS}
 	cfg = gridCfg([]any{1}, nil)
 	cfg.Into = jobID
-	if _, _, err := b2.Prepare(ctx, cfg, proj, SubmitOpts{SkipPreflight: true}); err == nil || !strings.Contains(err.Error(), "runs on target fixture") {
+	if _, _, err := b2.Prepare(ctx, cfg, proj, SubmitOpts{}); err == nil || !strings.Contains(err.Error(), "runs on target fixture") {
 		t.Errorf("other target: %v", err)
 	}
 }

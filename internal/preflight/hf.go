@@ -1,65 +1,93 @@
 package preflight
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/gliese129/runq-lab/internal/job"
 )
 
-// HuggingFace reference detection (RQ-76 ②, feedback group 2).
-//
-// The single biggest class of "queued 2h, then died in 10s" failures the
-// preflight missed: the script references a Hub repo (`from_pretrained`,
-// `load_dataset`, ...) that is not cached locally and cannot be resolved
-// from the compute node (no internet / wrong id / gated without token).
-//
-// Detection is regex-over-source, same discipline as import extraction:
-// only STRING LITERALS are picked up. A repo id built at runtime
-// (f-strings, variables) is invisible — that is a documented limitation,
-// not a bug; the run-time evidence chain (RQ-74) still catches it.
-
-// HFRef is one Hub repository the script references.
+// HFRef is one HuggingFace Hub repository project.yaml declares under
+// preflight.hf. RepoType "any" = model or dataset (whichever is cached).
 type HFRef struct {
 	RepoID   string `json:"repo_id"`
-	RepoType string `json:"repo_type"` // "model" | "dataset"
+	RepoType string `json:"repo_type"` // "model" | "dataset" | "any"
 }
 
-// hfModelCallRegex catches model-repo loads:
-//
-//	AutoModel.from_pretrained("org/name")
-//	snapshot_download("org/name") / snapshot_download(repo_id="org/name")
-//	hf_hub_download(repo_id="org/name", filename=...)
-var hfModelCallRegex = regexp.MustCompile(
-	`(?:from_pretrained|snapshot_download|hf_hub_download)\(\s*(?:repo_id\s*=\s*)?["']([^"'\s]+)["']`)
-
-// hfDatasetCallRegex catches dataset loads: load_dataset("org/name") /
-// load_dataset(path="org/name").
-var hfDatasetCallRegex = regexp.MustCompile(
-	`load_dataset\(\s*(?:path\s*=\s*)?["']([^"'\s]+)["']`)
-
-// hfRepoIDRegex is the shape of a plausible Hub repo id: `name` or
-// `org/name`. Everything else the call regexes matched (local paths,
-// URLs, format strings) is discarded.
+// hfRepoIDRegex is the shape of a Hub repo id: `name` or `org/name`.
 var hfRepoIDRegex = regexp.MustCompile(`^[A-Za-z0-9][\w.\-]*(?:/[A-Za-z0-9][\w.\-]*)?$`)
 
-// looksLikeHFRepoID filters call-site matches down to real Hub ids.
-// Local paths (absolute, relative, home-relative) and templated strings
-// are the caller's business, not the Hub's.
 func looksLikeHFRepoID(s string) bool {
-	if s == "" || strings.HasPrefix(s, "/") || strings.HasPrefix(s, ".") || strings.HasPrefix(s, "~") {
+	if s == "" || strings.ContainsAny(s[:1], "/.~") || strings.ContainsAny(s, "{$") {
 		return false
-	}
-	if strings.Contains(s, "{") || strings.Contains(s, "$") {
-		return false // f-string / template fragment — not a literal id
 	}
 	return hfRepoIDRegex.MatchString(s)
 }
 
-// DownloadCommand renders the ready-made pre-download command for a ref.
-// Surfaced verbatim in warnings so the CLI user can copy-paste it and the
-// WebUI can inject it into the project's setup command in one click.
+// cacheDirs are the hub-cache directory names the repo may live under
+// (huggingface_hub layout: models--org--name / datasets--org--name).
+func (r HFRef) cacheDirs() []string {
+	flat := strings.ReplaceAll(r.RepoID, "/", "--")
+	switch r.RepoType {
+	case "model":
+		return []string{"models--" + flat}
+	case "dataset":
+		return []string{"datasets--" + flat}
+	}
+	return []string{"models--" + flat, "datasets--" + flat}
+}
+
+// DownloadCommand is the ready-made pre-download command for a ref,
+// surfaced with the warning (CLI prints it, the dashboard can offer it).
 func (r HFRef) DownloadCommand() string {
 	if r.RepoType == "dataset" {
 		return "huggingface-cli download --repo-type dataset " + r.RepoID
 	}
 	return "huggingface-cli download " + r.RepoID
+}
+
+// contractParamRegex matches a "{{param.NAME}}" preflight.hf entry.
+var contractParamRegex = regexp.MustCompile(`^\{\{param\.(\w+)}}$`)
+
+// expandContractHF turns the declared preflight.hf list into refs.
+// "{{param.NAME}}" entries expand against EVERY task's value. Entries that
+// cannot be checked (not a repo id, a param no task defines) come back as
+// problems — warned, never dropped silently.
+func expandContractHF(declared []string, taskParams []job.TaskParams) ([]HFRef, []string) {
+	var refs []HFRef
+	var problems []string
+	seen := map[string]bool{}
+	add := func(id, origin string) {
+		if !looksLikeHFRepoID(id) {
+			problems = append(problems, fmt.Sprintf("preflight.hf entry %s resolves to %q, not a HuggingFace repo id", origin, id))
+			return
+		}
+		if !seen[id] {
+			seen[id] = true
+			refs = append(refs, HFRef{RepoID: id, RepoType: "any"})
+		}
+	}
+	for _, entry := range declared {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		m := contractParamRegex.FindStringSubmatch(entry)
+		if m == nil {
+			add(entry, fmt.Sprintf("%q", entry))
+			continue
+		}
+		found := false
+		for _, params := range taskParams {
+			if v, ok := params[m[1]]; ok {
+				found = true
+				add(fmt.Sprintf("%v", v), entry)
+			}
+		}
+		if !found {
+			problems = append(problems, fmt.Sprintf("preflight.hf entry %q references a param no task defines", entry))
+		}
+	}
+	return refs, problems
 }
