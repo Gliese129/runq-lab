@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/gliese129/runq-lab/internal/consumer"
+	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/store"
 	"time"
 
@@ -27,6 +28,8 @@ type PreviewResult struct {
 	TargetSource string            `json:"target_source"`
 	SyncPending  bool              `json:"sync_pending,omitempty"`
 	Plan         *submitplan.Plan  `json:"plan,omitempty"`
+	// Append is what an append (--into) would do with each row.
+	Append *job.AppendSummary `json:"append,omitempty"`
 
 	Preview   string           `json:"preview"`
 	Preflight preflight.Report `json:"preflight"`
@@ -85,6 +88,8 @@ type JobDetail struct {
 	MetricKeys   []string            `json:"metric_keys"`
 	Wandb        *WandbInfo          `json:"wandb,omitempty"`
 	Config       json.RawMessage     `json:"config,omitempty"` // raw JobConfig (re-run as template)
+	// Batches are the job's submissions: seq 1 first, then each --into.
+	Batches []JobBatchView `json:"batches,omitempty"`
 	// DataDir is the job's workspace directory (RQ2-1 §F: the Data tab's
 	// fs/list root). ABSOLUTE path with TARGET semantics — it only means
 	// something on the filesystem of job.target; pair it with that target
@@ -102,9 +107,16 @@ type TaskView struct {
 	RefreshedAt  *int64        `json:"refreshed_at,omitempty"`
 	Stale        bool          `json:"stale"`
 
-	ID             string                        `json:"id"`
-	RunName        string                        `json:"run_name,omitempty"`
-	JobID          string                        `json:"job_id,omitempty"`
+	ID       string `json:"id"`
+	RunName  string `json:"run_name,omitempty"`
+	JobID    string `json:"job_id,omitempty"`
+	BatchSeq int    `json:"batch_seq,omitempty"`
+	// SupersededBy is the task that reran this failed cell: this one is
+	// history and no longer counts toward the job.
+	SupersededBy string `json:"superseded_by,omitempty"`
+	// LastOutputAt is when the task's log last grew (unix seconds), as
+	// last observed; absent before the first observation.
+	LastOutputAt   *int64                        `json:"last_output_at,omitempty"`
 	Project        string                        `json:"project,omitempty"`
 	Status         string                        `json:"status"`
 	Params         map[string]any                `json:"params"`
@@ -153,6 +165,18 @@ type TaskView struct {
 	OutputDir     string `json:"output_dir,omitempty"`
 	CheckpointDir string `json:"checkpoint_dir,omitempty"`
 	WandbDir      string `json:"wandb_dir,omitempty"`
+}
+
+// JobBatchView is one submission into a job.
+type JobBatchView struct {
+	Seq         int    `json:"seq"`
+	SubmittedAt int64  `json:"submitted_at"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Command     string `json:"command"`
+	Target      string `json:"target"`
+	TaskCount   int    `json:"task_count"`
+	DraftID     string `json:"draft_id,omitempty"`
 }
 
 type MetricPoint struct {
@@ -500,6 +524,8 @@ type ErrorResponse struct {
 	// file's generation as it exists NOW, so the client can re-read, show a
 	// diff against the user's pending edit, and retry with a fresh If-Match.
 	CurrentGeneration string `json:"current_generation,omitempty"`
+	// Candidates accompanies CodeAmbiguous: the ids the prefix matches.
+	Candidates []string `json:"candidates,omitempty"`
 }
 
 // v1 error codes (spec §2) × HTTP status. Keep in sync with the protocol
@@ -508,6 +534,7 @@ const (
 	CodeBadRequest        = "bad_request"        // 400
 	CodeNotFound          = "not_found"          // 404
 	CodeInvalidState      = "invalid_state"      // 409: action illegal in current state
+	CodeAmbiguous         = "ambiguous"          // 409: an id prefix matches several; see candidates
 	CodeNotSupported      = "not_supported"      // 409: target lacks the capability
 	CodeNotImplemented    = "not_implemented"    // 501: spec-first stub, pending implementation
 	CodeForbidden         = "forbidden"          // 403: refused by the remote-CLI forward guard (RQ-45)

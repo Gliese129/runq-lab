@@ -179,6 +179,9 @@ func PerformClean(ctx context.Context, st *store.Store, fsFor func(store.TaskRow
 			return nil, fmt.Errorf("count deleted jobs during clean: %w", err)
 		}
 	}
+	if _, err := tx.ExecContext(ctx, store.DeleteOrphanBatchesSQL); err != nil {
+		return nil, fmt.Errorf("delete orphan batches during clean: %w", err)
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit clean tx: %w", err)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gliese129/runq-lab/internal/backend"
 	"github.com/gliese129/runq-lab/internal/dashboard"
@@ -81,6 +82,25 @@ func showJob(ctx context.Context, be backend.Backend, ref string, jsonOut bool) 
 	fmt.Printf("tasks: %d running, %d pending, %d failed, %d done\n", j.Tasks.Running, j.Tasks.Pending, j.Tasks.Failed, j.Tasks.Completed)
 	if j.DraftID != "" {
 		fmt.Printf("from draft %s\n", j.DraftID)
+	}
+	if len(detail.Batches) > 1 {
+		parts := make([]string, len(detail.Batches))
+		for i, b := range detail.Batches {
+			parts[i] = fmt.Sprintf("%d: %d task(s) %s", b.Seq, b.TaskCount, time.Unix(b.SubmittedAt, 0).Format("2006-01-02 15:04"))
+			if b.DraftID != "" {
+				parts[i] += " from " + b.DraftID
+			}
+		}
+		fmt.Printf("batches: %s\n", strings.Join(parts, " · "))
+	}
+	reruns := 0
+	for _, t := range detail.Tasks {
+		if t.SupersededBy != "" {
+			reruns++
+		}
+	}
+	if reruns > 0 {
+		fmt.Printf("%d failed task(s) rerun; the old attempts stay as history (runq ps %s)\n", reruns, j.ID)
 	}
 	if j.Description != "" {
 		fmt.Println(j.Description)

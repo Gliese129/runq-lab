@@ -14,8 +14,14 @@ import (
 // TaskRow is a pure data-transfer object whose field types mirror the DB schema.
 // Callers are responsible for converting between the two.
 type TaskRow struct {
-	ID            string
-	RunName       string // row name within the job (tasks: run, or derived from the baseline)
+	ID      string
+	RunName string // row name within the job (tasks: run, or derived from the baseline)
+	// BatchSeq is the submission batch that created the task (1 = the
+	// job's first submit; appends with --into add 2, 3, …).
+	BatchSeq int
+	// SupersededBy is the task that reran this failed cell (--rerun-failed).
+	// A superseded task is history: it no longer counts toward the job.
+	SupersededBy  string
 	JobID         string
 	ProjectName   string
 	Command       string
@@ -84,6 +90,9 @@ type TaskRow struct {
 type TaskFilter struct {
 	VisibleOnly bool // default user-facing lists hide archived jobs/projects
 
+	// LiveOnly leaves out tasks a rerun superseded (results and views).
+	LiveOnly bool
+
 	Status string // filter by status; empty = no filter
 	JobID  string // filter by job; empty = no filter
 	Target string // filter by target; empty = no filter
@@ -102,7 +111,7 @@ const allTaskColumns = `id, job_id, project_name, command, params_json,
 	pid, start_time, log_path, working_dir, env_json,
 	resumable, extra_args, uid, timeout,
 	enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-	native_state, queue, failure_detail, target_generation, timing_json, run_name`
+	native_state, queue, failure_detail, target_generation, timing_json, run_name, batch_seq, superseded_by`
 
 // scanTask reads one result row into a TaskRow.
 // Column order must match allTaskColumns.
@@ -132,6 +141,8 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 		targetGen     sql.NullString
 		timingJSON    sql.NullString
 		runName       sql.NullString
+		batchSeq      sql.NullInt64
+		supersededBy  sql.NullString
 	)
 
 	var target sql.NullString
@@ -142,6 +153,7 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 		&resumable, &extraArgs, &uid, &timeout, &enqueuedAt, &startedAt, &finishedAt,
 		&taskDir, &target, &externalID, &statusSource, &killRequested,
 		&nativeState, &queue, &failureDetail, &targetGen, &timingJSON, &runName,
+		&batchSeq, &supersededBy,
 	)
 	if err != nil {
 		return nil, err
@@ -149,6 +161,8 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 
 	t.GPUs = gpus.String
 	t.RunName = runName.String
+	t.BatchSeq = batchSeqOrFirst(int(batchSeq.Int64))
+	t.SupersededBy = supersededBy.String
 	t.PID = int(pid.Int64)
 	t.StartTime = startTime.Int64
 	t.LogPath = logPath.String
@@ -187,8 +201,8 @@ func (s *Store) InsertTask(ctx context.Context, t *TaskRow) error {
 		pid, start_time, log_path, working_dir, env_json,
 		resumable, extra_args, uid, timeout,
 		enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-		native_state, queue, failure_detail, target_generation, timing_json, run_name
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		native_state, queue, failure_detail, target_generation, timing_json, run_name, batch_seq
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	resumable := 0
 	if t.Resumable {
@@ -209,7 +223,7 @@ func (s *Store) InsertTask(ctx context.Context, t *TaskRow) error {
 		nullTimeToUnix(t.StartedAt), nullTimeToUnix(t.FinishedAt),
 		nullString(t.TaskDir), targetOrDefault(t.Target), nullString(t.ExternalID), nullString(t.StatusSource), killRequested,
 		nullString(t.NativeState), nullString(t.Queue), nullString(t.FailureDetail),
-		t.TargetGeneration, nullString(t.TimingJSON), nullString(t.RunName),
+		t.TargetGeneration, nullString(t.TimingJSON), nullString(t.RunName), batchSeqOrFirst(t.BatchSeq),
 	)
 	return err
 }
@@ -223,8 +237,8 @@ func (s *Store) InsertTaskTx(ctx context.Context, tx *sql.Tx, t *TaskRow) error 
 		pid, start_time, log_path, working_dir, env_json,
 		resumable, extra_args, uid, timeout,
 		enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-		native_state, queue, failure_detail, target_generation, timing_json, run_name
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		native_state, queue, failure_detail, target_generation, timing_json, run_name, batch_seq
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	resumable := 0
 	if t.Resumable {
@@ -245,7 +259,7 @@ func (s *Store) InsertTaskTx(ctx context.Context, tx *sql.Tx, t *TaskRow) error 
 		nullTimeToUnix(t.StartedAt), nullTimeToUnix(t.FinishedAt),
 		nullString(t.TaskDir), targetOrDefault(t.Target), nullString(t.ExternalID), nullString(t.StatusSource), killRequested,
 		nullString(t.NativeState), nullString(t.Queue), nullString(t.FailureDetail),
-		t.TargetGeneration, nullString(t.TimingJSON), nullString(t.RunName),
+		t.TargetGeneration, nullString(t.TimingJSON), nullString(t.RunName), batchSeqOrFirst(t.BatchSeq),
 	)
 	return err
 }
@@ -503,6 +517,9 @@ func (s *Store) ListTasks(ctx context.Context, filter TaskFilter) ([]TaskRow, er
 		where = append(where, "job_id = ?")
 		args = append(args, filter.JobID)
 	}
+	if filter.LiveOnly {
+		where = append(where, "superseded_by IS NULL")
+	}
 	if filter.Target != "" {
 		where = append(where, "target = ?")
 		args = append(args, filter.Target)
@@ -555,6 +572,9 @@ func (s *Store) CountTasks(ctx context.Context, filter TaskFilter) (int, error) 
 	if filter.JobID != "" {
 		where = append(where, "job_id = ?")
 		args = append(args, filter.JobID)
+	}
+	if filter.LiveOnly {
+		where = append(where, "superseded_by IS NULL")
 	}
 	if filter.Target != "" {
 		where = append(where, "target = ?")
@@ -740,8 +760,14 @@ func (s *Store) DeleteOrphanJobs(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	if _, err := s.db.ExecContext(ctx, DeleteOrphanBatchesSQL); err != nil {
+		return 0, err
+	}
 	return result.RowsAffected()
 }
+
+// DeleteOrphanBatchesSQL drops the batch records of deleted jobs.
+const DeleteOrphanBatchesSQL = `DELETE FROM job_batches WHERE job_id NOT IN (SELECT id FROM jobs)`
 
 // ── Helpers ──
 

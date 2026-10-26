@@ -787,5 +787,22 @@
   "drafts.conflict": "这个草稿已被别处修改或提交：{msg}",
   "drafts.preview": "最近一次预览（渲染后的命令和提交行）",
   "drafts.not_found": "找不到草稿 {id}",
-  "drafts.not_found_hint": "每个 project 只保留最新的 5 个草稿，更早的已被丢弃。"
+  "drafts.not_found_hint": "每个 project 只保留最新的 5 个草稿，更早的已被丢弃。",
+  "plan.batches": "批次",
+  "plan.batch_tasks": "{n} 个任务",
+  "plan.rerun": "重跑",
+  "task.superseded": "已重跑 → {id}",
+  "task.superseded_hint": "这次失败已重跑，不再计入 job。",
+  "drafts.into": "追加到 {id}",
+  "drafts.append_summary": "第 {batch} 批：新增 {new} · 已有 {existing} · 失败已跳过 {failed} · 重跑 {rerun}",
+  "drafts.cell_new": "新增",
+  "drafts.cell_skipped_existing": "已有",
+  "drafts.cell_skipped_failed": "失败 · 跳过",
+  "drafts.cell_rerun_failed": "重跑",
+  "drafts.append": "追加 {n} 个",
+  "drafts.append_title": "追加到这个 job？",
+  "drafts.append_body": "将向 {id}（{target}）追加 {n} 个任务；已有的格子会跳过。",
+  "drafts.nothing_to_append": "所有格子都已在 job 里",
+  "drafts.differs_command": "命令与该 job 的第一批不同",
+  "drafts.differs_overrides": "overrides 与该 job 的第一批不同"
 }

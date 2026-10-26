@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/gliese129/runq-lab/internal/backend"
-	"github.com/gliese129/runq-lab/internal/utils"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
@@ -50,12 +49,12 @@ func (t *submitTUI) run() error {
 				fmt.Fprintln(t.out, "nothing to submit yet — fix the plan with [e] or pick a project with [p]")
 				continue
 			}
-			res, err := t.d.SubmitDraft(t.ctx, t.draft.Draft.ID, t.draft.Draft.Rev, t.skipPreflight)
+			res, err := t.d.SubmitDraft(t.ctx, t.draft.Draft.ID, backend.DraftSubmitOptions{Rev: t.draft.Draft.Rev, SkipPreflight: t.skipPreflight})
 			if err != nil {
 				fmt.Fprintf(t.out, "submit failed: %v\nthe draft is kept: runq submit %s\n", err, t.draft.Draft.ID)
 				return err
 			}
-			fmt.Fprintf(t.out, "submitted job %s (%d tasks) from draft %s\n", utils.IDColor(res.JobID), res.TotalTasks, res.DraftID)
+			fmt.Fprintln(t.out, submittedLine(res))
 			return nil
 		case 'e', 'E':
 			t.editPlan()
@@ -97,7 +96,7 @@ func (t *submitTUI) render() {
 		fmt.Fprintln(t.out)
 		fmt.Fprint(t.out, t.draft.Table)
 		v := t.draft.Draft
-		fmt.Fprintf(t.out, "draft %s (rev %d) · project %s · %q · %d run(s)\n", v.ID, v.Rev, v.Project, v.Name, v.Rows)
+		fmt.Fprintln(t.out, draftLine(v))
 		fmt.Fprintf(t.out, "[s] submit  [e] edit  [p] project (%s)  [q] quit, keep the draft\n", v.Project)
 		return
 	}

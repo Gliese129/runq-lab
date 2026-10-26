@@ -787,5 +787,22 @@
   "drafts.conflict": "この下書きは別の場所で変更または投入されました：{msg}",
   "drafts.preview": "直近のプレビュー（展開後のコマンドと投入行）",
   "drafts.not_found": "下書き {id} が見つかりません",
-  "drafts.not_found_hint": "各プロジェクトは最新 5 件の下書きだけを保持し、古いものは破棄されます。"
+  "drafts.not_found_hint": "各プロジェクトは最新 5 件の下書きだけを保持し、古いものは破棄されます。",
+  "plan.batches": "バッチ",
+  "plan.batch_tasks": "{n} タスク",
+  "plan.rerun": "再実行",
+  "task.superseded": "再実行 → {id}",
+  "task.superseded_hint": "この失敗は再実行済みで、ジョブには数えません。",
+  "drafts.into": "{id} に追加",
+  "drafts.append_summary": "バッチ {batch}：新規 {new} · 既存 {existing} · 失敗（スキップ）{failed} · 再実行 {rerun}",
+  "drafts.cell_new": "新規",
+  "drafts.cell_skipped_existing": "既存",
+  "drafts.cell_skipped_failed": "失敗 · スキップ",
+  "drafts.cell_rerun_failed": "再実行",
+  "drafts.append": "{n} 件を追加",
+  "drafts.append_title": "このジョブに追加しますか？",
+  "drafts.append_body": "{id}（{target}）に {n} タスクを追加します。既存のセルはスキップされます。",
+  "drafts.nothing_to_append": "すべてのセルがジョブに存在します",
+  "drafts.differs_command": "コマンドがジョブの最初のバッチと異なります",
+  "drafts.differs_overrides": "overrides がジョブの最初のバッチと異なります"
 }

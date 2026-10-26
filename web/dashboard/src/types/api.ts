@@ -105,6 +105,10 @@ export interface TaskView {
   id: string
   /** row name within the job (tasks: run, or derived from the baseline) */
   run_name?: string
+  /** submission batch: 1 = the job's first submit, then each --into */
+  batch_seq?: number
+  /** the task that reran this failed cell; this one is history */
+  superseded_by?: string
   status: string
   params: Record<string, any>
   metrics?: Record<string, number>
@@ -228,6 +232,19 @@ export interface JobDetail {
    *  job.target's filesystem (pair with that target when browsing);
    *  absent when the job recorded no task dirs → show the empty state. */
   data_dir?: string
+  /** submissions into the job: seq 1, then each `runq submit dr… --into` */
+  batches?: JobBatch[]
+}
+
+export interface JobBatch {
+  seq: number
+  submitted_at: number
+  name: string
+  description?: string
+  command: string
+  target: string
+  task_count: number
+  draft_id?: string
 }
 
 export interface CompareRow {
@@ -508,6 +525,9 @@ export interface DraftView {
   description?: string
   section?: string
   target: string
+  /** set: the draft appends to this job */
+  into?: string
+  rerun_failed?: boolean
   rows: number
   needs_code: number
   rev: number
@@ -526,6 +546,22 @@ export interface DraftResult {
   baseline: string
   preview?: string
   warnings?: string[]
+  /** a draft with into: what each row would do (cells align with rows) */
+  append?: AppendSummary
+}
+
+export type CellClass = 'new' | 'skipped_existing' | 'skipped_failed' | 'rerun_failed'
+
+export interface AppendSummary {
+  into: string
+  batch: number
+  new: number
+  skipped_existing: number
+  skipped_failed: number
+  rerun_failed: number
+  differs: { command: boolean; overrides: boolean }
+  cells: Array<{ run: string; class: CellClass; task_id?: string; status?: string }>
+  renamed?: Record<string, string>
 }
 
 export interface DraftSubmitResult {
@@ -533,4 +569,5 @@ export interface DraftSubmitResult {
   total_tasks: number
   draft_id: string
   already_submitted?: boolean
+  append?: AppendSummary
 }

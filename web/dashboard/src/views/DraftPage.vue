@@ -8,8 +8,9 @@
         <v-spacer />
         <template v-if="res.draft.status === 'open'">
           <v-btn variant="text" size="small" :disabled="busy" @click="discard">{{ t('drafts.discard') }}</v-btn>
-          <v-btn color="primary" variant="flat" size="small" :loading="submitting" :disabled="busy || dirty" :title="dirty ? t('drafts.save_first') : undefined" @click="submit">
-            {{ t('drafts.submit', { n: res.draft.rows }) }}
+          <v-btn color="primary" variant="flat" size="small" :loading="submitting" :disabled="busy || dirty || appendCount === 0"
+            :title="dirty ? t('drafts.save_first') : appendCount === 0 ? t('drafts.nothing_to_append') : undefined" @click="submit">
+            {{ res.append ? t('drafts.append', { n: appendCount }) : t('drafts.submit', { n: res.draft.rows }) }}
           </v-btn>
         </template>
         <v-btn v-else-if="res.draft.job_id" color="primary" variant="tonal" size="small"
@@ -21,13 +22,21 @@
         <code>{{ res.draft.id }}</code>
         <span>{{ res.draft.project }}</span>
         <span>· {{ res.draft.target }}</span>
+        <span v-if="res.draft.into">·
+          <router-link :to="{ name: 'job-detail', params: { project: res.draft.project, jobId: res.draft.into } }">{{ t('drafts.into', { id: res.draft.into.slice(0, 8) }) }}</router-link>
+        </span>
         <span v-if="res.draft.section">· {{ res.draft.section }}</span>
         <span>· rev {{ res.draft.rev }}<template v-if="res.draft.edited"> ({{ t('drafts.edited') }})</template></span>
         <span v-if="res.draft.source_path">· {{ res.draft.source_path }}</span>
       </div>
       <div v-if="res.draft.description" class="text-body-2 mb-3">{{ res.draft.description }}</div>
 
-      <PlanTable :rows="res.rows" :baseline="res.baseline" />
+      <div v-if="res.append" class="append mb-2">
+        <div>{{ t('drafts.append_summary', { batch: res.append.batch, new: res.append.new, existing: res.append.skipped_existing, failed: res.append.skipped_failed, rerun: res.append.rerun_failed }) }}</div>
+        <div v-if="res.append.differs?.command" class="text-warning">{{ t('drafts.differs_command') }}</div>
+        <div v-if="res.append.differs?.overrides" class="text-warning">{{ t('drafts.differs_overrides') }}</div>
+      </div>
+      <PlanTable :rows="res.rows" :baseline="res.baseline" :tags="cellTags" :accent="cellAccent" :dim="cellDim" />
 
       <!-- Edit: the same YAML as `runq draft show --yaml`, saved through the
            same rev-checked PUT the CLI uses. -->
@@ -135,10 +144,24 @@ async function reloadAfterConflict() {
   await loadYaml()
 }
 
+// An append (into): each row's verdict — new cells stand out, skipped
+// ones fade.
+const cells = computed(() => res.value?.append?.cells ?? [])
+const cellTags = computed(() => cells.value.map((c) => t(`drafts.cell_${c.class}`)))
+const cellAccent = computed(() => cells.value.map((c) => c.class === 'new' || c.class === 'rerun_failed'))
+const cellDim = computed(() => cells.value.map((c) => c.class === 'skipped_existing' || c.class === 'skipped_failed'))
+const appendCount = computed(() => {
+  const a = res.value?.append
+  return a ? a.new + a.rerun_failed : undefined
+})
+
 async function submit() {
   const d = res.value?.draft
   if (!d || dirty.value) return
-  if (!(await confirm({ title: t('drafts.submit_title'), body: t('drafts.submit_body', { n: d.rows, target: d.target }), confirmText: t('drafts.submit', { n: d.rows }) }))) return
+  const ask = res.value?.append
+    ? { title: t('drafts.append_title'), body: t('drafts.append_body', { n: appendCount.value, id: d.into, target: d.target }), confirmText: t('drafts.append', { n: appendCount.value }) }
+    : { title: t('drafts.submit_title'), body: t('drafts.submit_body', { n: d.rows, target: d.target }), confirmText: t('drafts.submit', { n: d.rows }) }
+  if (!(await confirm(ask))) return
   submitting.value = true
   try {
     const out = await draftsApi.submit(d.id, d.rev)
@@ -170,6 +193,7 @@ async function discard() {
 .draft-page { max-width: 1240px; margin: 0 auto; }
 .meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
 .meta code { font-family: var(--font-mono); background: none; padding: 0; }
+.append { font-size: 13px; }
 .section-title { font-size: 13px; font-weight: 500; }
 .yaml {
   width: 100%; min-height: 320px; resize: vertical; tab-size: 2;

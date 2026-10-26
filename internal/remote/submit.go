@@ -27,6 +27,8 @@ type SubmitOpts struct {
 	// On HPC these run on the login node, which may not match the compute node
 	// environment, so a skip flag is useful (CLI: --no-preflight).
 	SkipPreflight bool
+	// Append, when non-nil, receives what an append (jobCfg.Into) did.
+	Append *job.AppendSummary
 }
 
 // Submit compiles the job into a Plan (shared kernel), then for each task:
@@ -194,16 +196,30 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 		return "", nil, err
 	}
 
-	jobID = utils.GenerateJobID()
 	projRoot, err := b.WorkspaceRoot(ctx, proj, false)
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve workspace root: %w", err)
 	}
 	planCfg := jobCfg
 	planCfg.NormalizeLegacy()
+	batchName := planCfg.Name
+	// An append reuses the job's id and directory; its tasks keep the
+	// job's first name as their W&B group.
+	var into *appendTarget
+	if jobCfg.Into != "" {
+		defer lockAppend(jobCfg.Into)()
+		if into, err = b.loadAppendTarget(ctx, jobCfg.Into, proj.ProjectName); err != nil {
+			return "", nil, err
+		}
+		planCfg.Name = into.first.Name
+	}
+	jobID = utils.GenerateJobID()
 	// The DB stores full paths (never re-derived from id); the directory
 	// is the id, the 0-<name> marker inside it is for humans.
 	jobRoot := path.Join(projRoot, jobID)
+	if into != nil {
+		jobID, jobRoot = into.job.ID, into.root
+	}
 
 	deps := b.planDeps(opts.SkipPreflight)
 	deps.JobID = jobID
@@ -213,6 +229,18 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 		return "", nil, err
 	}
 	printPreflight(plan.Preflight)
+
+	var supersede map[string]string
+	if into != nil {
+		var summary job.AppendSummary
+		summary, supersede = classifyAppend(&plan, into, jobCfg.RerunFailed, planCfg.Overrides)
+		if opts.Append != nil {
+			*opts.Append = summary
+		}
+		if summary.Submits() == 0 {
+			return jobID, nil, job.NothingToAppendError(summary)
+		}
+	}
 
 	// A plan with zero tasks means the sweep expanded to nothing — a config
 	// mistake, surfaced as a validation error before anything persists.
@@ -258,7 +286,9 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	if err := b.FS.MkdirAll(jobRoot, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create job directory: %w", err)
 	}
-	_ = workspace.WriteMarker(ctx, b.FS, jobRoot, plan.Name)
+	if into == nil {
+		_ = workspace.WriteMarker(ctx, b.FS, jobRoot, plan.Name)
+	}
 
 	for _, t := range plan.Tasks {
 		if err := workspace.EnsureTaskDirs(ctx, b.FS, t.Env); err != nil {
@@ -290,6 +320,21 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 		// happen until the job and every pending task commit together below.
 		row := planToTaskRow(t, plan, now, "", b.Cfg.Name, b.Cfg.SemanticGeneration())
 		rows = append(rows, row)
+	}
+
+	if into != nil {
+		jobCfg.Name = batchName
+		batchJSON, _ := json.Marshal(jobCfg)
+		batch := store.JobBatch{JobID: jobID, SubmittedAt: now, Name: batchName, Description: plan.Description,
+			Command: plan.CommandTemplate, Target: b.Cfg.Name, ConfigJSON: string(batchJSON), DraftID: jobCfg.DraftID}
+		seq, err := b.Store.AppendTasks(ctx, batch, rows, supersede)
+		if err != nil {
+			return jobID, nil, fmt.Errorf("append tasks to %s: %w", jobID, err)
+		}
+		if opts.Append != nil {
+			opts.Append.Batch = seq
+		}
+		return jobID, rows, nil
 	}
 
 	// Admission is one publication boundary: callers may enqueue only after

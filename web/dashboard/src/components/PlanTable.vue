@@ -13,12 +13,13 @@
         <tbody>
           <tr
             v-for="(r, i) in model.rows" :key="r.run + i"
-            :class="{ base: r.baseline, link: !!rowLinks?.[i] }"
+            :class="{ base: r.baseline, link: !!rowLinks?.[i], dim: !!dim?.[i] }"
             @click="rowLinks?.[i] && emit('open', i)"
           >
             <td class="run">
               <span>{{ r.run }}</span>
               <span v-if="r.baseline" class="base-tag">{{ t('plan.baseline') }}</span>
+              <span v-if="tags?.[i]" class="base-tag" :class="{ accent: accent?.[i] }">{{ tags[i] }}</span>
             </td>
             <td v-for="(c, j) in r.cells" :key="j" class="mono" :class="{ same: c.same, missing: c.missing }">
               {{ c.same ? '' : c.text }}
@@ -56,6 +57,12 @@ const props = defineProps<{
   statuses?: string[]
   /** per-row: whether the row opens something (a task page) */
   rowLinks?: boolean[]
+  /** per-row label after the run name (batch, rerun, append verdict) */
+  tags?: Array<string | undefined>
+  /** per-row: the label is the row's news (e.g. a new cell) */
+  accent?: boolean[]
+  /** per-row: shown faded (e.g. a cell an append skips) */
+  dim?: boolean[]
 }>()
 const emit = defineEmits<{ open: [index: number] }>()
 const { t } = useI18n()
@@ -82,6 +89,8 @@ const hasNotes = computed(() => model.value.rows.some((r) => r.needsCode.length 
   margin-left: 6px; font-size: 11px; font-weight: 400; padding: 0 6px; border-radius: 999px;
   color: rgb(var(--v-theme-on-surface-variant)); border: 0.5px solid rgb(var(--v-theme-outline-variant));
 }
+.base-tag.accent { color: rgb(var(--v-theme-primary)); border-color: rgb(var(--v-theme-primary), 0.5); }
+.plan-table tr.dim td { color: rgb(var(--v-theme-on-surface-variant)); }
 .missing { color: rgb(var(--v-theme-on-surface-variant)); }
 .status-col { width: 1%; }
 .note { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }

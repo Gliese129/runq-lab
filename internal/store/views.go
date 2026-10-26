@@ -201,7 +201,7 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 		jobs = append(jobs, *j)
 	}
 	for _, j := range jobs {
-		tasks, err := s.ListTasks(ctx, TaskFilter{JobID: j.ID})
+		tasks, err := s.ListTasks(ctx, TaskFilter{JobID: j.ID, LiveOnly: true})
 		if err != nil {
 			return in, err
 		}

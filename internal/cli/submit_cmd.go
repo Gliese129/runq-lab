@@ -29,8 +29,14 @@ preview and run table — then waits for one key:
 
 The project is the file's project:, else -p, else the most recently used
 project of this directory. Outside a terminal (scripts, agents) a job file is
-refused: use 'runq draft job.yaml', then 'runq submit dr…'.`,
+refused: use 'runq draft job.yaml', then 'runq submit dr…'.
+
+--into jb… appends the draft's rows to an existing job instead (same project
+and target): cells the job already has are skipped — done, running or
+queued, and failed or killed ones unless --rerun-failed. A rerun is a new
+task; the failed one stays as history. Nothing new → an error, no batch.`,
 	Example: `  runq draft job.yaml && runq submit dr8f2k --json   # agents and scripts
+  runq submit dr9c1x --into jb6573 --rerun-failed     # add cells to a job, rerun its failures
   runq submit job.yaml                                 # at a terminal: plan, look, press s
   runq submit                                          # at a terminal: start from a template`,
 	Args: cobra.MaximumNArgs(1),
@@ -44,10 +50,13 @@ refused: use 'runq draft job.yaml', then 'runq submit dr…'.`,
 		}
 		if strings.HasPrefix(file, "dr") {
 			if _, err := os.Stat(file); err != nil {
-				rev, _ := cmd.Flags().GetInt("rev")
-				noPreflight, _ := cmd.Flags().GetBool("no-preflight")
+				var opts backend.DraftSubmitOptions
+				opts.Rev, _ = cmd.Flags().GetInt("rev")
+				opts.SkipPreflight, _ = cmd.Flags().GetBool("no-preflight")
+				opts.Into, _ = cmd.Flags().GetString("into")
+				opts.RerunFailed, _ = cmd.Flags().GetBool("rerun-failed")
 				jsonOut, _ := cmd.Flags().GetBool("json")
-				return submitDraft(cmd, file, rev, noPreflight, jsonOut)
+				return submitDraft(cmd, file, opts, jsonOut)
 			}
 		}
 		jsonFlag, _ := cmd.Flags().GetBool("json")
@@ -88,6 +97,8 @@ func init() {
 	retireFlag(submitCmd, "project-file", "register or update the project first with `runq project <project.yaml>`")
 	submitCmd.Flags().Int("rev", 0, "with dr…: refuse unless the draft is still at this rev")
 	submitCmd.Flags().StringP("section", "s", "", "Section to file the job under (must exist; default: the project's rules, else unsorted)")
+	submitCmd.Flags().String("into", "", "append to this job (jb…): cells it already has are skipped")
+	submitCmd.Flags().Bool("rerun-failed", false, "with --into: also rerun the job's failed and killed cells")
 	submitCmd.Flags().Bool("json", false, "output raw JSON")
 	submitCmd.Flags().Bool(
 		"no-preflight",
@@ -127,6 +138,8 @@ func printGPUHint(ctx context.Context, be backend.Backend) {
 func runSubmitTUI(cmd *cobra.Command, tty *os.File, file string) error {
 	section, _ := cmd.Flags().GetString("section")
 	noPreflight, _ := cmd.Flags().GetBool("no-preflight")
+	into, _ := cmd.Flags().GetString("into")
+	rerunFailed, _ := cmd.Flags().GetBool("rerun-failed")
 	edit := openEditor(tty)
 	return withBackend(cmd, func(be backend.Backend) error {
 		ctx := cmd.Context()
@@ -169,7 +182,8 @@ func runSubmitTUI(cmd *cobra.Command, tty *os.File, file string) error {
 			skipPreflight: noPreflight,
 			fileWarning:   func(project string) string { return projectFileWarning(cmd, project) },
 			req: backend.DraftRequest{JobYAML: text, SourcePath: sourcePathFor(file), Section: section,
-				Target: explicitSubmitTarget(cmd), Project: defaultProject(ctx, be, text, candidates)},
+				Target: explicitSubmitTarget(cmd), Project: defaultProject(ctx, be, text, candidates),
+				Into: into, RerunFailed: rerunFailed},
 		}
 		return ui.run()
 	})

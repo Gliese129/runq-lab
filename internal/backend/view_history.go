@@ -33,7 +33,14 @@ func (m *MultiBackend) SourceHistory(ctx context.Context, id, stream, by string,
 	return workspace.QueryExactHistory(ctx, lane.backend.FS, row.TaskDir, stream, by, count)
 }
 func (m *MultiBackend) ViewTasks(ctx context.Context, specProject string, jobs []string) ([]store.TaskRow, error) {
-	return m.store.ListTasksForJobs(ctx, jobs)
+	tasks, err := m.store.ListTasksForJobs(ctx, jobs)
+	live := tasks[:0]
+	for _, t := range tasks {
+		if t.SupersededBy == "" { // a rerun replaced it
+			live = append(live, t)
+		}
+	}
+	return live, err
 }
 
 func (m *MultiBackend) SourceFramesAt(ctx context.Context, id, by string, ats []float64) (*workspace.ExactHistory, error) {

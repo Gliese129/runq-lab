@@ -41,6 +41,7 @@ agent) or you are about to set one up, read `references/heartbeat.md` first.
 | Plan (the preview; submits nothing) | `runq draft job.yaml` → draft `dr…` (`--json` for the full plan) |
 | Submit the draft | `runq submit dr… --json` → `{job_id,total_tasks,draft_id}` (repeat-safe: same job). A job file passed to `submit` outside a terminal is refused — that interactive form is for the researcher |
 | Change a draft | `runq draft show dr… --yaml > plan.yaml`, edit, `runq draft edit dr… -f plan.yaml` · `runq draft ps` |
+| Add cells to an existing job (more seeds, a missing row, a failed cell) | `runq draft job.yaml --into <jb…> [--rerun-failed]` → read new / skipped, then `runq submit dr…` |
 | Jobs / one job's tasks | `runq ps --json` · `runq ps <job_id> --json` (add `--fresh` to probe the scheduler first) |
 | A submitted job back as job.yaml (`tasks:` rows) | `runq export <jb…> [-o file]` |
 | One job (run table) / task (command, dirs, scheduler id, times, links) / project | `runq show <jb…\|tk…\|pj…>` |
@@ -259,8 +260,11 @@ Each file you add is one more thing the researcher reads or cleans up later. Goo
   first column of `runq ps` and the dashboard, the W&B group, and the marker in the
   job directory, and the researcher scans a list of them. Leave out what runq
   already records — target or reservation, date, shard number, attempt count. A
-  retry or extra cells belong in the existing job, not a same-named new one; the
-  preview warns when a name is taken. Put the full sentence (what it tests, which
+  retry or extra cells belong in the existing job, not a same-named new one: draft
+  them with `--into <jb…>`, which skips cells the job already has (done, running,
+  queued; failed ones too unless `--rerun-failed`), so the job stays one table for
+  the researcher. Scheduler-only params (walltime, reservation id) do not make a cell
+  new. The preview warns when a name is taken. Put the full sentence (what it tests, which
   checkpoint) in `description:`. Rename later with `runq rename <jb…> "<name>"`.
 - Let runq be the run record — name, params, logs, results, links, plus the git
   commit. Write a separate handoff or status document when the researcher asks for one.

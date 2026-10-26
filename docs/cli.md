@@ -17,6 +17,8 @@ When the service serves the dashboard, `submit`, `ps` and `show` JSON carry a
 | `runq draft edit dr… [-f file]` | Replace the plan from the edited YAML (rev-checked) or in `$EDITOR` |
 | `runq draft discard dr…` | Delete an open draft |
 | `runq submit dr… [--rev N] --json` | Freeze the draft into a job → `{"job_id", "total_tasks", "draft_id", "url"}`; submitting it again returns the same job |
+| `runq draft <job.yaml> --into <jb…> [--rerun-failed]` | Plan an append to an existing job (same project and target): each row is new, already there (done, running, queued) or failed — skipped unless `--rerun-failed`. Params only the scheduler reads don't make a cell new |
+| `runq submit dr… --into <jb…> [--rerun-failed]` | Append the draft to that job as its next batch → `{"job_id", "total_tasks", "append": {"new", "skipped_existing", "skipped_failed", "rerun_failed", "batch"}}`. A rerun is a new task; the failed one stays as history. Nothing new → an error, no batch |
 | `runq submit [job.yaml \| . \| -]` (at a terminal) | Plan the file as a draft and show it, then one key: `s` submit, `e` edit in `$EDITOR`, `p` pick the project, `q` quit keeping the draft. No argument starts from a template. Outside a terminal a job file is refused — use `runq draft` |
 | `runq kill <task_id \| job_id>` | Cancel a task, or every task of a job |
 

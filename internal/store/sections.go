@@ -445,5 +445,42 @@ func (s *Store) ResolveJobRef(ctx context.Context, ref string) (*JobRow, error) 
 	case 1:
 		return s.GetJob(ctx, ids[0])
 	}
-	return nil, fmt.Errorf("job %q is ambiguous: %s", ref, strings.Join(ids, ", "))
+	return nil, &AmbiguousRefError{Kind: "job", Ref: ref, IDs: ids}
+}
+
+// ResolveTaskRef resolves a task by exact id or unique id prefix.
+func (s *Store) ResolveTaskRef(ctx context.Context, ref string) (string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM tasks WHERE id = ? OR id LIKE ? ORDER BY id = ? DESC, id LIMIT 6`, ref, ref+"%", ref)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+		if id == ref {
+			return id, nil
+		}
+		ids = append(ids, id)
+	}
+	switch len(ids) {
+	case 0:
+		return "", fmt.Errorf("task %q not found", ref)
+	case 1:
+		return ids[0], nil
+	}
+	return "", &AmbiguousRefError{Kind: "task", Ref: ref, IDs: ids}
+}
+
+// AmbiguousRefError: an id prefix matches several ids (at most 6 listed).
+type AmbiguousRefError struct {
+	Kind, Ref string
+	IDs       []string
+}
+
+func (e *AmbiguousRefError) Error() string {
+	return fmt.Sprintf("%s %q is ambiguous: %s", e.Kind, e.Ref, strings.Join(e.IDs, ", "))
 }

@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/gliese129/runq-lab/internal/job"
+	"github.com/gliese129/runq-lab/internal/remote"
 	"github.com/gliese129/runq-lab/internal/store"
 	"gopkg.in/yaml.v3"
 )
@@ -27,7 +28,7 @@ type Drafter interface {
 	GetDraft(ctx context.Context, ref string) (*DraftResult, error)
 	DraftYAML(ctx context.Context, ref string) ([]byte, error)
 	EditDraft(ctx context.Context, ref, yamlText string) (*DraftResult, error)
-	SubmitDraft(ctx context.Context, ref string, rev int, skipPreflight bool) (*DraftSubmitResult, error)
+	SubmitDraft(ctx context.Context, ref string, opts DraftSubmitOptions) (*DraftSubmitResult, error)
 	DiscardDraft(ctx context.Context, ref string) error
 }
 
@@ -38,6 +39,19 @@ type DraftRequest struct {
 	Section    string `json:"section,omitempty"` // overrides job.yaml section:
 	Name       string `json:"name,omitempty"`    // overrides job.yaml name:
 	Target     string `json:"target,omitempty"`  // -t
+	// Into makes the draft an append to that job (id or unique prefix);
+	// RerunFailed also reruns the job's failed cells.
+	Into        string `json:"into,omitempty"`
+	RerunFailed bool   `json:"rerun_failed,omitempty"`
+}
+
+// DraftSubmitOptions: Rev > 0 must match the draft's rev; Into and
+// RerunFailed set (or confirm) the draft's append.
+type DraftSubmitOptions struct {
+	Rev           int    `json:"rev,omitempty"`
+	SkipPreflight bool   `json:"no_preflight,omitempty"`
+	Into          string `json:"into,omitempty"`
+	RerunFailed   bool   `json:"rerun_failed,omitempty"`
 }
 
 type DraftView struct {
@@ -47,6 +61,8 @@ type DraftView struct {
 	Description string `json:"description,omitempty"`
 	Section     string `json:"section,omitempty"`
 	Target      string `json:"target"`
+	Into        string `json:"into,omitempty"`
+	RerunFailed bool   `json:"rerun_failed,omitempty"`
 	Rows        int    `json:"rows"`
 	NeedsCode   int    `json:"needs_code"`
 	Rev         int    `json:"rev"`
@@ -66,6 +82,8 @@ type DraftResult struct {
 	Preview   string    `json:"preview,omitempty"` // full rendered preview (create/edit)
 	Warnings  []string  `json:"warnings,omitempty"`
 	Discarded []string  `json:"discarded,omitempty"`
+	// Append is set for a draft with into: what each row would do now.
+	Append *job.AppendSummary `json:"append,omitempty"`
 }
 
 type DraftSubmitResult struct {
@@ -73,6 +91,8 @@ type DraftSubmitResult struct {
 	TotalTasks       int    `json:"total_tasks"`
 	DraftID          string `json:"draft_id"`
 	AlreadySubmitted bool   `json:"already_submitted,omitempty"`
+	// Append is set when the draft was appended to an existing job.
+	Append *job.AppendSummary `json:"append,omitempty"`
 }
 
 var draftLocks sync.Map // draft id → *sync.Mutex: one submit at a time
@@ -91,7 +111,11 @@ func (m *MultiBackend) CreateDraft(ctx context.Context, req DraftRequest) (*Draf
 	if req.Name != "" {
 		cfg.Name = req.Name
 	}
-	if strings.TrimSpace(cfg.Project) == "" {
+	if req.Into != "" {
+		cfg.Into = req.Into
+	}
+	cfg.RerunFailed = cfg.RerunFailed || req.RerunFailed
+	if strings.TrimSpace(cfg.Project) == "" && cfg.Into == "" {
 		return nil, fmt.Errorf("draft needs an explicit project: set project: in the job file or pass -p <project>")
 	}
 	cfg.SourcePath = req.SourcePath
@@ -112,6 +136,9 @@ func (m *MultiBackend) CreateDraft(ctx context.Context, req DraftRequest) (*Draf
 		return nil, err
 	}
 	res.Preview, res.Warnings, res.Discarded = out.Preview, warns, discarded
+	if out.Append != nil {
+		res.Append = out.Append
+	}
 	return res, nil
 }
 
@@ -120,6 +147,13 @@ func (m *MultiBackend) CreateDraft(ctx context.Context, req DraftRequest) (*Draf
 // the frozen form: every row explicit under tasks:, sweep and fixed_params
 // folded in.
 func (m *MultiBackend) planDraft(ctx context.Context, cfg job.JobConfig, target string) (PreviewResult, job.JobConfig, error) {
+	if cfg.Into != "" {
+		if _, err := m.resolveInto(ctx, &cfg, target); err != nil {
+			return PreviewResult{}, job.JobConfig{}, err
+		}
+	} else if cfg.RerunFailed {
+		return PreviewResult{}, job.JobConfig{}, fmt.Errorf("rerun_failed needs into: <job>")
+	}
 	name, err := m.registry.Resolve(ctx, cfg.Project)
 	if err != nil {
 		return PreviewResult{}, job.JobConfig{}, err
@@ -178,12 +212,17 @@ func (m *MultiBackend) draftResult(ctx context.Context, d *store.DraftRow) (*Dra
 	if len(rows) > 0 {
 		res.Baseline = rows[job.BaselineIndex(rows, cfg.Baseline)].Run
 	}
+	if cfg.Into != "" && d.Status == "open" {
+		if s, err := m.storedAppendSummary(ctx, cfg, rows, d.Target); err == nil {
+			res.Append = s
+		}
+	}
 	return res, nil
 }
 
 func draftView(d *store.DraftRow, cfg job.JobConfig, rows []job.Row) DraftView {
 	v := DraftView{ID: d.ID, Project: d.Project, Name: cfg.Name, Description: cfg.Description, Section: cfg.Section,
-		Target: d.Target, Rows: len(rows), Rev: d.Rev, Edited: d.Rev > 1, Status: d.Status, JobID: d.JobID,
+		Target: d.Target, Into: cfg.Into, RerunFailed: cfg.RerunFailed, Rows: len(rows), Rev: d.Rev, Edited: d.Rev > 1, Status: d.Status, JobID: d.JobID,
 		SourcePath: d.SourcePath, CreatedAt: d.CreatedAt.Unix(), UpdatedAt: d.UpdatedAt.Unix()}
 	for _, r := range rows {
 		if len(r.NeedsCode) > 0 {
@@ -242,7 +281,7 @@ func (m *MultiBackend) DraftYAML(ctx context.Context, ref string) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
-	in := job.ExportInput{DraftID: d.ID, Rev: d.Rev, Project: d.Project, Name: cfg.Name, Description: cfg.Description,
+	in := job.ExportInput{DraftID: d.ID, Rev: d.Rev, Into: cfg.Into, RerunFailed: cfg.RerunFailed, Project: d.Project, Name: cfg.Name, Description: cfg.Description,
 		Section: cfg.Section, Target: cfg.Target, Command: cfg.Command, Overrides: cfg.Overrides,
 		Consumers: cfg.Consumers, Baseline: cfg.Baseline, Rows: rows}
 	if proj, err := m.registry.GetCached(ctx, d.Project); err == nil {
@@ -302,7 +341,7 @@ func (m *MultiBackend) EditDraft(ctx context.Context, ref, yamlText string) (*Dr
 // SubmitDraft freezes an open draft into a new job. Idempotent: submitting
 // a submitted draft (again, or concurrently) returns the same job. rev > 0
 // must match the draft's current rev.
-func (m *MultiBackend) SubmitDraft(ctx context.Context, ref string, rev int, skipPreflight bool) (*DraftSubmitResult, error) {
+func (m *MultiBackend) SubmitDraft(ctx context.Context, ref string, opts DraftSubmitOptions) (*DraftSubmitResult, error) {
 	d, err := m.store.GetDraft(ctx, ref)
 	if err != nil {
 		return nil, err
@@ -320,22 +359,42 @@ func (m *MultiBackend) SubmitDraft(ctx context.Context, ref string, rev int, ski
 		}
 		return &DraftSubmitResult{JobID: d.JobID, TotalTasks: total, DraftID: d.ID, AlreadySubmitted: true}, nil
 	}
-	if rev > 0 && rev != d.Rev {
+	if opts.Rev > 0 && opts.Rev != d.Rev {
 		return nil, fmt.Errorf("%w (now rev %d)", store.ErrDraftChanged, d.Rev)
 	}
 	var cfg job.JobConfig
 	if err := json.Unmarshal([]byte(d.ConfigJSON), &cfg); err != nil {
 		return nil, err
 	}
+	if opts.Into != "" {
+		j, err := m.store.ResolveJobRef(ctx, opts.Into)
+		if err != nil {
+			return nil, fmt.Errorf("--into: %w", err)
+		}
+		if cfg.Into != "" && cfg.Into != j.ID {
+			return nil, fmt.Errorf("draft %s appends to %s, not %s; edit its into: line to change it", d.ID, cfg.Into, j.ID)
+		}
+		cfg.Into = j.ID
+	}
+	cfg.RerunFailed = cfg.RerunFailed || opts.RerunFailed
 	cfg.Project, cfg.DraftID = d.Project, d.ID
-	jobID, n, err := m.SubmitJob(ctx, cfg, SubmitOptions{SkipPreflight: skipPreflight, Target: d.Target})
+	var appended job.AppendSummary
+	sub := SubmitOptions{SkipPreflight: opts.SkipPreflight, Target: d.Target}
+	if cfg.Into != "" {
+		sub.Append = &appended
+	}
+	jobID, n, err := m.SubmitJob(ctx, cfg, sub)
 	if err != nil {
 		return nil, err
 	}
 	if err := m.store.MarkDraftSubmitted(ctx, d.ID, jobID); err != nil && !errors.Is(err, store.ErrDraftSubmitted) {
 		return nil, err
 	}
-	return &DraftSubmitResult{JobID: jobID, TotalTasks: n, DraftID: d.ID}, nil
+	out := &DraftSubmitResult{JobID: jobID, TotalTasks: n, DraftID: d.ID}
+	if sub.Append != nil {
+		out.Append = sub.Append
+	}
+	return out, nil
 }
 
 func (m *MultiBackend) DiscardDraft(ctx context.Context, ref string) error {
@@ -361,3 +420,34 @@ func (m *MultiBackend) OpenDraftCount(ctx context.Context) (int, error) {
 }
 
 var _ Drafter = (*MultiBackend)(nil)
+
+// storedAppendSummary classifies a draft's rows against its job from the
+// ledger alone (no target round trip) — what `draft show` and the draft
+// page show. Submit classifies again under the job's append lock.
+func (m *MultiBackend) storedAppendSummary(ctx context.Context, cfg job.JobConfig, rows []job.Row, target string) (*job.AppendSummary, error) {
+	tasks, err := m.store.ListTasks(ctx, store.TaskFilter{JobID: cfg.Into})
+	if err != nil {
+		return nil, err
+	}
+	seq, err := m.store.NextBatchSeq(ctx, cfg.Into)
+	if err != nil {
+		return nil, err
+	}
+	exclude := map[string]bool{}
+	if proj, err := m.registry.GetCached(ctx, cfg.Project); err == nil {
+		for _, p := range proj.Params {
+			if p.Scope == "scheduler" {
+				exclude[p.Name] = true
+			}
+		}
+	}
+	if be, ok := m.get(target); ok {
+		if sp, ok := be.(interface{ SchedulerParamRefs() []string }); ok {
+			for _, name := range sp.SchedulerParamRefs() {
+				exclude[name] = true
+			}
+		}
+	}
+	s := remote.AppendSummaryFor(tasks, rows, exclude, cfg.RerunFailed, cfg.Into, seq)
+	return &s, nil
+}

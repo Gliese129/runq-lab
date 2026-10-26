@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gliese129/runq-lab/internal/job"
@@ -52,6 +53,9 @@ type MultiBackend struct {
 	historical map[string]map[string]Backend
 
 	store *store.Store
+	// activityCache: job id → cachedActivity of a finished job.
+	activityCache  sync.Map
+	activityCacheN atomic.Int64
 	// registry is the ONE routed project registry shared by every lane
 	// (RQ-65); kept here so lanes added at runtime get the same wiring
 	// assembly-time lanes got.
@@ -781,10 +785,15 @@ func (m *MultiBackend) ListArchivedJobsForTarget(ctx context.Context, target str
 func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, error) {
 	m.routingMu.RLock()
 	defer m.routingMu.RUnlock()
-	j, err := m.storedJob(ctx, jobID)
+	j, err := m.store.ResolveJobRef(ctx, jobID) // id or unique prefix
 	if err != nil {
-		return nil, err
+		var ambiguous *store.AmbiguousRefError
+		if errors.As(err, &ambiguous) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("job %q: %w", jobID, ErrNotFound)
 	}
+	jobID = j.ID
 	tasks, err := m.store.ListTasks(ctx, store.TaskFilter{JobID: jobID})
 	if err != nil {
 		return nil, err
@@ -800,6 +809,13 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 		detail.Tasks[i] = m.storedTaskView(ctx, row)
 	}
 	fillLegacyRunNames(j.ConfigJSON, detail.Tasks)
+	attachLastOutput(ctx, m.store, detail.Tasks)
+	if batches, err := m.store.ListJobBatches(ctx, jobID); err == nil {
+		for _, b := range batches {
+			detail.Batches = append(detail.Batches, JobBatchView{Seq: b.Seq, SubmittedAt: b.SubmittedAt.Unix(), Name: b.Name,
+				Description: b.Description, Command: b.Command, Target: b.Target, TaskCount: b.TaskCount, DraftID: b.DraftID})
+		}
+	}
 	if len(detail.Tasks) > 0 {
 		detail.Capabilities = detail.Tasks[0].Capabilities
 	}
@@ -818,6 +834,23 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 		}
 	}
 	return &detail, nil
+}
+
+// attachLastOutput fills last_output_at from the ingest observations.
+func attachLastOutput(ctx context.Context, st *store.Store, views []TaskView) {
+	ids := make([]string, len(views))
+	for i := range views {
+		ids[i] = views[i].ID
+	}
+	at, err := st.LastOutputTimes(ctx, ids)
+	if err != nil {
+		return
+	}
+	for i := range views {
+		if v, ok := at[views[i].ID]; ok {
+			views[i].LastOutputAt = &v
+		}
+	}
 }
 
 func (m *MultiBackend) CompareMetrics(ctx context.Context, jobID, key string, desc bool) ([]CompareRow, error) {
@@ -855,6 +888,14 @@ func (m *MultiBackend) GPUStatus(ctx context.Context) ([]GPUSlot, error) {
 func (m *MultiBackend) GetTask(ctx context.Context, taskID string) (*TaskView, error) {
 	m.routingMu.RLock()
 	defer m.routingMu.RUnlock()
+	if id, err := m.store.ResolveTaskRef(ctx, taskID); err == nil {
+		taskID = id // id or unique prefix
+	} else {
+		var ambiguous *store.AmbiguousRefError
+		if errors.As(err, &ambiguous) {
+			return nil, err
+		}
+	}
 	row, err := m.store.GetTask(ctx, taskID)
 	if err != nil {
 		return nil, err
@@ -866,6 +907,7 @@ func (m *MultiBackend) GetTask(ctx context.Context, taskID string) (*TaskView, e
 	views := []TaskView{view}
 	attachStoredMetrics(ctx, m.store, row.JobID, views)
 	attachTaskLinks(ctx, m.store, views)
+	attachLastOutput(ctx, m.store, views)
 	return &views[0], nil
 }
 
@@ -1189,6 +1231,15 @@ func (m *MultiBackend) JobActivity(ctx context.Context, jobID string) (*JobActiv
 	if err != nil {
 		return nil, err
 	}
+	// A finished job's activity no longer changes (one SSH read ≈ 0.7s):
+	// serve it from memory until the job changes (an append reopens it).
+	key := ""
+	if store.IsTerminalJobStatus(j.Status) && j.FinishedAt != nil {
+		key = fmt.Sprintf("%s|%d|%d", j.Status, j.FinishedAt.Unix(), len(rows))
+		if hit, ok := m.activityCache.Load(j.ID); ok && hit.(cachedActivity).key == key {
+			return hit.(cachedActivity).activity, nil
+		}
+	}
 	byTask := make(map[string]TaskActivity, len(rows))
 	for _, group := range groups {
 		activity, err := taskActivityRowsViaExec(ctx, group.fs, group.tasks)
@@ -1204,7 +1255,20 @@ func (m *MultiBackend) JobActivity(ctx context.Context, jobID string) (*JobActiv
 		out.Tasks = append(out.Tasks, byTask[rows[i].ID])
 	}
 	out.JobStart, out.JobEnd = activityWindow(j, rows)
+	if key != "" {
+		m.activityCacheN.Add(1)
+		if m.activityCacheN.Load() > 256 { // plenty for one dashboard; then start over
+			m.activityCache.Clear()
+			m.activityCacheN.Store(0)
+		}
+		m.activityCache.Store(j.ID, cachedActivity{key: key, activity: out})
+	}
 	return out, nil
+}
+
+type cachedActivity struct {
+	key      string
+	activity *JobActivity
 }
 
 func (m *MultiBackend) JobResults(ctx context.Context, jobID string) (*JobResults, error) {
@@ -1263,9 +1327,16 @@ func (m *MultiBackend) KillJob(ctx context.Context, jobID string) error {
 func (m *MultiBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts SubmitOptions) (string, int, error) {
 	m.routingMu.RLock()
 	defer m.routingMu.RUnlock()
-	projectCfg, target, source, err := m.submissionTarget(ctx, cfg, opts.Target)
+	explicit, err := m.resolveInto(ctx, &cfg, opts.Target)
 	if err != nil {
 		return "", 0, err
+	}
+	projectCfg, target, source, err := m.submissionTarget(ctx, cfg, explicit)
+	if err != nil {
+		return "", 0, err
+	}
+	if cfg.Into != "" && opts.Target == "" {
+		source = "into"
 	}
 	be, err := m.resolve(target)
 	if err != nil {
@@ -1274,8 +1345,10 @@ func (m *MultiBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts Su
 	cfg.Target, cfg.TargetSource = target, source
 	cfg.EffectiveConfig = projectCfg
 	cfg.Project = projectCfg.ProjectName // job.yaml may name the project by id
-	if _, err := m.resolveJobSection(ctx, &cfg); err != nil {
-		return "", 0, err
+	if cfg.Into == "" {
+		if _, err := m.resolveJobSection(ctx, &cfg); err != nil {
+			return "", 0, err
+		}
 	}
 	sourceTarget := projectSourceTarget(projectCfg)
 	if target != sourceTarget {
@@ -1450,6 +1523,38 @@ func (m *MultiBackend) submissionTarget(ctx context.Context, cfg job.JobConfig, 
 	return proj, target, source, nil
 }
 
+// resolveInto canonicalizes cfg.Into (id or unique prefix) and returns the
+// target the submit must use: an append runs on the job's own target (job
+// routing, kill and refresh go by it), and defaults its project from the
+// job.
+func (m *MultiBackend) resolveInto(ctx context.Context, cfg *job.JobConfig, explicit string) (string, error) {
+	if cfg.Into == "" {
+		if cfg.RerunFailed {
+			return "", fmt.Errorf("--rerun-failed needs --into <job>")
+		}
+		return explicit, nil
+	}
+	j, err := m.store.ResolveJobRef(ctx, cfg.Into)
+	if err != nil {
+		return "", fmt.Errorf("--into: %w", err)
+	}
+	if j == nil {
+		return "", fmt.Errorf("--into %s: job %w", cfg.Into, ErrNotFound)
+	}
+	cfg.Into = j.ID
+	if strings.TrimSpace(cfg.Project) == "" {
+		cfg.Project = j.ProjectName
+	} else if name, err := m.registry.Resolve(ctx, cfg.Project); err == nil && name != j.ProjectName {
+		return "", fmt.Errorf("--into %s: the job belongs to project %q, not %q", j.ID, j.ProjectName, name)
+	}
+	for _, t := range []string{explicit, cfg.Target} {
+		if t != "" && t != j.Target {
+			return "", fmt.Errorf("--into %s: the job runs on target %s, not %s; an append uses the job's target (submit a new job for another target)", j.ID, j.Target, t)
+		}
+	}
+	return j.Target, nil
+}
+
 func (m *MultiBackend) PreviewSubmit(ctx context.Context, cfg job.JobConfig, skipPreflight bool) (PreviewResult, error) {
 	return m.PreviewSubmitForTarget(ctx, "", cfg, skipPreflight)
 }
@@ -1457,9 +1562,17 @@ func (m *MultiBackend) PreviewSubmit(ctx context.Context, cfg job.JobConfig, ski
 func (m *MultiBackend) PreviewSubmitForTarget(ctx context.Context, explicit string, cfg job.JobConfig, skipPreflight bool) (PreviewResult, error) {
 	m.routingMu.RLock()
 	defer m.routingMu.RUnlock()
+	given := explicit
+	explicit, err := m.resolveInto(ctx, &cfg, explicit)
+	if err != nil {
+		return PreviewResult{}, err
+	}
 	proj, target, source, err := m.submissionTarget(ctx, cfg, explicit)
 	if err != nil {
 		return PreviewResult{}, err
+	}
+	if cfg.Into != "" && given == "" {
+		source = "into"
 	}
 	be, err := m.resolve(target)
 	if err != nil {
@@ -1468,11 +1581,18 @@ func (m *MultiBackend) PreviewSubmitForTarget(ctx context.Context, explicit stri
 	cfg.Target, cfg.TargetSource = target, source
 	cfg.EffectiveConfig = proj
 	cfg.Project = proj.ProjectName // job.yaml may name the project by id
-	sectionLine, err := m.resolveJobSection(ctx, &cfg)
-	if err != nil {
-		return PreviewResult{}, err
+	var sectionLine string
+	if cfg.Into == "" {
+		if sectionLine, err = m.resolveJobSection(ctx, &cfg); err != nil {
+			return PreviewResult{}, err
+		}
+	} else {
+		sectionLine = "section: the job's (an append keeps it)"
 	}
 	out, err := be.PreviewSubmit(ctx, cfg, skipPreflight)
+	if out.Plan != nil {
+		out.Append = out.Plan.Append
+	}
 	out.Target, out.TargetSource = target, source
 	out.Preview = fmt.Sprintf("target: %s (%s)\n%s\n", target, source, sectionLine) + out.Preview
 	if target != projectSourceTarget(proj) {
@@ -1701,6 +1821,16 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 	for _, tr := range cfg.Tasks {
 		needs[tr.Run] = tr.NeedsCode
 	}
+	if batches, err := m.store.ListJobBatches(ctx, j.ID); err == nil {
+		for _, b := range batches[min(1, len(batches)):] {
+			var bc job.JobConfig
+			_ = json.Unmarshal([]byte(b.ConfigJSON), &bc)
+			for _, tr := range bc.Tasks {
+				needs[tr.Run] = tr.NeedsCode
+			}
+		}
+	}
+	tasks = liveInCellOrder(tasks)
 	rows := make([]job.Row, 0, len(tasks))
 	for _, t := range tasks {
 		var params job.TaskParams
@@ -1807,4 +1937,30 @@ func sameParams(a, b []job.Row) bool {
 		}
 	}
 	return true
+}
+
+// liveInCellOrder drops superseded tasks, putting each rerun where the
+// failed task it replaced was.
+func liveInCellOrder(tasks []store.TaskRow) []store.TaskRow {
+	byID := make(map[string]store.TaskRow, len(tasks))
+	for _, t := range tasks {
+		byID[t.ID] = t
+	}
+	placed := map[string]bool{}
+	out := make([]store.TaskRow, 0, len(tasks))
+	for _, t := range tasks {
+		for t.SupersededBy != "" { // follow the chain to the live rerun
+			next, ok := byID[t.SupersededBy]
+			if !ok {
+				break
+			}
+			t = next
+		}
+		if t.SupersededBy != "" || placed[t.ID] {
+			continue
+		}
+		placed[t.ID] = true
+		out = append(out, t)
+	}
+	return out
 }

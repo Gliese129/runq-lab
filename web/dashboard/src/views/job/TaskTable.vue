@@ -92,7 +92,10 @@
             <td>
               <StatusDot :status="task.status" :size="14" />
             </td>
-            <td><code>{{ task.id.slice(0, 8) }}</code></td>
+            <td>
+              <code>{{ task.id.slice(0, 8) }}</code>
+              <span v-if="task.superseded_by" class="text-caption text-on-surface-variant ms-1" :title="t('task.superseded_hint')">{{ t('task.superseded', { id: task.superseded_by.slice(0, 8) }) }}</span>
+            </td>
             <td v-if="hasHPC" class="text-on-surface-variant"><code>{{ task.external_id || '—' }}</code></td>
             <td v-for="col in shownCols" :key="col" :class="paramColClass(col)">
               {{ task.params[col] ?? task.metrics?.[col] ?? '—' }}

@@ -8,6 +8,7 @@
 | Goal | goal/analysis-scope | 分析/拉表功能在消融研究结束前冻结；例外是 views：进度汇报加上论文表/图（aggregate、pivot、highlight、baseline、6 种图模板、LaTeX/Markdown/CSV、图片和动画导出） | accepted by default | AI | 2026-10-23 08:14 |  |
 | Goal | goal/job-append-into | 需要 runq submit --into &lt;job&gt; 往已有 job 里补格子：一个实验 = 一个 job；已成功、在跑、排队的格子跳过，失败的默认也跳过，--rerun-failed 才重跑；逻辑合并（merge）不做 | decided | user | 2026-10-23 08:35 |  |
 | Goal | goal/product-positioning | runq 给“让 AI agent 跑消融的研究员”用：省 token、好用优先；agent 通过 CLI 驱动，配置以文件为准；网页用来看状态和结果，保留 kill、归档等直接操作，rc6 起还用来审阅、编辑草稿后提交；不再为了 CLI/web 对称扩大 scope；同一件事只保留一种做法 | decided | user | 2026-10-23 09:08 |  |
+| Approach | approach/append-cell-rules | 追加（--into）的细则：格子身份 = 参数去掉只给调度器用的参数（scope: scheduler 或被 submit_template 引用，如 h_rt、ar_id）；--rerun-failed 的重跑作为新 task 追加，旧的失败 task 标记 superseded_by，不再计入 job 的状态、计数、total_tasks、结果和视图；追加批次必须用原 job 的 target（不同 target 报错，提示另开 job）；新格子的 run 名和已有的重名时加 “(bN)” 后缀；W&B group 用第一批的 name | proposed | AI | 2026-10-26 04:52 |  |
 | Approach | approach/chart-stack | Chart.js 画的任务指标图、旧结果图和手写 SVG 的 view 论文图，系列颜色统一用 chartGeom 的 Okabe–Ito 顺序（深色主题下黑色换成浅灰，超出 8 条用虚线），不再借用项目色；所有折线 tension 0 | decided | user | 2026-10-23 08:35 |  |
 | Approach | approach/consumer-result-writeback | consumer 在 rc6 保持不变；rc8 换成基于文件的结果写回：&lt;task_dir&gt;/results.&lt;producer&gt;.jsonl，不需要网络鉴权；研究员接受失去“scorer 还活着”这个信号 | accepted by default | AI | 2026-10-23 08:35 |  |
 | Approach | approach/docs-source | 设计、计划、审计、验证、交接这类过程文档不再写成文件，统一由 slotledger 管理；docs/ 可以保留，但内容必须由 slotledger 自动生成，不作为参考依据；README 这类介绍文档保留 | decided | user | 2026-10-23 08:35 |  |
@@ -62,8 +63,8 @@
 | Task | Status | Verification |
 |---|---|---|
 | 在真实集群（TSUBAME，含 ProxyJump 和睡眠恢复）上端到端验证系统 OpenSSH 传输 | verified | human: accepted, "4这个我验证了，没问题", covers 研究员在 TSUBAME 上亲自验证系统 OpenSSH 传输（含 ProxyJump 和睡眠恢复） (2026-10-24 08:02) |
-| rc6：草稿/提交两阶段、tasks: 计划表、export 往返、CLI 收束（后端 + CLI + SDK + 文档） | in_progress | not verified |
-| submit --into：往已有 job 追加格子（含 --rerun-failed、批次记录）以及三个小项 | todo | not verified |
+| rc6：草稿/提交两阶段、tasks: 计划表、export 往返、CLI 收束（后端 + CLI + SDK + 文档） | verified | ref: reported passing, rc6 六段后端加前端全部合进 main，每段都有自己的已验证子任务（rc6-s1 到 rc6-s6、rc6-frontend），测试全过，本机安装并用真实数据验证 [git 9e938a6, git 303d230, git 197878e, git 1768e6d, git 590ae32, git e9ff1a6, git 5f634f8, git ff70e2f] (2026-10-25 14:48) |
+| submit --into：往已有 job 追加格子（含 --rerun-failed、批次记录）以及三个小项 | verified | run: `go test ./internal/job ./internal/store ./internal/remote ./internal/backend ./internal/dashboard ./internal/cli` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-26 04:56) |
 | rc8：consumer 换成基于文件的结果写回（results.&lt;producer&gt;.jsonl） | todo | not verified |
 | docs/ 改为由 slotledger 自动生成，替换现在手写的用户手册 | todo | not verified |
 | 让 agent 分辨什么时候不该用 runq（如 iqrsh 免费节点上训练一个小模型） | todo | not verified |

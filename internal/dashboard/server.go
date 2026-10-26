@@ -23,6 +23,7 @@ import (
 	"github.com/gliese129/runq-lab/internal/logfile"
 	"github.com/gliese129/runq-lab/internal/project"
 	"github.com/gliese129/runq-lab/internal/rfs"
+	"github.com/gliese129/runq-lab/internal/store"
 	"github.com/gliese129/runq-lab/internal/version"
 	"github.com/gliese129/runq-lab/internal/workspace"
 )
@@ -1334,6 +1335,11 @@ func writeError(w http.ResponseWriter, err error) {
 		})
 		return
 	}
+	var ambiguous *store.AmbiguousRefError
+	if errors.As(err, &ambiguous) {
+		writeJSON(w, http.StatusConflict, backend.ErrorResponse{Error: err.Error(), Code: backend.CodeAmbiguous, Candidates: ambiguous.IDs})
+		return
+	}
 	if errors.Is(err, backend.ErrLaneRetired) {
 		writeJSON(w, http.StatusConflict, backend.ErrorResponse{
 			Error: err.Error(), Code: backend.CodeLaneRetired, RetryAfterSeconds: 1,
@@ -1345,7 +1351,7 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, backend.ErrForbidden):
 		status, code = http.StatusForbidden, backend.CodeForbidden
-	case errors.Is(err, backend.ErrNoTargetConfigured):
+	case errors.Is(err, backend.ErrNoTargetConfigured), errors.Is(err, job.ErrNothingToAppend):
 		status, code = http.StatusConflict, backend.CodeInvalidState
 	case errors.Is(err, backend.ErrNotSupported):
 		status, code = http.StatusConflict, backend.CodeNotSupported

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 )
 
@@ -24,6 +25,35 @@ func (s *Store) SourceObservation(ctx context.Context, id string) (Observation, 
 		err = nil
 	}
 	return o, err
+}
+
+// LastOutputTimes maps task id → when its log last grew (as last observed
+// by ingest); tasks without an observation are absent.
+func (s *Store) LastOutputTimes(ctx context.Context, ids []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(ids))
+	for start := 0; start < len(ids); start += 500 {
+		chunk := ids[start:min(start+500, len(ids))]
+		args := make([]any, len(chunk))
+		marks := make([]string, len(chunk))
+		for i, id := range chunk {
+			args[i], marks[i] = id, "?"
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT source_id, last_output_at FROM source_observations WHERE last_output_at IS NOT NULL AND source_id IN (`+strings.Join(marks, ",")+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			var at int64
+			if err := rows.Scan(&id, &at); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[id] = at
+		}
+		rows.Close()
+	}
+	return out, nil
 }
 
 // JobObservation combines the owning generations' factual observation receipts.

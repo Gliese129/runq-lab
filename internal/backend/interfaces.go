@@ -164,6 +164,8 @@ type Backend interface {
 type SubmitOptions struct {
 	SkipPreflight bool
 	Target        string // compute target name; empty = job.target > project.target
+	// Append, when non-nil, receives what an append (cfg.Into) did.
+	Append *job.AppendSummary
 }
 
 // JobRenamer changes a job's display name (ref = id or unique id prefix)

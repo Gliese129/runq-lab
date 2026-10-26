@@ -25,7 +25,16 @@ func (b *Backend) Preview(ctx context.Context, jobCfg job.JobConfig, proj *proje
 
 func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj *project.Config, skipPreflight bool) (string, submitplan.Plan, error) {
 	warns := jobCfg.NormalizeLegacy()
-	warns = append(warns, duplicateNameWarnings(ctx, b.Store, jobCfg)...)
+	var into *appendTarget
+	if jobCfg.Into != "" {
+		var err error
+		if into, err = b.loadAppendTarget(ctx, jobCfg.Into, proj.ProjectName); err != nil {
+			return "", submitplan.Plan{}, err
+		}
+		jobCfg.Name = into.first.Name
+	} else {
+		warns = append(warns, duplicateNameWarnings(ctx, b.Store, jobCfg)...)
+	}
 	deps := b.planDeps(skipPreflight)
 	deps.JobID = utils.GenerateJobID()
 	// Use the same root and layout as Prepare without materializing it.
@@ -34,6 +43,9 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 		return "", submitplan.Plan{}, err
 	}
 	jobRoot := path.Join(root, deps.JobID)
+	if into != nil {
+		deps.JobID, jobRoot = into.job.ID, into.root
+	}
 	deps.Paths = submitplan.Paths{WorkspaceRoot: jobRoot, LogRoot: jobRoot}
 	plan, err := submitplan.Build(ctx, jobCfg, proj, deps)
 	if err != nil {
@@ -62,6 +74,15 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	}
 
 	var s strings.Builder
+	if into != nil {
+		summary, _ := classifyAppend(&plan, into, jobCfg.RerunFailed, jobCfg.Overrides)
+		plan.Append = &summary
+		s.WriteString(summary.Report())
+		if summary.Submits() == 0 {
+			fmt.Fprintf(&s, "%v\n", job.NothingToAppendError(summary))
+			return s.String(), plan, nil
+		}
+	}
 	fmt.Fprintf(&s, "name: %s\n", plan.Name)
 	for _, w := range warns {
 		fmt.Fprintf(&s, "warning: %s\n", w)
@@ -72,7 +93,11 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	fmt.Fprintf(&s, "dry-run: %d task(s) would be submitted\n", len(plan.Tasks))
 	// Where <workspace> will actually live — shown read-only (nothing is
 	// created here); ids are regenerated at real submit.
-	fmt.Fprintf(&s, "data: %s/ (preview job id; regenerated at submit)\n\n", jobRoot)
+	if into != nil {
+		fmt.Fprintf(&s, "data: %s/ (the job's directory)\n\n", jobRoot)
+	} else {
+		fmt.Fprintf(&s, "data: %s/ (preview job id; regenerated at submit)\n\n", jobRoot)
+	}
 	for _, c := range plan.Preflight.Results {
 		mark := map[string]string{"passed": "✓", "failed": "✗", "warning": "!"}[c.Status]
 		if mark == "" {

@@ -133,17 +133,14 @@ func (s *Server) handleSubmitDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body struct {
-		Rev         int  `json:"rev"`
-		NoPreflight bool `json:"no_preflight"`
-	}
+	var body backend.DraftSubmitOptions
 	if r.ContentLength != 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
 			writeErrorStatus(w, http.StatusBadRequest, err)
 			return
 		}
 	}
-	res, err := d.SubmitDraft(r.Context(), r.PathValue("id"), body.Rev, body.NoPreflight)
+	res, err := d.SubmitDraft(r.Context(), r.PathValue("id"), body)
 	if err != nil {
 		if errors.Is(err, store.ErrDraftChanged) || errors.Is(err, store.ErrDraftNotFound) {
 			writeDraftError(w, err)

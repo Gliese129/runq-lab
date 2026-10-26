@@ -143,7 +143,7 @@ func TestDraftSubmitIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.SubmitDraft(ctx, res.Draft.ID, 7, true); !errors.Is(err, store.ErrDraftChanged) {
+	if _, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{Rev: 7, SkipPreflight: true}); !errors.Is(err, store.ErrDraftChanged) {
 		t.Fatalf("wrong rev must be refused, got %v", err)
 	}
 
@@ -153,7 +153,7 @@ func TestDraftSubmitIsIdempotent(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			r, err := m.SubmitDraft(ctx, res.Draft.ID[:5], 0, true)
+			r, err := m.SubmitDraft(ctx, res.Draft.ID[:5], DraftSubmitOptions{SkipPreflight: true})
 			if err != nil {
 				t.Error(err)
 				return
@@ -173,7 +173,7 @@ func TestDraftSubmitIsIdempotent(t *testing.T) {
 	if lane.received.DraftID != res.Draft.ID || len(lane.received.Tasks) != 4 {
 		t.Fatalf("lane got %+v", lane.received)
 	}
-	again, err := m.SubmitDraft(ctx, res.Draft.ID, 0, true)
+	again, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{SkipPreflight: true})
 	if err != nil || !again.AlreadySubmitted || again.JobID != ids[0] {
 		t.Fatalf("resubmit = %+v, %v", again, err)
 	}

@@ -19,6 +19,8 @@ type ExportInput struct {
 	JobID       string
 	DraftID     string // set: the file is a draft's editable form (draft/rev header)
 	Rev         int
+	Into        string // a draft's append target
+	RerunFailed bool
 	ExportedAt  time.Time
 	Project     string
 	Name        string
@@ -61,6 +63,12 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 	if in.DraftID != "" {
 		add("draft", str(in.DraftID))
 		add("rev", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: fmt.Sprint(in.Rev)})
+		if in.Into != "" {
+			add("into", str(in.Into))
+		}
+		if in.RerunFailed {
+			add("rerun_failed", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
+		}
 	} else {
 		add("from_job", str(in.JobID))
 	}

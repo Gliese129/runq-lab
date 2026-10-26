@@ -27,8 +27,12 @@ import (
 // ---- builders: store rows → view types ----
 
 func BuildJobSummary(job store.JobRow, tasks []store.TaskRow) JobSummary {
-	counts := TaskCountGroup{Total: len(tasks)}
+	counts := TaskCountGroup{}
 	for _, task := range tasks {
+		if task.SupersededBy != "" {
+			continue // a rerun replaced it
+		}
+		counts.Total++
 		switch task.Status {
 		case "pending":
 			counts.Pending++
@@ -424,6 +428,8 @@ func buildTaskView(task store.TaskRow, files bool) TaskView {
 		ID:            task.ID,
 		RunName:       task.RunName,
 		JobID:         task.JobID,
+		BatchSeq:      task.BatchSeq,
+		SupersededBy:  task.SupersededBy,
 		Project:       task.ProjectName,
 		Target:        task.Target,
 		Status:        task.Status,

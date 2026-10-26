@@ -44,8 +44,8 @@ func (f *fakeDrafter) EditDraft(_ context.Context, id, text string) (*backend.Dr
 	f.edits = append(f.edits, text)
 	return &backend.DraftResult{Draft: backend.DraftView{ID: id, Project: f.projects[len(f.projects)-1], Rev: 2, Rows: 3}, Table: "RUN\nB0\nR1\n"}, nil
 }
-func (f *fakeDrafter) SubmitDraft(_ context.Context, id string, rev int, _ bool) (*backend.DraftSubmitResult, error) {
-	f.submitted = append(f.submitted, fmt.Sprintf("%s@%d", id, rev))
+func (f *fakeDrafter) SubmitDraft(_ context.Context, id string, opts backend.DraftSubmitOptions) (*backend.DraftSubmitResult, error) {
+	f.submitted = append(f.submitted, fmt.Sprintf("%s@%d", id, opts.Rev))
 	return &backend.DraftSubmitResult{JobID: "jb00000001", TotalTasks: 2, DraftID: id}, nil
 }
 func (f *fakeDrafter) DiscardDraft(_ context.Context, id string) error {

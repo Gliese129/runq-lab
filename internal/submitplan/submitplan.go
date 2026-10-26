@@ -60,6 +60,11 @@ type Plan struct {
 	CommandTemplate  string          `json:"command"`
 	EffectiveConfig  *project.Config `json:"effective_config"`
 	UnconsumedParams []string        `json:"unconsumed_params"`
+	// SchedulerParams are the params only the scheduler reads (scope:
+	// scheduler or used by submit_template): not part of a cell's identity.
+	SchedulerParams []string `json:"scheduler_params,omitempty"`
+	// Append is set by an append preview (--into): what each row would do.
+	Append *job.AppendSummary `json:"append,omitempty"`
 
 	JobID       string               `json:"job_id"`
 	Project     string               `json:"project"`
@@ -438,9 +443,14 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	sched := make([]string, 0, len(schedParams))
+	for name := range schedParams {
+		sched = append(sched, name)
+	}
+	sort.Strings(sched)
 	return Plan{
 		Target: cfg.Target, TargetSource: cfg.TargetSource, CommandTemplate: proj.CmdTemplate,
-		EffectiveConfig: proj, UnconsumedParams: keys,
+		EffectiveConfig: proj, UnconsumedParams: keys, SchedulerParams: sched,
 		JobID:       jobID,
 		Project:     cfg.Project,
 		Description: cfg.Description,

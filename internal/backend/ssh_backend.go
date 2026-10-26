@@ -1490,7 +1490,7 @@ func (b *SSHBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts Subm
 	if err != nil {
 		return "", 0, fmt.Errorf("project %q: %w", cfg.Project, err)
 	}
-	jobID, rows, err := b.backend.Prepare(ctx, cfg, proj, remote.SubmitOpts{SkipPreflight: opts.SkipPreflight})
+	jobID, rows, err := b.backend.Prepare(ctx, cfg, proj, remote.SubmitOpts{SkipPreflight: opts.SkipPreflight, Append: opts.Append})
 	if err != nil {
 		return jobID, 0, err
 	}
@@ -1501,12 +1501,20 @@ func (b *SSHBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts Subm
 		tasks[i] = t
 	}
 	b.queue.PushBatch(tasks)
+	if cfg.Into != "" {
+		return jobID, len(rows), nil // consumers belong to the job's first batch
+	}
 	for _, cfg := range cfg.Consumers {
 		if _, err := b.AddConsumer(ctx, jobID, cfg); err != nil {
 			return jobID, len(rows), fmt.Errorf("tasks submitted; consumer preparation failed: %w", err)
 		}
 	}
 	return jobID, len(rows), nil
+}
+
+// SchedulerParamRefs are the params this target's submit_template reads.
+func (b *SSHBackend) SchedulerParamRefs() []string {
+	return config.HPCTemplateParamRefs(b.backend.Cfg.SubmitTemplate)
 }
 
 func (b *SSHBackend) PreviewSubmit(ctx context.Context, cfg job.JobConfig, skipPreflight bool) (PreviewResult, error) {

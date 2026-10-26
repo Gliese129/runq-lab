@@ -56,6 +56,20 @@
 
 ### Changes
 
+- One experiment = one job that keeps growing: `runq draft job.yaml --into jb…`
+  plans an append (the preview, `draft show` and the draft page mark every row
+  new, already there, or failed), `runq submit dr… --into jb… [--rerun-failed]`
+  adds it as the job's next batch. Cells the job has are skipped — done, running
+  and queued ones, and failed or killed ones unless `--rerun-failed`, which reruns
+  them as new tasks and keeps the failures as history (no longer counted). Cell
+  identity is the params without scheduler-only ones (walltime, reservation id).
+  The job keeps its id, directory, name and W&B group; the append runs on the
+  job's target. `runq show` and the job page list the batches.
+- `GET /api/v1/jobs/{id}` and `/tasks/{id}` take a unique id prefix; an
+  ambiguous one answers 409 `ambiguous` with `candidates`.
+- Tasks carry `last_output_at` (when the log last grew), `batch_seq` and
+  `superseded_by`; a finished job's activity curve is served from memory.
+
 - Dashboard: Overview and project pages use the width they have — on wide
   screens the job list sits next to a preview of the picked job (its plan
   table and progress); the project page adds a sections column (click to

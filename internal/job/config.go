@@ -45,6 +45,11 @@ type JobConfig struct {
 	// them; as input to `runq draft` they are ignored.
 	Draft string `yaml:"draft,omitempty" json:"-"`
 	Rev   int    `yaml:"rev,omitempty" json:"-"`
+	// Into appends this plan to an existing job (jb…) instead of creating
+	// one: cells it already has are skipped. RerunFailed also reruns its
+	// failed and killed cells (as new tasks; the old ones stay as history).
+	Into        string `yaml:"into,omitempty" json:"into,omitempty"`
+	RerunFailed bool   `yaml:"rerun_failed,omitempty" json:"rerun_failed,omitempty"`
 	// FromJob is written by `runq export` for provenance; ignored as input.
 	FromJob   string     `yaml:"from_job,omitempty" json:"from_job,omitempty"`
 	Overrides *Overrides `yaml:"overrides,omitempty" json:"overrides,omitempty"`

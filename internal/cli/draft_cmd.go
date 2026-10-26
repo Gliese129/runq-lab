@@ -28,9 +28,16 @@ queued or written to the repo. Edit it (from a file or in $EDITOR), then
 freeze it into a job with 'runq submit dr…'.
 
 The project must be explicit: job.yaml 'project:' or -p. Each project keeps
-its newest 5 open drafts; creating a 6th discards the oldest.`,
+its newest 5 open drafts; creating a 6th discards the oldest.
+
+--into jb… makes the draft an append to an existing job of the same project
+and target: the preview says which cells are new and which the job already
+has (done, running or queued — skipped; failed or killed — skipped unless
+--rerun-failed). Params only the scheduler reads (walltime, reservation id)
+do not make a cell different.`,
 	Example: `  runq draft configs/runq/a1-batch1.yaml
   runq draft job.yaml -s "KL 消融" -t tsubame
+  runq draft more-seeds.yaml --into jb6573   # add cells to an existing job
   runq draft show dr8f2k --yaml > plan.yaml   # edit, then:
   runq draft edit dr8f2k -f plan.yaml
   runq submit dr8f2k`,
@@ -56,7 +63,10 @@ its newest 5 open drafts; creating a 6th discards the oldest.`,
 		project, _ := cmd.Flags().GetString("project")
 		section, _ := cmd.Flags().GetString("section")
 		jsonOut, _ := cmd.Flags().GetBool("json")
-		req := backend.DraftRequest{JobYAML: string(data), Project: project, Section: section, Target: explicitSubmitTarget(cmd)}
+		into, _ := cmd.Flags().GetString("into")
+		rerunFailed, _ := cmd.Flags().GetBool("rerun-failed")
+		req := backend.DraftRequest{JobYAML: string(data), Project: project, Section: section, Target: explicitSubmitTarget(cmd),
+			Into: into, RerunFailed: rerunFailed}
 		if src != "-" {
 			req.SourcePath = src
 		}
@@ -90,15 +100,36 @@ its newest 5 open drafts; creating a 6th discards the oldest.`,
 }
 
 func printDraftLine(v backend.DraftView) {
+	fmt.Println(draftLine(v))
+}
+
+func draftLine(v backend.DraftView) string {
 	name := v.Name
 	if name == "" {
 		name = "(no name)"
 	}
-	fmt.Printf("draft %s (rev %d) · project %s · %q · %d run(s)", utils.IDColor(v.ID), v.Rev, v.Project, name, v.Rows)
+	line := fmt.Sprintf("draft %s (rev %d) · project %s · %q · %d run(s)", utils.IDColor(v.ID), v.Rev, v.Project, name, v.Rows)
 	if v.NeedsCode > 0 {
-		fmt.Printf(" · %d need code", v.NeedsCode)
+		line += fmt.Sprintf(" · %d need code", v.NeedsCode)
 	}
-	fmt.Println()
+	if v.Into != "" {
+		line += " · into " + v.Into
+		if v.RerunFailed {
+			line += " (rerun failed)"
+		}
+	}
+	return line
+}
+
+// submittedLine reports a draft submit (a new job, or an append).
+func submittedLine(res *backend.DraftSubmitResult) string {
+	switch {
+	case res.AlreadySubmitted:
+		return fmt.Sprintf("draft %s was already submitted as job %s (%d tasks)", res.DraftID, utils.IDColor(res.JobID), res.TotalTasks)
+	case res.Append != nil:
+		return fmt.Sprintf("appended %d task(s) to job %s as batch %d (%s) from draft %s", res.TotalTasks, utils.IDColor(res.JobID), res.Append.Batch, res.Append.Line(), res.DraftID)
+	}
+	return fmt.Sprintf("submitted job %s (%d tasks) from draft %s", utils.IDColor(res.JobID), res.TotalTasks, res.DraftID)
 }
 
 func withDrafter(cmd *cobra.Command, fn func(backend.Drafter) error) error {
@@ -178,6 +209,10 @@ var draftShowCmd = &cobra.Command{
 			}
 			fmt.Println()
 			fmt.Print(res.Table)
+			if res.Append != nil {
+				fmt.Println()
+				fmt.Print(res.Append.Report())
+			}
 			return nil
 		})
 	},
@@ -294,13 +329,13 @@ var draftDiscardCmd = &cobra.Command{
 }
 
 // submitDraft is `runq submit dr…`.
-func submitDraft(cmd *cobra.Command, ref string, rev int, noPreflight, jsonOut bool) error {
+func submitDraft(cmd *cobra.Command, ref string, opts backend.DraftSubmitOptions, jsonOut bool) error {
 	return withBackend(cmd, func(be backend.Backend) error {
 		d, ok := be.(backend.Drafter)
 		if !ok {
 			return errors.New("this backend does not support drafts")
 		}
-		res, err := d.SubmitDraft(cmd.Context(), ref, rev, noPreflight)
+		res, err := d.SubmitDraft(cmd.Context(), ref, opts)
 		if err != nil {
 			return err
 		}
@@ -320,11 +355,7 @@ func submitDraft(cmd *cobra.Command, ref string, rev int, noPreflight, jsonOut b
 			}{res, target, url})
 			return nil
 		}
-		if res.AlreadySubmitted {
-			fmt.Printf("draft %s was already submitted as job %s (%d tasks)\n", res.DraftID, utils.IDColor(res.JobID), res.TotalTasks)
-		} else {
-			fmt.Printf("submitted job %s (%d tasks) from draft %s\n", utils.IDColor(res.JobID), res.TotalTasks, res.DraftID)
-		}
+		fmt.Println(submittedLine(res))
 		if target != "" {
 			fmt.Printf("target: %s (%s)\n", target, source)
 		}
@@ -338,6 +369,8 @@ func init() {
 	draftCmd.Flags().StringP("project", "p", "", "project (name or id); default: the job file's project:")
 	draftCmd.Flags().StringP("section", "s", "", "section to file the job under (must exist)")
 	draftCmd.Flags().StringP("target", "t", "", "execution target override (-t > job.target > project.target)")
+	draftCmd.Flags().String("into", "", "append to this job (jb…) instead of creating one; cells it has are skipped")
+	draftCmd.Flags().Bool("rerun-failed", false, "with --into: also rerun the job's failed and killed cells")
 	draftCmd.Flags().Bool("json", false, "output raw JSON")
 	draftPsCmd.Flags().StringP("project", "p", "", "only this project")
 	draftPsCmd.Flags().Bool("json", false, "output raw JSON")

@@ -58,6 +58,9 @@ func printDashboardTasks(tasks []backend.TaskView) error {
 			elapsed = formatTaskDuration(task.ElapsedSec, task.TimeEstimated)
 		}
 		status := utils.StatusColor(task.Status)
+		if task.SupersededBy != "" {
+			status += " (rerun " + task.SupersededBy + ")"
+		}
 		run := task.RunName
 		if run == "" {
 			run = "-"

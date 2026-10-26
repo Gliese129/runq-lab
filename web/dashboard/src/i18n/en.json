@@ -787,5 +787,22 @@
   "drafts.conflict": "Someone changed or submitted this draft meanwhile: {msg}",
   "drafts.preview": "Last preview (rendered command, submit line)",
   "drafts.not_found": "Draft {id} not found",
-  "drafts.not_found_hint": "Each project keeps its newest 5 open drafts; older ones are discarded."
+  "drafts.not_found_hint": "Each project keeps its newest 5 open drafts; older ones are discarded.",
+  "plan.batches": "Batches",
+  "plan.batch_tasks": "{n} task | {n} tasks",
+  "plan.rerun": "rerun",
+  "task.superseded": "rerun → {id}",
+  "task.superseded_hint": "This failed attempt was rerun; it no longer counts toward the job.",
+  "drafts.into": "appends to {id}",
+  "drafts.append_summary": "Batch {batch}: {new} new · {existing} already there · {failed} failed, skipped · {rerun} rerun",
+  "drafts.cell_new": "new",
+  "drafts.cell_skipped_existing": "already there",
+  "drafts.cell_skipped_failed": "failed · skipped",
+  "drafts.cell_rerun_failed": "rerun",
+  "drafts.append": "Append {n} runs",
+  "drafts.append_title": "Append to this job?",
+  "drafts.append_body": "{n} tasks will be added to {id} on {target}; cells it already has are skipped.",
+  "drafts.nothing_to_append": "Every cell is already in the job",
+  "drafts.differs_command": "The command differs from the job's first batch",
+  "drafts.differs_overrides": "The overrides differ from the job's first batch"
 }

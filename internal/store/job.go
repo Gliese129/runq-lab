@@ -51,7 +51,10 @@ func (s *Store) InsertJob(ctx context.Context, j *JobRow) error {
 		j.ID, j.ProjectName, j.Description, j.Name, j.ConfigJSON,
 		j.Status, j.TotalTasks, targetOrDefault(j.Target), j.CreatedAt.Unix(), nullIfEmpty(j.SectionID), nullIfEmpty(j.DraftID),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return insertBatch(ctx, s.db, firstBatch(j))
 }
 
 // InsertJobTx inserts a job row within an existing transaction.
@@ -62,7 +65,10 @@ func (s *Store) InsertJobTx(ctx context.Context, tx *sql.Tx, j *JobRow) error {
 		j.ID, j.ProjectName, j.Description, j.Name, j.ConfigJSON,
 		j.Status, j.TotalTasks, targetOrDefault(j.Target), j.CreatedAt.Unix(), nullIfEmpty(j.SectionID), nullIfEmpty(j.DraftID),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return insertBatch(ctx, tx, firstBatch(j))
 }
 
 // InsertJobWithTasks atomically inserts a job and all its tasks in a single transaction.
@@ -177,6 +183,9 @@ func (s *Store) DeleteJob(ctx context.Context, jobID string) error {
 
 	if _, err := tx.ExecContext(ctx, "DELETE FROM tasks WHERE job_id = ?", jobID); err != nil {
 		return fmt.Errorf("delete tasks: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM job_batches WHERE job_id = ?", jobID); err != nil {
+		return fmt.Errorf("delete batches: %w", err)
 	}
 	result, err := tx.ExecContext(ctx, "DELETE FROM jobs WHERE id = ?", jobID)
 	if err != nil {
@@ -326,10 +335,14 @@ func TerminalJobStatus(success, failed, killed int) string {
 
 // ProjectJobStatus is the single lifecycle projection from task rows to a job
 // status. Pause remains an orthogonal job-level overlay: callers that hold a
-// pause intent keep "paused" instead of applying this projection.
+// pause intent keep "paused" instead of applying this projection. Tasks a
+// rerun superseded are history and do not count.
 func ProjectJobStatus(tasks []TaskRow) (string, error) {
 	var waiting, active, success, failed, killed int
 	for _, task := range tasks {
+		if task.SupersededBy != "" {
+			continue
+		}
 		switch task.Status {
 		case "pending", "paused":
 			waiting++

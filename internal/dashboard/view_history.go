@@ -64,7 +64,7 @@ func (s *Server) viewSeries(ctx context.Context, spec views.Spec, input views.In
 	groups := map[string]*series{}
 	order := []string{}
 	for _, j := range jobs {
-		tasks, err := provider.ViewStore().ListTasks(ctx, store.TaskFilter{JobID: j.ID})
+		tasks, err := provider.ViewStore().ListTasks(ctx, store.TaskFilter{JobID: j.ID, LiveOnly: true})
 		if err != nil {
 			return nil, err
 		}
@@ -256,7 +256,7 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 	}
 	sources := []source{}
 	for _, j := range jobs {
-		tasks, err := st.ListTasks(r.Context(), store.TaskFilter{JobID: j.ID})
+		tasks, err := st.ListTasks(r.Context(), store.TaskFilter{JobID: j.ID, LiveOnly: true})
 		if err != nil {
 			viewError(w, err)
 			return

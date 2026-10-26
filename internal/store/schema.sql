@@ -251,3 +251,14 @@ CREATE TABLE IF NOT EXISTS drafts (
  config_json TEXT NOT NULL, source_path TEXT NOT NULL DEFAULT '', source_sha TEXT NOT NULL DEFAULT '',
  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
+
+-- Submission batches: seq 1 is the job's first submit, each
+-- `runq submit dr… --into jb…` adds the next. name is the job's name when
+-- the batch was submitted (seq 1's is the W&B group for every batch).
+CREATE TABLE IF NOT EXISTS job_batches (
+ job_id TEXT NOT NULL, seq INTEGER NOT NULL, submitted_at INTEGER NOT NULL,
+ name TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '',
+ command TEXT NOT NULL DEFAULT '', target TEXT NOT NULL DEFAULT '',
+ task_count INTEGER NOT NULL DEFAULT 0, config_json TEXT NOT NULL DEFAULT '', draft_id TEXT,
+ PRIMARY KEY (job_id, seq)
+);

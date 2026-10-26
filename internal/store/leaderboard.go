@@ -26,7 +26,7 @@ type TaskScore struct {
 // This is a shared read query: the HPC CLI uses it for `hpc best` / `hpc
 // collect`, and the daemon side can reuse it unchanged.
 func (s *Store) MetricLeaderboard(ctx context.Context, jobID, key string, maximize bool) ([]TaskScore, error) {
-	tasks, err := s.ListTasks(ctx, TaskFilter{JobID: jobID})
+	tasks, err := s.ListTasks(ctx, TaskFilter{JobID: jobID, LiveOnly: true})
 	if err != nil {
 		return nil, err
 	}

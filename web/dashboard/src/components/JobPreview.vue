@@ -23,8 +23,8 @@
       <PlanTable
         :rows="rows"
         :baseline="detail.config?.baseline"
-        :statuses="detail.tasks.map((x) => x.status)"
-        :row-links="detail.tasks.map(() => true)"
+        :statuses="cells.map((x) => x.status)"
+        :row-links="cells.map(() => true)"
         @open="(i) => openTask(i)"
       />
     </template>
@@ -38,6 +38,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useJobDetailQuery } from '@/queries/useJobQueries'
 import type { PlanRow } from '@/types/api'
+import { liveCells } from '@/utils/jobCells'
 import PlanTable from './PlanTable.vue'
 import StatusDot from './StatusDot.vue'
 import SegmentedProgress from './SegmentedProgress.vue'
@@ -47,13 +48,14 @@ const { t } = useI18n()
 const router = useRouter()
 const query = useJobDetailQuery(() => props.jobId)
 const detail = computed(() => query.data.value ?? null)
+const cells = computed(() => liveCells(detail.value?.tasks ?? []))
 const rows = computed<PlanRow[]>(() =>
-  (detail.value?.tasks ?? []).map((x) => ({ run: x.run_name || x.id.slice(0, 8), params: x.params ?? {} })))
+  cells.value.map((x) => ({ run: x.run_name || x.id.slice(0, 8), params: x.params ?? {} })))
 
 function openTask(i: number) {
   const d = detail.value
   if (!d) return
-  router.push({ name: 'task-detail', params: { project: d.job.project, jobId: d.job.id, taskId: d.tasks[i].id } })
+  router.push({ name: 'task-detail', params: { project: d.job.project, jobId: d.job.id, taskId: cells.value[i].id } })
 }
 </script>
 

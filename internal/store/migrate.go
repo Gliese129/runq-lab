@@ -223,7 +223,15 @@ func (s *Store) addMissingColumns(ctx context.Context) error {
 	if err := addColumnIfMissing(ctx, s.db, "jobs", "section_id", "TEXT"); err != nil {
 		return fmt.Errorf("add jobs.section_id: %w", err)
 	}
-	return nil
+	// Appends (--into): the batch a task came from, and the rerun that
+	// replaced a failed one.
+	if err := addColumnIfMissing(ctx, s.db, "tasks", "batch_seq", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return fmt.Errorf("add tasks.batch_seq: %w", err)
+	}
+	if err := addColumnIfMissing(ctx, s.db, "tasks", "superseded_by", "TEXT"); err != nil {
+		return fmt.Errorf("add tasks.superseded_by: %w", err)
+	}
+	return s.backfillFirstBatches(ctx)
 }
 
 // backfillProjectIDs gives every pre-rc6 project an id, then enforces

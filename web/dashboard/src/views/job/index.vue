@@ -79,11 +79,22 @@
       <PlanTable
         :rows="planRows"
         :baseline="detail.config?.baseline"
-        :statuses="detail.tasks.map((x) => x.status)"
-        :row-links="detail.tasks.map(() => true)"
-        @open="(i) => onClickTask(detail!.tasks[i].id)"
+        :statuses="cells.map((x) => x.status)"
+        :row-links="cells.map(() => true)"
+        :tags="cellTags"
+        @open="(i) => onClickTask(cells[i].id)"
       />
-      <div v-if="detail.job.draft_id" class="text-caption text-on-surface-variant mt-3">
+      <div v-if="(detail.batches?.length ?? 0) > 1" class="batches mt-4">
+        <div class="text-caption font-weight-medium mb-1">{{ t('plan.batches') }}</div>
+        <div v-for="b in detail.batches" :key="b.seq" class="batch">
+          <span class="mono">b{{ b.seq }}</span>
+          <span>{{ t('plan.batch_tasks', { n: b.task_count }) }}</span>
+          <span class="text-on-surface-variant">{{ new Date(b.submitted_at * 1000).toLocaleString() }}</span>
+          <span v-if="b.name" class="text-truncate">{{ b.name }}</span>
+          <code v-if="b.draft_id" class="text-on-surface-variant">{{ b.draft_id }}</code>
+        </div>
+      </div>
+      <div v-else-if="detail.job.draft_id" class="text-caption text-on-surface-variant mt-3">
         {{ t('plan.from_draft', { id: detail.job.draft_id }) }}
       </div>
     </div>
@@ -162,6 +173,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useCancelling } from '@/composables/useCancelling'
 import { useJobDetailQuery, useCompareQuery, useJobResultsQuery, useJobActions, useJobActivityQuery } from '@/queries/useJobQueries'
 import { lastOutputTs } from '@/utils/lastOutput'
+import { liveCells, rerunIds } from '@/utils/jobCells'
 import { useTaskActions } from '@/queries/useTaskQueries'
 import { useGenerationRerun } from '@/composables/useGenerationRerun'
 import GenerationRerunDialog from '@/components/GenerationRerunDialog.vue'
@@ -244,11 +256,21 @@ watch(() => detail.value?.tasks, (tasks) => { if (tasks) prune(tasks) })
 // ── Tabs (RQ2-4 ②): ?tab= is the shareable truth; replace (not push) so
 // tab flips don't pollute back-button history. ──
 const TABS = new Set(['tasks', 'plan', 'results', 'data'])
+// The plan shows cells: a rerun stands where the failure it replaced was.
+const cells = computed(() => liveCells(detail.value?.tasks ?? []))
+const cellTags = computed(() => {
+  const reruns = rerunIds(detail.value?.tasks ?? [])
+  const multi = (detail.value?.batches?.length ?? 0) > 1
+  return cells.value.map((x) => {
+    if (reruns.has(x.id)) return t('plan.rerun')
+    return multi && (x.batch_seq ?? 1) > 1 ? `b${x.batch_seq}` : undefined
+  })
+})
 // Pre-rc6 tasks have no run name: fall back to the short task id.
 const planRows = computed<PlanRow[]>(() => {
   const notes = new Map<string, string[]>()
   for (const r of detail.value?.config?.tasks ?? []) if (r.run && r.needs_code) notes.set(String(r.run), r.needs_code)
-  return (detail.value?.tasks ?? []).map((x) => ({
+  return cells.value.map((x) => ({
     run: x.run_name || x.id.slice(0, 8),
     params: x.params ?? {},
     needs_code: x.run_name ? notes.get(x.run_name) : undefined,
@@ -430,6 +452,9 @@ function onClickTask(id: string) {
 </script>
 
 <style scoped>
+.batches { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.batch { display: flex; gap: 10px; align-items: baseline; }
+.batch .mono { font-family: var(--font-mono); }
 .view-pick {
   font-size: 13px; padding: 3px 12px; border-radius: 999px; cursor: pointer; background: none;
   color: rgb(var(--v-theme-on-surface)); border: 0.5px solid rgb(var(--v-theme-outline-variant));

@@ -751,10 +751,9 @@ func (p *Proxy) EditDraft(ctx context.Context, ref, yamlText string) (*backend.D
 	return &out, err
 }
 
-func (p *Proxy) SubmitDraft(ctx context.Context, ref string, rev int, skipPreflight bool) (*backend.DraftSubmitResult, error) {
+func (p *Proxy) SubmitDraft(ctx context.Context, ref string, opts backend.DraftSubmitOptions) (*backend.DraftSubmitResult, error) {
 	var out backend.DraftSubmitResult
-	err := p.doWithTimeout(ctx, "POST", "/api/v1/drafts/"+url.PathEscape(ref)+"/submit",
-		map[string]any{"rev": rev, "no_preflight": skipPreflight}, &out, proxySubmitTimeout)
+	err := p.doWithTimeout(ctx, "POST", "/api/v1/drafts/"+url.PathEscape(ref)+"/submit", opts, &out, proxySubmitTimeout)
 	return &out, err
 }
 
