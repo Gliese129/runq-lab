@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/gliese129/runq-lab/internal/consumer"
+	"github.com/gliese129/runq-lab/internal/diskspace"
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/store"
 	"time"
@@ -313,6 +314,9 @@ type CleanOptions struct {
 	OlderThan *time.Time `json:"older_than,omitempty"` // only tasks finished before this time
 	// DryRun: preview what would be cleaned without deleting.
 	DryRun bool `json:"dry_run"`
+	// Checkpoints narrows the deletion to <task_dir>/checkpoints/* of the
+	// selected tasks: logs, results, outputs and DB rows stay.
+	Checkpoints bool `json:"checkpoints,omitempty"`
 }
 
 // CleanResult reports what Clean did (or would do in dry-run mode).
@@ -321,6 +325,30 @@ type CleanResult struct {
 	Jobs       int                `json:"jobs"`
 	FreedBytes int64              `json:"freed_bytes"`
 	Preview    []CleanPreviewItem `json:"preview,omitempty"` // populated only in dry-run
+
+	// Checkpoints mode: per-job checkpoint usage (measured on the target)
+	// and the filesystems those jobs live on. Tasks/Jobs then count the
+	// tasks/jobs whose checkpoints were deleted.
+	CheckpointJobs []CheckpointJob   `json:"checkpoint_jobs,omitempty"`
+	Filesystems    []CleanFilesystem `json:"filesystems,omitempty"`
+}
+
+// CheckpointJob is one job's checkpoint footprint in a checkpoints clean.
+// Bytes/Files are -1 when the target could not be measured.
+type CheckpointJob struct {
+	JobID   string `json:"job_id"`
+	Project string `json:"project"`
+	Target  string `json:"target"`
+	Tasks   int    `json:"tasks"` // selected tasks with a task directory
+	Bytes   int64  `json:"bytes"`
+	Files   int64  `json:"files"`
+	Mount   string `json:"mount,omitempty"`
+}
+
+// CleanFilesystem is a target filesystem holding cleaned jobs.
+type CleanFilesystem struct {
+	Target string `json:"target"`
+	diskspace.Filesystem
 }
 
 // TaskListOptions filters the flat task table (spec §5.5). Zero values

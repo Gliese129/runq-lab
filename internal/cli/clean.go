@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +38,8 @@ Selectors (at least one required):
   --task <id>          A specific task
 
 Modifiers:
+  --checkpoints        Delete only <task_dir>/checkpoints/* (keep logs,
+                       results, outputs and records)
   --show               Preview what would be deleted (non-interactive)
   --yes                Skip the interactive flow and confirmations
 
@@ -50,7 +53,8 @@ Examples:
   runq clean --older-than 7d           # interactive picker
   runq clean --older-than 7d --show    # preview only
   runq clean --older-than 7d --yes     # delete everything matched (cron)
-  runq clean --job <id> --yes`,
+  runq clean --job <id> --yes
+  runq clean --checkpoints --older-than 7d --show   # checkpoint bytes + free space`,
 	RunE: runClean,
 }
 
@@ -60,6 +64,7 @@ func init() {
 	cleanCmd.Flags().Bool("archived", false, "Select tasks from archived jobs")
 	cleanCmd.Flags().String("job", "", "Select all tasks in a specific job")
 	cleanCmd.Flags().String("task", "", "Select a specific task")
+	cleanCmd.Flags().Bool("checkpoints", false, "Delete only the tasks' checkpoints/ contents; keep logs, results, outputs and records")
 	cleanCmd.Flags().Bool("show", false, "Preview what would be deleted without deleting")
 	cleanCmd.Flags().BoolP("yes", "y", false, "Skip the interactive flow and confirmations")
 	cleanCmd.Flags().StringP("target", "t", "", "Scope clean to a specific compute target")
@@ -85,6 +90,7 @@ func buildCleanOptions(cmd *cobra.Command) (backend.CleanOptions, error) {
 	opts.Archived, _ = cmd.Flags().GetBool("archived")
 	opts.JobID, _ = cmd.Flags().GetString("job")
 	opts.TaskID, _ = cmd.Flags().GetString("task")
+	opts.Checkpoints, _ = cmd.Flags().GetBool("checkpoints")
 	showOnly, _ := cmd.Flags().GetBool("show")
 	opts.DryRun = showOnly
 
@@ -102,6 +108,9 @@ func runClean(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if opts.Checkpoints {
+		return withBackend(cmd, func(be backend.Backend) error { return runCleanCheckpoints(cmd, be, opts) })
+	}
 	return withBackend(cmd, func(be backend.Backend) error {
 		// Always preview first — the ledger-backed dry run is cheap.
 		previewOpts := opts
@@ -154,6 +163,85 @@ func runClean(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		return nil
 	})
+}
+
+// runCleanCheckpoints is `clean --checkpoints`: list each job's checkpoint
+// bytes and its filesystem's free space (measured on the target), confirm,
+// delete. --yes skips the listing's du pass and deletes directly.
+func runCleanCheckpoints(cmd *cobra.Command, be backend.Backend, opts backend.CleanOptions) error {
+	yes, _ := cmd.Flags().GetBool("yes")
+	execOpts := opts
+	if !yes || opts.DryRun {
+		previewOpts := opts
+		previewOpts.DryRun = true
+		result, err := be.Clean(cmd.Context(), previewOpts)
+		if err != nil {
+			return err
+		}
+		if len(result.CheckpointJobs) == 0 {
+			fmt.Println("No checkpoints to clean.")
+			return nil
+		}
+		total := printCheckpointPreview(result)
+		if opts.DryRun {
+			return nil
+		}
+		if !confirmYN(fmt.Sprintf("Delete the checkpoints listed above (%s)? Logs, results and outputs stay. This cannot be undone.", humanBytes(total))) {
+			fmt.Println("Aborted.")
+			return nil
+		}
+		// Exact-set execute: only what was listed.
+		execOpts = backend.CleanOptions{Target: opts.Target, Checkpoints: true}
+		for _, p := range result.Preview {
+			execOpts.TaskIDs = append(execOpts.TaskIDs, p.TaskID)
+		}
+	}
+	result, err := be.Clean(cmd.Context(), execOpts)
+	if err != nil {
+		return err
+	}
+	if result.Tasks == 0 {
+		fmt.Println("No checkpoints to clean.")
+		return nil
+	}
+	fmt.Printf("Deleted checkpoints of %d tasks in %d jobs, freed %s\n", result.Tasks, result.Jobs, humanBytes(result.FreedBytes))
+	return nil
+}
+
+// printCheckpointPreview lists jobs and filesystems; returns the total
+// checkpoint bytes.
+func printCheckpointPreview(r *backend.CleanResult) int64 {
+	var total int64
+	w := newTable()
+	fmt.Fprintln(w, "JOB\tPROJECT\tTASKS\tCHECKPOINTS\tFILES\tFILESYSTEM")
+	for _, j := range r.CheckpointJobs {
+		if j.Bytes > 0 {
+			total += j.Bytes
+		}
+		files := "unknown"
+		if j.Files >= 0 {
+			files = strconv.FormatInt(j.Files, 10)
+		}
+		mount := j.Mount
+		if mount == "" {
+			mount = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\n", j.JobID, j.Project, j.Tasks, humanBytes(j.Bytes), files, mount)
+	}
+	_ = w.Flush()
+	if len(r.Filesystems) > 0 {
+		fmt.Println("\nFree space now:")
+		for _, f := range r.Filesystems {
+			line := fmt.Sprintf("  %s on %s: %s free of %s (%.0f%%)", f.Mount, f.Target,
+				humanBytes(f.FreeBytes), humanBytes(f.TotalBytes), 100*f.FreeBytesFrac())
+			if f.InodesKnown {
+				line += fmt.Sprintf(", %d of %d inodes free (%.0f%%)", f.FreeInodes, f.TotalInodes, 100*f.FreeInodesFrac())
+			}
+			fmt.Println(line)
+		}
+	}
+	fmt.Printf("\nTotal: %s of checkpoints in %d jobs\n", humanBytes(total), len(r.CheckpointJobs))
+	return total
 }
 
 // ── hierarchical picker: project → job → confirm ────────────────────────

@@ -22,6 +22,10 @@ import (
 // which can be slow due to preflight checks.
 const proxySubmitTimeout = 50 * time.Second
 
+// proxyCheckpointCleanTimeout covers `clean --checkpoints`, which runs du
+// over the selected jobs on their targets.
+const proxyCheckpointCleanTimeout = 10 * time.Minute
+
 // Proxy implements backend.Backend by forwarding every call to the client
 // daemon's /api/v1/* surface over a unix-socket HTTP client (protocol spec
 // §5). It is used by the CLI and any other out-of-process consumer.
@@ -608,7 +612,11 @@ func (p *Proxy) Clean(ctx context.Context, opts backend.CleanOptions) (*backend.
 		opts.Target = p.TargetFilter
 	}
 	var result backend.CleanResult
-	if err := p.do(ctx, "POST", "/api/v1/clean", opts, &result); err != nil {
+	var timeout time.Duration // default client timeout
+	if opts.Checkpoints {
+		timeout = proxyCheckpointCleanTimeout
+	}
+	if err := p.doWithTimeout(ctx, "POST", "/api/v1/clean", opts, &result, timeout); err != nil {
 		return nil, err
 	}
 	return &result, nil

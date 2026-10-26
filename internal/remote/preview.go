@@ -83,6 +83,7 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 			return s.String(), plan, nil
 		}
 	}
+	warns = append(warns, b.diskWarnings(ctx, proj, root, len(plan.Tasks))...)
 	fmt.Fprintf(&s, "name: %s\n", plan.Name)
 	for _, w := range warns {
 		fmt.Fprintf(&s, "warning: %s\n", w)

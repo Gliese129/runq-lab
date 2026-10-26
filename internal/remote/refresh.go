@@ -272,6 +272,14 @@ func (b *Backend) persistDecision(ctx context.Context, tk store.TaskRow, d Decis
 	if isTerminal(d.Status) {
 		fields["kill_requested"] = 0
 	}
+	// A run that just failed gets its log tail checked for ENOSPC/EDQUOT
+	// (one Exec, only on the transition): "disk full on /gs/bs (inodes)"
+	// beats a bare exit code.
+	if d.Status == "failed" && tk.Status != "failed" {
+		if detail := b.diskFullDetail(ctx, tk); detail != "" {
+			fields["failure_detail"] = detail
+		}
+	}
 	// Leaving `unknown` (RQ-74 review finding 1): the resolved state must
 	// not keep the submit-era evidence — a task reconcile just confirmed
 	// RUNNING would otherwise still render "failed before running" — and

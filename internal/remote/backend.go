@@ -148,6 +148,10 @@ type Backend struct {
 	// hold this lock. Per-lane lock: no cross-target contention; these
 	// paths are SSH-bound and effectively serial anyway.
 	lifecycleMu sync.Mutex
+
+	// usage measures finished jobs' directories in the background (see
+	// usage.go); nil (literal Backends in tests) disables it.
+	usage *usageMeasurer
 }
 
 // WithLifecycleLock runs fn under this lane's lifecycle lock. Exposed for
@@ -163,7 +167,7 @@ func (b *Backend) WithLifecycleLock(fn func() error) error {
 // NewWithFS builds a Backend with an explicit filesystem — used by SSHBackend
 // to inject an rfs.SSHFS for remote cluster operation.
 func NewWithFS(cfg *config.TargetConfig, st *store.Store, storageCfg *config.GlobalConfig, fsys rfs.FS) *Backend {
-	b := &Backend{Cfg: cfg, Store: st, FS: fsys, StorageCfg: storageCfg}
+	b := &Backend{Cfg: cfg, Store: st, FS: fsys, StorageCfg: storageCfg, usage: newUsageMeasurer()}
 	if observed, ok := fsys.(interface{ SetContactObserver(func(error)) }); ok {
 		observed.SetContactObserver(b.recordContact)
 	}
@@ -306,7 +310,13 @@ func (b *Backend) refreshJobStatus(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
-	return b.Store.UpdateJobStatus(ctx, jobID, status)
+	if err := b.Store.UpdateJobStatus(ctx, jobID, status); err != nil {
+		return err
+	}
+	if store.IsTerminalJobStatus(status) {
+		b.measureJobLater(ctx, jobID, tasks)
+	}
+	return nil
 }
 
 // nowUnix is a seam for tests; production uses the wall clock.

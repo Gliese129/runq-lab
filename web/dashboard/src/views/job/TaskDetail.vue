@@ -1014,7 +1014,9 @@ const failureCard = computed(() => {
       return {
         color: 'error',
         icon: 'mdi-alert-circle-outline',
-        title: t('task.failed_before_running'),
+        // Same rule as `runq ps`: evidence on a task that had started is a
+        // run-phase failure (e.g. disk full), not a rejected submission.
+        title: task.value?.started_at ? t('task.failed_while_running') : t('task.failed_before_running'),
       }
   }
 })

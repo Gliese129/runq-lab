@@ -316,6 +316,7 @@
   "task.scheduler_state": "调度器状态",
   "task.queue": "队列",
   "task.failed_before_running": "任务未能启动 — 提交本身被拒绝：",
+  "task.failed_while_running": "运行中失败：",
   "task.copy_detail": "复制",
   "task.copied": "已复制",
   "task.outcome_unknown": "提交结局未知 — runq 无法确认集群是否接受了该任务。对账会依据事实收敛；以下为错误原文。",

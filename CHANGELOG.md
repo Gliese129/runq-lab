@@ -179,6 +179,13 @@
   in 30m (last refresh …)` and exits 0. Use it in place of sleep loops.
 - `runq logs` follows only at a terminal; piped or captured output gets the
   tail and exits. `--timeout <dur>` follows for at most that long.
+- `runq draft` warns when a filesystem the job writes to (each disk counted
+  separately, e.g. home and bulk) is under 5% free space or inodes, or smaller
+  than the project's largest finished job per task × planned tasks.
+- A task that fails with `No space left on device` / `Disk quota exceeded`
+  says so in its failure reason: inodes, space or quota, and which mount.
+- `runq clean --checkpoints` deletes only `checkpoints/*` of the selected
+  tasks; `--show` lists checkpoint sizes per job and free space per filesystem.
 
 
 ## v0.6.0 — 2026-10-16

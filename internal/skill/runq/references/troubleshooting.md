@@ -39,6 +39,22 @@ step, then act or report; one retry is usually enough to tell a blip from a faul
 - **Need to change walltime/resources of a queued task**: not supported; kill
   and resubmit (queue time is lost — tell the user first).
 
+## Disk full
+
+HPC filesystems fill up in bytes **or** in inodes (file count), and a target
+often has several (home vs. bulk storage; `data_path` vs. `working_dir`).
+
+- **Task failed with `disk full (inodes|space|quota): <mount> …`**: runq found
+  `No space left on device` / `Disk quota exceeded` in the log and checked that
+  filesystem. Inodes: too many small files (checkpoints every step, unpacked
+  datasets). Quota: df can't see it; use the cluster's quota command.
+- **Free space**: `runq clean --checkpoints --older-than 7d --show` lists each
+  job's checkpoint bytes and the filesystems' free space; drop `--show` to
+  delete only `checkpoints/*` (logs, results and outputs stay). Show the list
+  to the researcher before deleting; a rerun may want to resume from them.
+- **`warning: disk: <mount> is low on …` in a draft**: free space first or
+  submit fewer tasks; the estimate comes from this project's finished jobs.
+
 ## Where to look
 
 - Every submit/kill with the rendered command + raw scheduler output:

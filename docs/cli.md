@@ -103,10 +103,17 @@ starts and serves history and the dashboard.
 |---|---|
 | `runq clean --job <job_id> --show` | Preview what would be deleted |
 | `runq clean --job <job_id> -y` | Delete the job's task directories, logs and records — **irreversible** |
+| `runq clean --checkpoints --older-than 7d --show` | List each job's checkpoint bytes and its filesystem's free space (space and inodes) |
+| `runq clean --checkpoints --job <job_id>` | Delete only `<task_dir>/checkpoints/*`; logs, results, outputs and records stay |
 
 Selectors: `--job`, `--task`, `--older-than 7d` (units h/d/w/m/y), `--orphan`,
-`--archived`, `-t <target>`. Without `-y` on a terminal, an interactive picker
-walks project → job → confirmation.
+`--archived`, `-t <target>`; `--checkpoints` combines with any of them. Without
+`-y` on a terminal, an interactive picker walks project → job → confirmation
+(`--checkpoints` lists what it would delete and asks once).
+
+`runq draft` warns when a filesystem the job writes to (the data path and the
+project's `working_dir`) has under 5% space or inodes free, or less than the
+project's largest finished job per task × the planned task count.
 
 ## Notes for scripts and agents
 

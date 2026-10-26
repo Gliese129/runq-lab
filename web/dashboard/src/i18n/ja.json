@@ -316,6 +316,7 @@
   "task.scheduler_state": "スケジューラ状態",
   "task.queue": "キュー",
   "task.failed_before_running": "実行前に失敗 — 投入自体が拒否されました：",
+  "task.failed_while_running": "実行中に失敗：",
   "task.copy_detail": "コピー",
   "task.copied": "コピーしました",
   "task.outcome_unknown": "投入結果が不明 — クラスタがこのジョブを受理したか runq は確認できませんでした。リコンサイルが事実に基づいて確定します。以下はエラー原文です。",

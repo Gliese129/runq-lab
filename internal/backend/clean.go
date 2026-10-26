@@ -109,6 +109,14 @@ func PerformClean(ctx context.Context, st *store.Store, fsFor func(store.TaskRow
 		})
 	}
 
+	if opts.Checkpoints {
+		rows := make([]store.TaskRow, 0, len(unique))
+		for _, u := range unique {
+			rows = append(rows, u.task)
+		}
+		return cleanCheckpoints(ctx, st, resolveFS, rows, preview, opts.DryRun), nil
+	}
+
 	if opts.DryRun {
 		return &CleanResult{Preview: preview}, nil
 	}

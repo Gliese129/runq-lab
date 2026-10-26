@@ -262,3 +262,15 @@ CREATE TABLE IF NOT EXISTS job_batches (
  task_count INTEGER NOT NULL DEFAULT 0, config_json TEXT NOT NULL DEFAULT '', draft_id TEXT,
  PRIMARY KEY (job_id, seq)
 );
+
+-- What a finished job left on disk (du of its job directory), measured
+-- once in the background after it turns terminal and again by
+-- `clean --checkpoints --show`. The draft preview's space estimate is
+-- (largest bytes or files per task of the project's jobs) × planned tasks.
+-- Re-measuring keeps the larger numbers: this is the footprint a job of
+-- that shape needs, which deleting its checkpoints later doesn't change.
+CREATE TABLE IF NOT EXISTS job_usage (
+ job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+ bytes INTEGER NOT NULL, files INTEGER NOT NULL, task_count INTEGER NOT NULL,
+ measured_at INTEGER NOT NULL
+);

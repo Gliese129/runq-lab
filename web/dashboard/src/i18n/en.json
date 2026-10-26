@@ -316,6 +316,7 @@
   "task.scheduler_state": "Scheduler state",
   "task.queue": "Queue",
   "task.failed_before_running": "Failed before running — the submission itself was rejected:",
+  "task.failed_while_running": "Failed while running:",
   "task.copy_detail": "Copy",
   "task.copied": "Copied",
   "task.outcome_unknown": "Submission outcome unknown — runq could not confirm whether the cluster accepted this job. Reconcile will settle it from facts; the error below is verbatim.",
