@@ -32,7 +32,7 @@ export function useViewRenderQuery(
     queryKey: computed(() => qk.viewRender(toValue(project), toValue(name), toValue(jobs))),
     queryFn: () => viewsApi.render(toValue(project), toValue(name), toValue(jobs)),
     refetchInterval: (q) => {
-      const live = q.state.data?.sources.some((s) => s.running > 0 || (s.consumers ?? []).some((c) => c.status === 'running'))
+      const live = q.state.data?.sources.some((s) => s.running > 0)
       return live ? LIVE_VIEW_MS : false
     },
   })

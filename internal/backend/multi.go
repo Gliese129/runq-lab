@@ -727,12 +727,7 @@ func (m *MultiBackend) renderJobRows(ctx context.Context, jobs []store.JobRow) (
 	}
 	out := make([]JobSummary, 0, len(jobs))
 	for i := range jobs {
-		cs, err := m.store.ListConsumers(ctx, jobs[i].ID, "")
-		if err != nil {
-			return nil, err
-		}
 		summary := BuildJobSummary(jobs[i], byJob[jobs[i].ID])
-		summary.Consumers = consumerCounts(cs)
 		out = append(out, summary)
 	}
 	return out, nil
@@ -800,11 +795,6 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 	}
 	keys, _ := m.store.MetricKeys(ctx, jobID)
 	detail := BuildJobDetail(*j, tasks, keys)
-	detail.Consumers, err = m.store.ListConsumers(ctx, j.ID, "")
-	if err != nil {
-		return nil, err
-	}
-	detail.Job.Consumers = consumerCounts(detail.Consumers)
 	for i, row := range tasks {
 		detail.Tasks[i] = m.storedTaskView(ctx, row)
 	}
@@ -1852,7 +1842,7 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 	in := job.ExportInput{
 		JobID: j.ID, ExportedAt: time.Now(), Project: j.ProjectName,
 		Name: j.Name, Description: j.Description, Section: j.Section,
-		Overrides: cfg.Overrides, Consumers: cfg.Consumers, Baseline: cfg.Baseline, Rows: rows,
+		Overrides: cfg.Overrides, Baseline: cfg.Baseline, Rows: rows,
 	}
 	if proj, err := m.registry.GetCached(ctx, j.ProjectName); err == nil {
 		for _, d := range proj.Params {

@@ -77,6 +77,19 @@ const upsertFileIngestSQL = `
 // ApplyResultsIngestDelta commits latest records and the read offset together.
 func (s *Store) ApplyResultsIngestDelta(ctx context.Context, taskID string, rebuild bool,
 	rows []ResultRecordRow, parsedTotal int, mark FileIngestMark) error {
+	return s.applyResultsDelta(ctx, taskID, taskID, IngestFileResults, rebuild, rows, mark)
+}
+
+// ApplyProducerResultsDelta is ApplyResultsIngestDelta for
+// <task_dir>/results.<producer>.jsonl: rows carry the producer's source id
+// (ProducerSourceID) and the mark is the task's "results.<producer>" file.
+func (s *Store) ApplyProducerResultsDelta(ctx context.Context, taskID, producer string, rebuild bool,
+	rows []ResultRecordRow, mark FileIngestMark) error {
+	return s.applyResultsDelta(ctx, ProducerSourceID(taskID, producer), taskID, ProducerResultsFile(producer), rebuild, rows, mark)
+}
+
+func (s *Store) applyResultsDelta(ctx context.Context, sourceID, taskID, file string, rebuild bool,
+	rows []ResultRecordRow, mark FileIngestMark) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -84,7 +97,7 @@ func (s *Store) ApplyResultsIngestDelta(ctx context.Context, taskID string, rebu
 	defer func() { _ = tx.Rollback() }()
 
 	if rebuild {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM record_latest WHERE task_id=?`, taskID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM record_latest WHERE task_id=?`, sourceID); err != nil {
 			return err
 		}
 	}
@@ -95,11 +108,28 @@ func (s *Store) ApplyResultsIngestDelta(ctx context.Context, taskID string, rebu
 	}
 	mark.Dropped = 0
 	if _, err := tx.ExecContext(ctx, upsertFileIngestSQL,
-		taskID, IngestFileResults, mark.Size, mark.Offset, boolToInt(mark.Final), mark.Dropped); err != nil {
+		taskID, file, mark.Size, mark.Offset, boolToInt(mark.Final), mark.Dropped); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
+
+// ProducerSourceID is the record source of a task's results.<producer>.jsonl
+// (a scoring script's results for that task): "<task_id>@<producer>".
+// Records from the task itself keep the bare task id.
+func ProducerSourceID(taskID, producer string) string { return taskID + "@" + producer }
+
+// SplitSourceID undoes ProducerSourceID; producer is "" for a task's own
+// records (and for ids of the removed consumers, cs…).
+func SplitSourceID(id string) (taskID, producer string) {
+	if i := strings.IndexByte(id, '@'); i >= 0 {
+		return id[:i], id[i+1:]
+	}
+	return id, ""
+}
+
+// ProducerResultsFile is the file_ingest name of results.<producer>.jsonl.
+func ProducerResultsFile(producer string) string { return IngestFileResults + "." + producer }
 
 // SumResultsDropped totals the results-cap overflow across a job's tasks —
 // the honest input for the results endpoint's skipped/truncated fields.
@@ -200,4 +230,26 @@ func (s *Store) TaskLinks(ctx context.Context, taskIDs []string) (map[string]map
 		}
 	}
 	return out, nil
+}
+
+// ProducerSources lists the producer record sources (ProducerSourceID) of a
+// job's live tasks: every results.<producer>.jsonl ingest has seen.
+func (s *Store) ProducerSources(ctx context.Context, jobID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT fi.task_id, fi.file FROM file_ingest fi JOIN tasks t ON t.id = fi.task_id
+		WHERE t.job_id = ? AND t.superseded_by IS NULL AND fi.file LIKE 'results.%'
+		ORDER BY fi.task_id, fi.file`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var taskID, file string
+		if err := rows.Scan(&taskID, &file); err != nil {
+			return nil, err
+		}
+		out = append(out, ProducerSourceID(taskID, strings.TrimPrefix(file, IngestFileResults+".")))
+	}
+	return out, rows.Err()
 }

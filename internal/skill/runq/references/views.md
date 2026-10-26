@@ -143,55 +143,37 @@ Scripts run on the project's default target in its working_dir/environment.
 Only run short summaries on login nodes. Expired sources run on demand;
 `--refresh` forces refresh. One execution per view at a time; stdout ≤2 MiB.
 Failures retain the last good value/time and display the last 20 stderr lines.
-Put expensive work in a task/consumer and emit record snapshots.
+Put expensive work in a task or a scoring script and emit record snapshots.
 
-## Manual CPU consumer
+## Scoring scripts (runq.job)
 
-```bash
-runq consumer add jb123 scorer -- python scripts/score.py
-runq show cs123
-runq logs cs123 --no-follow
-runq kill cs123
+Scoring that is not part of training (an LLM judge, an offline evaluator) is a
+plain script you start yourself where the job dir is readable — login node or a
+CPU node in your own iqrsh/tmux; runq does not start, watch or stop it:
+
+```python
+import runq
+job = runq.job("/gs/work/kl/jb123")          # the job dir (holds job.json)
+for t in job.tasks:
+    if t.status == "success":
+        t.record({"acc": score(t.output_dir)}, section="math", split="test")
 ```
 
-Or declare `consumers: [{name: scorer, command: python scripts/score.py}]` in the
-job. Submit prepares `run.sh` and prints its path. The user/agent manually obtains
-iqrsh resources and manages tmux, then runs `bash <run_sh>` on that CPU node.
-runq does not arrange sessions or promise SSH survival. Prefer direct Python
-commands for exit-code capture.
-
-`ctx.job_tasks()` returns cached `tasks` plus `updated_at`, `observed_at` and
-`observation_state`. Inspect observation age/state before deciding completion;
-read failure must not become “all done.” The script reads outputs, writes final
-records, and decides when to exit. It may keep waiting for later work.
-Job completion or `runq kill <job_id>` does not stop consumers.
-
-A consumer can restart under the same cs ID: rerun its existing `bash run.sh`.
-Keep its name and directory; logs/results append and `ctx.output_dir` retains the
-processed-file ledger. Persist processed task/file IDs there and resume metric
-steps from saved progress. Task single-execution rules do not apply to consumers.
-
-A fresh heartbeat from an unfinished session rejects a duplicate launch. Expiry
-alone does not prove exit: the launcher checks the old process group on the same
-host, or uses the old watcher's exit confirmation when moving hosts. If that proof
-is missing after iqrsh expires, inspect the old host/allocation. Only after verifying
-that the entire old process group ended, rerun `bash run.sh --confirm-stopped`.
-The flag cannot bypass a fresh heartbeat or locally detected live processes. Never
-use it just because the consumer is lost. Do not delete lifecycle locks or create a
-new consumer name merely to restart scoring. runq manages neither iqrsh nor tmux.
-
-Restart resets execution markers, while old watcher/exit/cancel evidence is isolated
-by an internal run token; there is no attempt history. The controller keeps watching
-terminal consumers so restarted output reaches views.
-Ready/running/stopped/failed/killed/lost are independent of tasks.
-runq sends TERM then KILL after 30 seconds using verified process identities.
+`t.record` is `runq.record` for that task, appended to
+`<task_dir>/results.<producer>.jsonl` (producer = script name). runq ingests it
+as source `<tk…>@<producer>` within 5 min (30 s while tasks run) for jobs
+unfinished or from the last 14 days; `--fresh` on a command ingests at once and
+covers older jobs. The rows carry the task's
+params, so `rows: [param.…]` lines scores up with the sweep. job.json is
+rewritten when the job changes; a script waiting for tasks re-reads
+`runq.job(...)` and decides itself when to stop. Keep a list of scored tasks in
+the script's own output dir so a restart skips them.
 
 ## Errors → corrections
 
 - Unknown/ambiguous field → read available fields; qualify the metric section.
 - Rows missing identity / expect mismatch → include all axes in rows and expect.
 - Section key warning → fix the writer to emit every key, null when unknown.
-- No data yet → check selected jobs, section, expected axes and consumer state.
+- No data yet → check selected jobs, section, expected axes; for a scoring script, that `results.<producer>.jsonl` exists in the task dirs (and `--fresh` for an old job).
 - Unconfirmed observation → report last observed time; inspect connection/source.
 - Failed task → read error, fix, dry-run, submit a new task; there is no task retry.
-- Lost consumer → inspect original host/PID/allocation; confirm the whole group ended before restarting the same run.sh.

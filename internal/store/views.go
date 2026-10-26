@@ -239,7 +239,8 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 				source.LastDataAt = &ts
 			}
 			if tableJobs[j.ID] {
-				v := views.Record{SourceID: r.TaskID, JobID: r.JobID, Section: r.Section, TS: r.TS, Params: params[r.TaskID]}
+				taskID, producer := SplitSourceID(r.TaskID)
+				v := views.Record{SourceID: r.TaskID, Producer: producer, JobID: r.JobID, Section: r.Section, TS: r.TS, Params: params[taskID]}
 				if err := json.Unmarshal([]byte(r.AxesJSON), &v.Axes); err != nil {
 					return in, err
 				}
@@ -260,31 +261,9 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 		if source.ObservationState != "ok" {
 			source.Attention = append(source.Attention, map[string]any{"job_id": j.ID, "reason": "observation " + source.ObservationState})
 		}
-		consumers, err := s.ListConsumers(ctx, j.ID, "")
-		if err != nil {
-			return in, err
-		}
-		for _, c := range consumers {
-			source.Consumers = append(source.Consumers, map[string]any{"id": c.ID, "name": c.Name, "status": c.Status, "last_heartbeat_at": c.LastHeartbeatAt, "last_data_at": c.LastDataAt, "observation_state": c.ObservationState})
-			if c.LastHeartbeatAt != nil && (source.LastHeartbeatAt == nil || *c.LastHeartbeatAt > *source.LastHeartbeatAt) {
-				source.LastHeartbeatAt = c.LastHeartbeatAt
-			}
-			if c.ObservedAt == nil {
-				source.ObservedAt = nil
-				source.ObservationState = "unconfirmed"
-			} else if source.ObservedAt != nil && *c.ObservedAt < *source.ObservedAt {
-				source.ObservedAt = c.ObservedAt
-			}
-			if c.ObservationState != "ok" {
-				source.ObservationState = "unconfirmed"
-			}
-			if c.Status == "ready" || c.Status == "failed" || c.Status == "lost" || c.ObservationState != "ok" {
-				source.Attention = append(source.Attention, map[string]any{"consumer_id": c.ID, "status": c.Status, "reason": c.Reason, "host": c.Host, "pid": c.PID})
-			}
-		}
 		in.Sources = append(in.Sources, source)
 		vals := map[string]any{"status": j.Status}
-		rows, err := s.db.QueryContext(ctx, `SELECT key,last,last_ts,task_id FROM metric_summary WHERE job_id=? UNION ALL SELECT key,last,last_ts,source_id FROM consumer_metrics WHERE job_id=? ORDER BY last_ts,task_id`, j.ID, j.ID)
+		rows, err := s.db.QueryContext(ctx, `SELECT key,last,last_ts,task_id FROM metric_summary WHERE job_id=? UNION ALL SELECT key,last,last_ts,source_id FROM consumer_metrics WHERE job_id=? ORDER BY last_ts,task_id`, j.ID, j.ID) // consumer_metrics: removed consumers, read-only
 		if err != nil {
 			return in, err
 		}

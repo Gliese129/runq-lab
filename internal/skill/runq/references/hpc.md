@@ -124,10 +124,9 @@ are never synced. A project without `targets` is pinned to its `target`.
 
 ## CPU scoring beside a job
 
-Prepare a consumer with `runq consumer add <job_id> scorer -- python score.py`.
-The researcher or agent obtains the CPU allocation with iqrsh, manages tmux,
-and runs the printed `bash <run_sh>` on a node that can access the job workspace.
-runq owns status/results and cancellation; it does not manage session survival.
-The script reads `ctx.job_tasks()` and decides whether to keep waiting or exit.
-Task/job cancellation does not stop its consumers. See the views reference for
-fixed record schemas, source freshness and one-execution consumer IDs.
+Run the scoring script yourself on a node that can read the job workspace (the
+login node for light work; a CPU allocation from iqrsh, in your own tmux, for
+heavy work). It reads the job with `runq.job("<job_dir>")` and records results
+per task; runq ingests them from the task directories, so the script needs no
+connection to runq. runq does not start, watch or stop it. See the views
+reference for the record contract.

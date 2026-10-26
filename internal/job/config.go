@@ -2,7 +2,6 @@ package job
 
 import (
 	"fmt"
-	"github.com/gliese129/runq-lab/internal/consumer"
 
 	"github.com/gliese129/runq-lab/internal/project"
 	"gopkg.in/yaml.v3"
@@ -10,7 +9,9 @@ import (
 
 // JobConfig represents a parsed job.yaml file.
 type JobConfig struct {
-	Consumers       []consumer.Config  `yaml:"consumers,omitempty" json:"consumers,omitempty"`
+	// Consumers is retired: parsed so old files still load, then warned
+	// about and dropped by NormalizeLegacy (scripts read jobs with runq.job()).
+	Consumers       any                `yaml:"consumers,omitempty" json:"-"`
 	Command         string             `yaml:"command,omitempty" json:"command,omitempty"`
 	Target          string             `yaml:"target,omitempty" json:"target,omitempty"`
 	Preflight       *PreflightOverride `yaml:"preflight,omitempty" json:"preflight,omitempty"`

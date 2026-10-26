@@ -2,10 +2,12 @@
 
 `pip install runq-sdk`
 
-The SDK runs inside your training script, not beside it. It gives you
-typed parameters from the sweep (the ablation axes), step metrics, and
-axis-keyed result records — without locking you into runq. Every
-function works standalone.
+The SDK has two halves. **Write this task** — inside your training script:
+typed parameters from the sweep (the ablation axes), step metrics and
+axis-keyed result records. **Read a job** — in a scoring script beside it:
+`runq.job()` lists a job's tasks and records results for each. Every write
+is a file in a task directory that runq ingests; nothing needs a network
+connection or a running service.
 
 runq deliberately does **not** decide when training stops and does
 **not** manage checkpoints. Early stopping and checkpoint retention
@@ -13,14 +15,16 @@ belong to your training script or framework.
 
 ## Modes
 
-The SDK auto-detects its environment from `RUNQ_TASK_ID` and
-`RUNQ_SOCKET_PATH`:
+`runq.context()` reads `RUNQ_TASK_ID` (`ctx.mode`):
 
-| Mode | When | What works |
+| Mode | When | Files |
 |---|---|---|
-| **daemon** | task was submitted by runq with a socket | Everything |
-| **no_daemon** | `RUNQ_TASK_ID` is set but no socket (HPC) | Everything — all file-based |
-| **manual** | Neither env var is set | Everything; files go to the current directory — use it for local debugging |
+| **task** | runq started the process | the task directory; `metrics.jsonl`, `results.jsonl` and `links.json` are created by `context()` |
+| **manual** | `RUNQ_TASK_ID` is unset | the current directory (`runq_metrics.jsonl`, …) — use it for local debugging |
+
+In a task, `context()` also prints one warning to stderr for each filesystem
+(of the task, checkpoint and output directories) with under 5% free space or
+free inodes.
 
 ## Quick example
 
@@ -43,9 +47,9 @@ runq.record({"acc": evaluate(model)}, seed=ctx.seed, split="val")
 ## Context and parameters
 
 ```python
-ctx = runq.context()       # Context dataclass: task_id, params, seed, mode, paths
-runq.params                # ParamDict — dict with fuzzy-match suggestions on KeyError
-runq.seed                  # deterministic per-task seed (SHA-256 of task_id, mod 2^32)
+ctx = runq.context()       # task_id, params, seed, mode, task/output/checkpoint dirs
+ctx.params                 # dict; ["kl"] = required (close-match hint), .get("kl", 0.0) = explicit default
+ctx.seed                   # deterministic per-task seed (SHA-256 of task_id, mod 2^32)
 ctx.wandb_like_cfg         # dict to splat into wandb.init(...) — SDK never imports wandb
 ```
 
@@ -54,7 +58,7 @@ ctx.wandb_like_cfg         # dict to splat into wandb.init(...) — SDK never im
 ```python
 import wandb
 run = wandb.init(**ctx.wandb_like_cfg)      # override any key: {**ctx.wandb_like_cfg, "id": my_id}
-ctx.link_wandb(run)                  # runq shows the run on the task (CLI + dashboard)
+runq.link("wandb", run)              # runq shows the run on the task (CLI + dashboard)
 ```
 
 `wandb_like_cfg` fills: `project` / `entity` / `tags` / `mode` from the
@@ -65,8 +69,11 @@ Only rank 0 reports: when `RANK > 0` it sets `mode="disabled"`, so a
 multi-GPU task is one run (W&B's system monitor on rank 0 covers every GPU
 on that node; multi-node runs only show the first node).
 
-`runq.link(name, url)` records any external page for the task (last write
-per name wins); it works whatever run id your script chooses.
+`runq.link(name, url_or_run)` records any external page for the task (last
+write per name wins); it takes a URL or an object with `.url`, and does
+nothing when there is no URL (offline or disabled runs). It works whatever
+run id your script chooses. `ctx.link_wandb(run)` still works but is
+deprecated (`DeprecationWarning`).
 
 ## Metrics
 
@@ -112,7 +119,7 @@ every time, using `None` for unknown values. Missing keys become null; new keys
 are ignored with a warning. Axis values are strings, booleans, finite numbers
 or null; metric values are finite numbers or null. Across sources, a view chooses
 the newest timestamp (then source ID), without adding snapshots together.
-See [views and consumers](views.md) for the full contract and examples.
+See [views and scoring scripts](views.md) for the full contract and examples.
 
 ## Checkpoints
 
@@ -120,13 +127,28 @@ Each new task gets a new `ctx.checkpoint_dir`. Scripts own writing, retention
 and selection. To reuse an old checkpoint, explicitly pass its path in the new
 job's command or parameters. A failed task is never restarted in place.
 
-## Consumer task snapshots
+## Reading a job: `runq.job(ref=None, *, producer=None)`
 
-`ctx.job_tasks()` reads the consumer's atomically published `job.json`, returning
-`tasks`, `updated_at`, `observed_at` and `observation_state`. Each task includes
-its ID, params, status, output directory, step and output time. Inspect freshness
-before deciding all work is complete. Read failures raise an error; they never
-become an empty completed job. The consumer script decides when to exit.
+```python
+job = runq.job("/gs/work/kl/jb7817")    # the job directory (or its job.json)
+job.id, job.name, job.project, job.status, job.observed_at
+for t in job.tasks:                       # live tasks; replaced reruns left out
+    t.id, t.run_name, t.status, t.params, t.task_dir, t.output_dir, t.checkpoint_dir
+    t.started_at, t.finished_at, t.last_output_at, t.batch_seq
+    t.record({"acc": 0.81}, section="math", split="test")
+```
+
+`ref` is the job directory, which runq fills with `job.json` at submit and
+whenever it sees the job change. With no `ref` inside a runq task it is the
+task's own job; a `jb…` id works when the runq service socket is reachable
+(`RUNQ_SOCKET` or the local one). A missing or unreadable job.json raises.
+
+`t.record` is `runq.record` for that task — same validation, same frozen
+section keys — appended to `<task_dir>/results.<producer>.jsonl`. `producer`
+defaults to the running script's file name without `.py` (letters, digits,
+`_ . -`). No `runq.context()` is needed. runq ingests the file as the source
+`<task_id>@<producer>`, also after the task finished. See
+[scoring scripts](views.md#scoring-scripts-with-runqjob).
 
 ## Utilities
 
@@ -143,7 +165,9 @@ with runq.utils.atomic_write("output.json") as f:
 | `params.json` | runq (at submit) | SDK `context()` |
 | `metrics.jsonl` | SDK `report` | dashboard |
 | `results.jsonl` | SDK `record` | `runq view --job`, dashboard |
+| `results.<producer>.jsonl` | a scoring script's `job.tasks[i].record` | `runq view --job`, dashboard |
 | `links.json` | SDK `link` | `runq show <tk…>`, dashboard |
+| `../job.json` (the job dir) | runq (submit, refresh) | SDK `runq.job()` |
 | `checkpoints/` | your training script | your resume code |
 
 ## Installation
@@ -175,11 +199,12 @@ artifact cache; downloaded artifacts should use `artifact.download(root=...)`
 when a task-specific destination is needed. W&B owns upload/sync; runq does not
 upload checkpoints automatically or store credentials.
 
-Call `ctx.link_wandb(run)` immediately after `wandb.init`. It records only a
-nonempty `run.url` on global rank zero, including custom run IDs. Set `RANK` to
-the framework's global rank, or pass `global_rank` to `link_wandb`; `LOCAL_RANK`
-is insufficient on multiple nodes. For frameworks without `RANK`, also set
-`mode="disabled"` in init kwargs for nonzero global ranks.
+Call `runq.link("wandb", run)` immediately after `wandb.init`. It records the
+run's actual URL, including custom run IDs, and nothing for a run without one.
+Call it on global rank zero only: set `RANK` to the framework's global rank
+(`LOCAL_RANK` is insufficient on multiple nodes) so `wandb_like_cfg` disables
+the other ranks. For frameworks without `RANK`, also set `mode="disabled"` in
+init kwargs for nonzero global ranks.
 
 A resubmission creates a new task and W&B run ID. Reusing an earlier checkpoint
 or W&B run is an explicit choice in your script. Offline bundles can be synced

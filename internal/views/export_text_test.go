@@ -15,7 +15,6 @@ func TestTextHeaderIsReadable(t *testing.T) {
 			JobID: "jb1", Note: "n", Status: "running", ObservationState: "ok", ObservedAt: &observed,
 			Attention: []map[string]any{
 				{"task_id": "tk1", "status": "failed", "reason": "exit 1"},
-				{"consumer_id": "cs1", "status": "lost", "reason": "heartbeat expired", "host": "r7i3n5", "pid": 42},
 				{"job_id": "jb1", "reason": "observation unconfirmed"},
 			},
 		}},
@@ -29,7 +28,6 @@ func TestTextHeaderIsReadable(t *testing.T) {
 		"eval · 2026-10-14 12:00:00\n",
 		"observation: ok (",
 		"  ! tk1 failed: exit 1\n",
-		"  ! cs1 lost: heartbeat expired (host r7i3n5, pid 42)\n",
 		"  ! jb1: observation unconfirmed\n",
 		"generated[sum] = 2176/8280",
 	} {

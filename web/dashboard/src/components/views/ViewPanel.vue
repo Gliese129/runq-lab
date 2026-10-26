@@ -16,9 +16,6 @@
             <span>· {{ t('status.job.' + s.status) }}</span>
             <span>· {{ s.last_data_at ? t('views.data_ago', { ago: relativeTime(s.last_data_at) }) : t('views.no_data') }}</span>
             <span v-if="s.observation_state !== 'ok'" :title="t('views.unconfirmed_hint')">· {{ t('views.obs_' + s.observation_state) }}</span>
-            <span v-for="c in s.consumers ?? []" :key="String(c.id)">
-              · {{ c.name }} {{ c.status }}<template v-if="c.last_data_at"> ({{ relativeTime(Number(c.last_data_at)) }})</template>
-            </span>
             <span v-for="w in s.warnings ?? []" :key="w" class="text-warning">· {{ w }}</span>
           </div>
           <div v-if="result.extra.length" class="view-extra">

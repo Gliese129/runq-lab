@@ -14,6 +14,8 @@ import (
 //   - {{…}} in the name: note templates are gone; shown as written
 //   - preflight: (job level) → dropped with a warning: preflight always
 //     runs, only warns, and is configured in project.yaml (hf:)
+//   - consumers: → dropped with a warning; runq no longer starts scripts
+//     next to a job (a scoring script reads it with runq.job())
 func (c *JobConfig) NormalizeLegacy() []string {
 	var warns []string
 	if c.Note != "" {
@@ -26,6 +28,10 @@ func (c *JobConfig) NormalizeLegacy() []string {
 	if c.Preflight != nil {
 		warns = append(warns, `job-level "preflight:" is no longer applied (preflight always runs and only warns; declare hf: repos in project.yaml); remove it`)
 		c.Preflight = nil
+	}
+	if c.Consumers != nil {
+		warns = append(warns, `"consumers:" is no longer used: run the scoring script yourself; it reads the job with runq.job() and its results are ingested (see docs/views.md); remove it`)
+		c.Consumers = nil
 	}
 	if strings.Contains(c.Name, "{{") {
 		warns = append(warns, fmt.Sprintf("job name %q: placeholders are no longer rendered; write the name as plain text", c.Name))

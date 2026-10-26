@@ -18,11 +18,11 @@ import (
 // ── runq show / archive / dashboard (rc6: one entry point per verb) ──
 
 var showCmd = &cobra.Command{
-	Use:   "show <jb… | tk… | cs… | dr… | pj… | project-name>",
-	Short: "Show one job, task, consumer, draft or project",
+	Use:   "show <jb… | tk… | dr… | pj… | project-name>",
+	Short: "Show one job, task, draft or project",
 	Long: `Show anything by its id (a unique prefix is enough): a job (jb…: name,
 status counts, target, section, draft, and its run table), a task (tk…), a
-consumer (cs…), a draft (dr…), or a project (pj… or its name).`,
+draft (dr…), or a project (pj… or its name).`,
 	Example: `  runq show jb7817
   runq show tk5e6f7a8b --json
   runq show tij-slime-guru-a1
@@ -40,17 +40,12 @@ consumer (cs…), a draft (dr…), or a project (pj… or its name).`,
 			return runTaskShow(cmd, args)
 		case strings.HasPrefix(ref, "dr"):
 			return draftShowCmd.RunE(cmd, args)
+		case strings.HasPrefix(ref, "cs"):
+			return consumerRetired(ref)
 		}
 		return withBackend(cmd, func(be backend.Backend) error {
 			ctx := cmd.Context()
 			switch {
-			case strings.HasPrefix(ref, "cs"):
-				c, err := be.(backend.Consumers).GetConsumer(ctx, ref)
-				if err != nil {
-					return err
-				}
-				printJSON(c)
-				return nil
 			case strings.HasPrefix(ref, "jb"):
 				return showJob(cmd, be, ref, jsonOut)
 			}

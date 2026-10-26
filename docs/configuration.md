@@ -227,7 +227,8 @@ top-level `data_path` still applies to local targets, as a fallback.
 | `params.json` | the exact sweep-expanded parameters |
 | `metrics.jsonl` | per-step metric stream (SDK `report`) — dashboard curves |
 | `results.jsonl` | result records (SDK `record(metrics, **axes)`) — `runq view --job` and the dashboard results view |
-| `links.json` | external pages reported by SDK `runq.link` / `ctx.link_wandb` (e.g. the W&B run) |
+| `links.json` | external pages reported by SDK `runq.link` (e.g. the W&B run) |
+| `results.<producer>.jsonl` | results a scoring script recorded for the task (`runq.job()`) |
 | `outputs/` | `RUNQ_OUTPUT_DIR` / `ctx.output_dir` — write training outputs here |
 | `checkpoints/` | `RUNQ_CHECKPOINT_DIR` / `ctx.checkpoint_dir` — stable across retries |
 | (task root) | `WANDB_DIR` / `ctx.wandb_dir` — W&B creates its own `wandb/` under it |
@@ -271,9 +272,9 @@ preflight:
 `hf:` is the only key. `preflight.enabled`, `imports` and `extra_run` are retired:
 `runq project <file>` warns and drops them.
 
-## Views and consumers
+## Views and scoring scripts
 
-Views are project-scoped YAML files saved with `runq view <file.yaml>`. Job YAML
-accepts `consumers: [{name: scorer, command: python score.py}]`; submit prepares
-launch files for manual execution in a user/agent-managed session. See
-[views.md](views.md). Each task ID executes once; reruns are new submissions.
+Views are project-scoped YAML files saved with `runq view <file.yaml>`. A job's
+`consumers:` key is ignored with a warning: scoring scripts run on their own and
+read the job with `runq.job()`. See [views.md](views.md). Each task ID executes
+once; reruns are new submissions.

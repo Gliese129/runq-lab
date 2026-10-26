@@ -218,17 +218,6 @@ func resolveEnvFile(proj *project.Config, fsys rfs.FS) (string, error) {
 // backend-neutral plan. It has no persistent side effects: no workspace
 // creation, no DB writes, no scheduler/queue interaction.
 func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps) (Plan, error) {
-	names := map[string]bool{}
-	for _, c := range cfg.Consumers {
-		if err := c.Validate(); err != nil {
-			return Plan{}, err
-		}
-		if names[c.Name] {
-			return Plan{}, fmt.Errorf("duplicate consumer name %q", c.Name)
-		}
-		names[c.Name] = true
-	}
-
 	if proj == nil {
 		return Plan{}, fmt.Errorf("project config is nil")
 	}

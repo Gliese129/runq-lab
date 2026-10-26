@@ -9,7 +9,10 @@ import (
 )
 
 type Record struct {
+	// SourceID is the task id, or "<task>@<producer>" for results a script
+	// wrote with runq.job() (Producer then names it); cs… = a removed consumer (read-only).
 	SourceID string         `json:"source_id"`
+	Producer string         `json:"producer,omitempty"`
 	JobID    string         `json:"job_id"`
 	Section  string         `json:"section"`
 	TS       int64          `json:"ts"`
@@ -19,6 +22,7 @@ type Record struct {
 }
 type Contributor struct {
 	SourceID  string `json:"source_id"`
+	Producer  string `json:"producer,omitempty"`
 	JobID     string `json:"job_id"`
 	Section   string `json:"section"`
 	UpdatedAt int64  `json:"updated_at"`
@@ -34,7 +38,6 @@ type Source struct {
 	ObservationState string           `json:"observation_state"`
 	LastHeartbeatAt  *int64           `json:"last_heartbeat_at"`
 	Attention        []map[string]any `json:"attention"`
-	Consumers        []map[string]any `json:"consumers,omitempty"`
 	Incomplete       bool             `json:"incomplete,omitempty"`
 	Warnings         []string         `json:"warnings,omitempty"`
 }
@@ -427,7 +430,7 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 					x.values[k] = v
 				}
 			}
-			c := Contributor{r.SourceID, r.JobID, r.Section, r.TS}
+			c := Contributor{r.SourceID, r.Producer, r.JobID, r.Section, r.TS}
 			row.Contributors = append(row.Contributors, c)
 			if row.UpdatedAt == nil || r.TS > *row.UpdatedAt {
 				ts := r.TS
@@ -436,8 +439,8 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 		}
 		if len(row.Contributors) == 1 {
 			c := row.Contributors[0]
-			if !strings.HasPrefix(c.SourceID, "cs") {
-				row.TaskID = c.SourceID
+			if !strings.HasPrefix(c.SourceID, "cs") { // removed consumers' records have no task
+				row.TaskID, _, _ = strings.Cut(c.SourceID, "@")
 			}
 			row.JobID = c.JobID
 		}

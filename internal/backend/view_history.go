@@ -7,30 +7,41 @@ import (
 	"github.com/gliese129/runq-lab/internal/workspace"
 )
 
-func (m *MultiBackend) SourceHistory(ctx context.Context, id, stream, by string, count int) (*workspace.ExactHistory, error) {
-	if len(id) >= 2 && id[:2] == "cs" {
-		lane, c, err := m.consumerLane(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		return workspace.QueryExactHistory(ctx, lane.backend.FS, c.Dir, stream, by, count)
-	}
-	row, err := m.store.GetTask(ctx, id)
+// sourceLane resolves a record source (a task id, or a producer source
+// "<task>@<producer>") to its lane and task dir; producer sources read their
+// results.<producer>.jsonl.
+func (m *MultiBackend) sourceLane(ctx context.Context, id string) (*SSHBackend, string, string, error) {
+	taskID, producer := store.SplitSourceID(id)
+	row, err := m.store.GetTask(ctx, taskID)
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 	if row == nil {
-		return nil, ErrNotFound
+		return nil, "", "", ErrNotFound
 	}
 	be, err := m.resolveTaskRow(row)
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 	lane, ok := be.(*SSHBackend)
 	if !ok {
-		return nil, ErrNotSupported
+		return nil, "", "", ErrNotSupported
 	}
-	return workspace.QueryExactHistory(ctx, lane.backend.FS, row.TaskDir, stream, by, count)
+	return lane, row.TaskDir, producer, nil
+}
+
+func (m *MultiBackend) SourceHistory(ctx context.Context, id, stream, by string, count int) (*workspace.ExactHistory, error) {
+	lane, dir, producer, err := m.sourceLane(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if producer != "" {
+		if stream != "results" {
+			return &workspace.ExactHistory{By: by}, nil // producers write results only
+		}
+		stream = workspace.ProducerResultsStream(producer)
+	}
+	return workspace.QueryExactHistory(ctx, lane.backend.FS, dir, stream, by, count)
 }
 func (m *MultiBackend) ViewTasks(ctx context.Context, specProject string, jobs []string) ([]store.TaskRow, error) {
 	tasks, err := m.store.ListTasksForJobs(ctx, jobs)
@@ -44,27 +55,9 @@ func (m *MultiBackend) ViewTasks(ctx context.Context, specProject string, jobs [
 }
 
 func (m *MultiBackend) SourceFramesAt(ctx context.Context, id, by string, ats []float64) (*workspace.ExactHistory, error) {
-	if len(id) >= 2 && id[:2] == "cs" {
-		lane, c, err := m.consumerLane(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		return workspace.QueryExactFramesAt(ctx, lane.backend.FS, c.Dir, by, ats)
-	}
-	row, err := m.store.GetTask(ctx, id)
+	lane, dir, producer, err := m.sourceLane(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if row == nil {
-		return nil, ErrNotFound
-	}
-	be, err := m.resolveTaskRow(row)
-	if err != nil {
-		return nil, err
-	}
-	lane, ok := be.(*SSHBackend)
-	if !ok {
-		return nil, ErrNotSupported
-	}
-	return workspace.QueryExactFramesAt(ctx, lane.backend.FS, row.TaskDir, by, ats)
+	return workspace.QueryExactFramesAt(ctx, lane.backend.FS, dir, workspace.ProducerResultsStream(producer), by, ats)
 }

@@ -4,6 +4,11 @@
 
 ### Breaking
 
+- runq no longer runs consumers. `runq consumer add/ls/show` and `cs…` ids in
+  show/logs/kill fail with the replacement: run the scoring script yourself; it
+  reads the job with `runq.job()` and writes results runq ingests. job.yaml
+  `consumers:` is ignored with a warning. Consumer results already recorded
+  stay in views; their directories stay on disk.
 - Preflight only warns and always runs, on every `runq draft` and `runq submit
   dr…`: entry script, interpreter, env activation, data dirs writable, `hf:`
   models cached, script syntax. The import probe and the paths/outputs/gpu/
@@ -195,6 +200,10 @@
   tasks; `--show` lists checkpoint sizes per job and free space per filesystem.
 - Drafts show every preflight result (`--json`: `preflight`); `runq submit dr…`
   prints the warnings (`--json`: `preflight_warnings`).
+- Every job gets `<job_dir>/job.json` (the job and its live tasks), written at
+  submit and when runq sees the job change. `<task_dir>/results.<producer>.jsonl`
+  is ingested like `results.jsonl` (also after the task finished), as source
+  `<task_id>@<producer>`, shown in views with the task's params.
 
 
 ## v0.6.0 — 2026-10-16

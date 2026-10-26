@@ -1,4 +1,4 @@
-# Views and job consumers
+# Views and scoring scripts
 
 A view turns recorded facts into reusable progress reports and paper tables.
 Write its YAML once, then read `runq view <name>` from an agent heartbeat.
@@ -175,83 +175,55 @@ environment. It must emit one JSON value to stdout, at most 2 MiB. Timeout,
 nonzero exit or invalid JSON marks the source error, retaining the last successful
 value/time and stderr's last 20 lines. Scripts run only when a reader requests
 an expired source; `--refresh` forces a refresh. Put expensive scoring in a task
-or consumer instead of running it on a login node. Custom data appears under
+or a scoring script (below) instead of a view script. Custom data appears under
 `data.<name>.{state,updated_at,value,error}`. Record values are rendered rows;
 report values are series; script values are the returned JSON.
 
-## Consumers: restartable manual sessions
+## Scoring scripts with runq.job()
 
-Declare consumers in job.yaml, or add one to an existing job:
-
-```yaml
-consumers:
-  - name: scorer
-    command: python scripts/score.py
-    env: {OMP_NUM_THREADS: '1'}
-```
-
-```bash
-runq consumer add jb123 scorer -- python scripts/score.py
-runq ps jb123          # consumers are listed under the tasks
-runq show cs123
-runq logs cs123 --no-follow
-runq kill cs123
-```
-
-Submission prepares files and prints `bash <run_sh>`; `runq draft` only previews.
-The user/agent prepares iqrsh/tmux and runs that command on a CPU node with shared
-workspace access. runq does not acquire allocations, arrange tmux nesting or
-keep SSH sessions alive. Consumers inherit project environment/python_env and
-write under `<job_dir>/consumers/<name>-<cs_id>/`.
+A scoring script (an LLM judge, an offline evaluator) is an ordinary Python
+script you or your agent run wherever the job directory is readable — for an
+HPC target the login node or a CPU allocation, inside your own tmux. runq does
+not start, watch or stop it. It reads the job and records results per task:
 
 ```python
-import time
 import runq
-ctx = runq.context()
-while True:
-    snapshot = ctx.job_tasks()
-    if snapshot["observation_state"] != "ok":
-        time.sleep(10)
+
+job = runq.job("/gs/work/kl/jb7817")      # the job directory: holds job.json
+for t in job.tasks:
+    if t.status != "success":
         continue
-    tasks = snapshot["tasks"]
-    # Read task outputs, score new data, and record complete snapshots here.
-    if tasks and all(t["status"] in ("success", "failed", "killed") for t in tasks):
-        break  # Or keep waiting if this script expects more tasks later.
-    time.sleep(10)
+    acc = score(t.output_dir / "preds.jsonl")
+    t.record({"acc": acc}, section="math", split="test")
 ```
 
-`updated_at` is snapshot publication time; `observed_at` and `observation_state`
-describe the controller's source observation. Check their age for your workload.
-Job completion and `runq kill <job_id>` never stop consumers. A script exits when
-its own work is complete. `report` and `record` from a consumer belong to its job.
+`job.json` (in `<job_dir>`, the parent of every `task_dir`) is written at submit
+and rewritten whenever runq sees the job change: within ~30 s for jobs that are
+unfinished or from the last 14 days; `--fresh` on any command covers older
+unarchived jobs. It lists the live tasks (a rerun's replaced task is left out)
+with `id, run_name, status, params, task_dir, output_dir, checkpoint_dir,
+started_at, finished_at, last_output_at, batch_seq`, plus the job header,
+`observed_at` and `observation_state` as of that write. A loop that waits for
+tasks re-reads it with `runq.job(...)`.
 
-Run the same `bash /path/to/run.sh` again after the previous session ends. The
-consumer ID, name, `ctx.output_dir` and processed-file ledger stay in place;
-logs, records and metrics append. The controller keeps observing stopped consumers
-and ingests new output after a restart. Task IDs remain single-execution.
+`t.record(...)` is `runq.record` for that task (same leniency, same frozen
+section keys) and appends to `<task_dir>/results.<producer>.jsonl`. The
+producer defaults to the script's file name (`score_math.py` → `score_math`);
+pass `runq.job(path, producer="judge")` to choose one (letters, digits, `_ . -`).
+runq ingests each producer file like the task's own `results.jsonl`, also after
+the task finished — within 30 s while the target runs tasks, within 5 min
+otherwise, at once with `--fresh` — as a separate source `<task_id>@<producer>`: views show its
+rows with `producer` in their contributors and the task's params, so
+`rows: [param.kl]` lines scorer results up with the sweep. Restarting a script
+appends; recovered sections keep their first keys. Keep your own record of
+what was already scored in the script's output directory.
 
-Lifecycle changes share an atomic filesystem lock. An unfinished session with a
-fresh heartbeat rejects another launch. An expired heartbeat alone is insufficient:
-on the same host, the launcher checks the original process group; on another host,
-it requires the previous watcher's exit confirmation. If the allocation ended
-before the watcher could publish that confirmation, inspect the old host/allocation
-and confirm the entire old process group has ended, then run
-`bash /path/to/run.sh --confirm-stopped`. This explicit acknowledgement cannot
-bypass a fresh heartbeat or a live process group on the current host. runq does
-not reconnect allocations or terminate an old process to make room for a new one.
+`runq.job("jb…")` resolves an id through the runq service socket (local, or a
+forwarded `RUNQ_SOCKET`); otherwise pass the path. Inside a runq task,
+`runq.job()` reads the task's own job.
 
-Each launch gets an internal run token, not a task attempt. Old watchers, exit
-records and cancellation requests cannot update the new session. Restart clears
-execution markers only; business files and ingestion offsets are retained. Persist
-processed task/file identities in `ctx.output_dir` and resume any monotonic metric
-step from that progress.
-States: ready, running, stopped (exit 0), failed, killed, lost. A watcher checks
-identity and publishes heartbeat every 60 s; >180 s without heartbeat is lost.
-Read errors mean unconfirmed observation. Python commands record exit status
-through an exec entrypoint; other executables that disappear without exit evidence
-are lost. Use a direct `python ...` command for reliable Python exit capture.
-Cancellation writes shared intent; the worker sends TERM then KILL after 30 s,
-checking original PID/start identities. Losing a watcher requires manual diagnosis.
+Results that the removed runq consumers (`cs…`) already recorded stay in views;
+their `consumers/` directories stay on disk untouched.
 
 ## API handoff
 
@@ -263,13 +235,8 @@ checking original PID/start identities. Losing a watcher requires manual diagnos
 | GET `/projects/{p}/views/{name}/render` | Rows/cells, sources, freshness, attention, chart metadata, custom data |
 | GET `/projects/{p}/views/{name}/charts/{i}/series` | Curves; `points=2..2000`, repeatable `job` |
 | GET `/projects/{p}/views/{name}/frames` | `chart`, `by=step|time`, `count=2..300`; exact rows per frame |
-| POST/GET `/jobs/{id}/consumers` | Prepare `{name,command,env}` / list |
-| GET `/consumers/{id}` | Status, identity, timestamps, paths, launch command |
-| POST `/consumers/{id}/kill` | Request cancellation |
-| GET `/consumers/{id}/log` | Byte paging: offset/max_bytes; absent offset tails |
 
 Render accepts repeated `job`, `refresh=true`, `format=json|text|latex|markdown|csv`,
 `wide=true`, `latex_color=true`. Invalid specs return HTTP 400 `invalid_view`.
-Job summaries add consumer counts by status; details add the consumer array.
 Task retry routes are removed (404), as are retry fields in normal task JSON and
 max_retry in project/job config. The frontend must remove retry controls.

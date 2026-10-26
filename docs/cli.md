@@ -34,7 +34,7 @@ When the service serves the dashboard, `submit`, `ps` and `show` JSON carry a
 | `runq ps <job_id> --fresh --json` | Same, after forcing a scheduler probe |
 | `runq ps <job_id> --wait --json` | Same, once a task changes state or all finish (at most 30m; `--wait=2h` for longer). Exit 0 either way; the line `no change in 30m (last refresh 13:42:10)` (stderr with `--json`) says it timed out. Without an id it waits on the job table. It reads the local service, which keeps polling the scheduler on its own, so waiting adds no cluster load |
 | `runq export <jb…> [-o file]` | The job as job.yaml `tasks:` rows (fixed_params = baseline, rows = differences); submitting it reproduces the plan |
-| `runq show <jb… \| tk… \| cs… \| dr… \| pj… \| project>` | One thing by id (unique prefix is enough): a job with its run table, a task as JSON (command, dirs, external id, status source, links), a consumer, a draft, a project. With `--wait`, a job or task prints once its state changes or it finishes; `--json` gains `"wait": {"outcome", "waited_seconds", "last_refresh"}` (outcome `changed`, `finished` or `timeout`) |
+| `runq show <jb… \| tk… \| dr… \| pj… \| project>` | One thing by id (unique prefix is enough): a job with its run table, a task as JSON (command, dirs, external id, status source, links), a draft, a project. With `--wait`, a job or task prints once its state changes or it finishes; `--json` gains `"wait": {"outcome", "waited_seconds", "last_refresh"}` (outcome `changed`, `finished` or `timeout`) |
 | `runq logs <task_id> -n 200` | Last 200 log lines; at a terminal it then follows until Ctrl-C, otherwise it exits (`--no-follow` makes a terminal exit too) |
 | `runq logs <task_id> --grep '<regex>' -n 20` | Last 20 lines matching an extended regex, grepped on the target |
 | `runq logs <task_id> --timeout 2m` | Tail, then follow for at most 2 minutes — at a terminal or not |
@@ -123,7 +123,7 @@ project's largest finished job per task × the planned task count.
 - When reporting to the researcher, include the `url` of the job or task.
 - `runq clean` is irreversible; preview with `--show`.
 
-## Reusable views and consumers
+## Reusable views and scoring scripts
 
 | Command | Purpose |
 |---|---|
@@ -133,10 +133,7 @@ project's largest finished job per task × the planned task count.
 | `runq view <name> --refresh` | Refresh on-demand script sources |
 | `runq view ls --json` | List saved views |
 | `runq view rm <name> --project <project>` | Remove a view |
-| `runq consumer add <job_id> <name> -- python score.py` | Prepare a manually started scorer |
-| `runq ps <job_id>` | Lists the job's consumers under its tasks |
-| `runq show <consumer_id>` | Identity, status and run.sh path (JSON) |
-| `runq kill <consumer_id>` | Cancel a consumer independently of tasks |
-
+A scoring script needs no command: run it yourself, read the job with
+`runq.job("<job_dir>")` and record per task; its results show up in views.
 Each task executes once; fix a failed task and submit a new task.
-View YAML, data contracts and manual iqrsh/tmux sessions: [views.md](views.md).
+View YAML, data contracts and scoring scripts: [views.md](views.md).

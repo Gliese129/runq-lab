@@ -58,16 +58,13 @@ func runPs(cmd *cobra.Command, args []string) error {
 				t := &tasks[i]
 				t.URL = dashboard.TaskURL(base, t.Project, t.JobID, t.ID)
 			}
-			if jsonOut { // consumers: runq show <jb…> --json
+			if jsonOut {
 				printJSON(tasks)
 				wait.print(os.Stderr) // stdout stays the array; tasks carry refreshed_at
 				return nil
 			}
 			if err := printDashboardTasks(tasks); err != nil {
 				return err
-			}
-			if c, ok := be.(backend.Consumers); ok {
-				printJobConsumers(cmd, c, args[0])
 			}
 			if len(tasks) > 0 {
 				printDashboardLink(os.Stdout, dashboard.JobURL(base, tasks[0].Project, tasks[0].JobID))
@@ -118,20 +115,4 @@ func init() {
 
 	psCmd.GroupID = groupCore
 	rootCmd.AddCommand(psCmd)
-}
-
-// printJobConsumers lists a job's consumers under its task table (the old
-// `runq consumer ls`).
-func printJobConsumers(cmd *cobra.Command, c backend.Consumers, jobID string) {
-	list, err := c.ListConsumers(cmd.Context(), jobID)
-	if err != nil || len(list) == 0 {
-		return
-	}
-	fmt.Println()
-	w := newTable()
-	fmt.Fprintf(w, "CONSUMER\tNAME\tSTATUS\tRUN\n")
-	for _, x := range list {
-		fmt.Fprintf(w, "%s\t%s\t%s\tbash %s\n", utils.IDColor(x.ID), x.Name, x.Status, utils.ShellQuote(x.RunSH))
-	}
-	_ = w.Flush()
 }

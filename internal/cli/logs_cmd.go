@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -55,14 +54,10 @@ tail and exits. --timeout <dur> follows for at most that long, terminal or not.`
 			}()
 		}
 
+		if err := consumerRetired(id); err != nil {
+			return err
+		}
 		return withBackend(cmd, func(be backend.Backend) error {
-			if strings.HasPrefix(id, "cs") {
-				err := consumerLogs(cmd, be, id, !follow)
-				if errors.Is(err, context.DeadlineExceeded) {
-					return nil
-				}
-				return err
-			}
 			view, err := be.GetTask(cmd.Context(), id)
 			if err != nil {
 				return err

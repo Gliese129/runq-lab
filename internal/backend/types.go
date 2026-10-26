@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/gliese129/runq-lab/internal/consumer"
 	"github.com/gliese129/runq-lab/internal/diskspace"
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/store"
@@ -24,11 +23,10 @@ import (
 // HF pre-download command into the project's setup command — instead of
 // re-parsing the text blob.
 type PreviewResult struct {
-	Consumers    []consumer.Config `json:"consumers,omitempty"`
-	Target       string            `json:"target"`
-	TargetSource string            `json:"target_source"`
-	SyncPending  bool              `json:"sync_pending,omitempty"`
-	Plan         *submitplan.Plan  `json:"plan,omitempty"`
+	Target       string           `json:"target"`
+	TargetSource string           `json:"target_source"`
+	SyncPending  bool             `json:"sync_pending,omitempty"`
+	Plan         *submitplan.Plan `json:"plan,omitempty"`
 	// Append is what an append (--into) would do with each row.
 	Append *job.AppendSummary `json:"append,omitempty"`
 
@@ -37,11 +35,10 @@ type PreviewResult struct {
 }
 
 type JobSummary struct {
-	Consumers map[string]int `json:"consumers"`
-	Stale     bool           `json:"stale"`
-	ID        string         `json:"id"`
-	Project   string         `json:"project"`
-	Name      string         `json:"name"`
+	Stale   bool   `json:"stale"`
+	ID      string `json:"id"`
+	Project string `json:"project"`
+	Name    string `json:"name"`
 	// Section is the job's section within its project ("unsorted" when none).
 	Section string `json:"section"`
 	// DraftID is the draft the job was submitted from ("" = before drafts).
@@ -82,13 +79,12 @@ type WandbInfo struct {
 }
 
 type JobDetail struct {
-	Consumers    []consumer.Consumer `json:"consumers"`
-	Capabilities *Capabilities       `json:"capabilities,omitempty"`
-	Job          JobSummary          `json:"job"`
-	Tasks        []TaskView          `json:"tasks"`
-	MetricKeys   []string            `json:"metric_keys"`
-	Wandb        *WandbInfo          `json:"wandb,omitempty"`
-	Config       json.RawMessage     `json:"config,omitempty"` // raw JobConfig (re-run as template)
+	Capabilities *Capabilities   `json:"capabilities,omitempty"`
+	Job          JobSummary      `json:"job"`
+	Tasks        []TaskView      `json:"tasks"`
+	MetricKeys   []string        `json:"metric_keys"`
+	Wandb        *WandbInfo      `json:"wandb,omitempty"`
+	Config       json.RawMessage `json:"config,omitempty"` // raw JobConfig (re-run as template)
 	// Batches are the job's submissions: seq 1 first, then each --into.
 	Batches []JobBatchView `json:"batches,omitempty"`
 	// DataDir is the job's workspace directory (RQ2-1 §F: the Data tab's

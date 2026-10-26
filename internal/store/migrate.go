@@ -231,6 +231,10 @@ func (s *Store) addMissingColumns(ctx context.Context) error {
 	if err := addColumnIfMissing(ctx, s.db, "tasks", "superseded_by", "TEXT"); err != nil {
 		return fmt.Errorf("add tasks.superseded_by: %w", err)
 	}
+	// The content hash of the job.json last published into the job dir.
+	if err := addColumnIfMissing(ctx, s.db, "jobs", "job_json_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("add jobs.job_json_hash: %w", err)
+	}
 	return s.backfillFirstBatches(ctx)
 }
 

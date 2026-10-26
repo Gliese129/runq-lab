@@ -171,12 +171,7 @@ func (s *Store) CountUnfinishedGenerationTasks(ctx context.Context, target, gene
 		WHERE target = ? AND target_generation = ?
 		  AND status NOT IN ('success', 'failed', 'killed')`,
 		target, generation).Scan(&n)
-	if err != nil {
-		return n, err
-	}
-	var consumers int
-	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM consumers WHERE target=? AND generation=? AND final_ingest=0`, target, generation).Scan(&consumers)
-	return n + consumers, err
+	return n, err
 }
 
 // RestampTask assigns an existing execution to its owning configuration generation.

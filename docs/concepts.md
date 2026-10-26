@@ -91,7 +91,7 @@ Each task gets a workspace under `<data>/<project_id>/<job_id>/<task_id>/`, wher
 params.json       — exact parameters for this task
 metrics.jsonl     — metric stream (runq.report)
 results.jsonl     — result records (runq.record)
-links.json        — external pages (runq.link / ctx.link_wandb)
+links.json        — external pages (runq.link)
 outputs/          — RUNQ_OUTPUT_DIR / ctx.output_dir
 checkpoints/      — RUNQ_CHECKPOINT_DIR / ctx.checkpoint_dir (stable across retries)
 run.sh            — HPC only: generated wrapper script

@@ -404,17 +404,25 @@ func (b *SSHBackend) sensorLoop(ctx context.Context) {
 	defer b.loopWG.Done()
 	ticker := time.NewTicker(markerScanInterval)
 	defer ticker.Stop()
-	consumerTicker := time.NewTicker(30 * time.Second)
-	defer consumerTicker.Stop()
+	jobFilesTicker := time.NewTicker(30 * time.Second)
+	defer jobFilesTicker.Stop()
 	lastAlign := time.Now()  // warm start: no immediate qstat on daemon boot
 	lastIngest := time.Now() // metrics ingest rides the same loop, own cadence
+	var lastProducerScan time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-consumerTicker.C:
+		case <-jobFilesTicker.C:
 			pass, cancel := context.WithTimeout(ctx, 30*time.Second)
-			b.reconcileConsumers(pass)
+			// Producer files are listed every tick while tasks run, else
+			// every idleProducerScanInterval (an idle target stays quiet).
+			inflight, _ := b.backend.HasInFlight(pass)
+			scan := inflight || time.Since(lastProducerScan) >= idleProducerScanInterval
+			if scan {
+				lastProducerScan = time.Now()
+			}
+			b.reconcileJobFiles(pass, false, scan)
 			cancel()
 		case <-b.nudgeCh:
 			// Forced full pass (SWR nudge or explicit refresh): runs even
@@ -423,7 +431,8 @@ func (b *SSHBackend) sensorLoop(ctx context.Context) {
 			// ForceRefresh waiters wake.
 			pass, cancel := context.WithTimeout(ctx, 30*time.Second)
 			b.forcedSync(pass)
-			b.reconcileConsumers(pass)
+			b.reconcileJobFiles(pass, true, true)
+			lastProducerScan = time.Now()
 			cancel()
 		case <-ticker.C:
 			func() {
@@ -728,12 +737,7 @@ func (b *SSHBackend) ListJobs(ctx context.Context, projectScope string) ([]JobSu
 	}
 	out := make([]JobSummary, 0, len(jobs))
 	for _, j := range jobs {
-		cs, err := b.store.ListConsumers(ctx, j.ID, "")
-		if err != nil {
-			return nil, err
-		}
 		summary := BuildJobSummary(j, byJob[j.ID])
-		summary.Consumers = consumerCounts(cs)
 		out = append(out, summary)
 	}
 	return out, nil
@@ -770,11 +774,6 @@ func (b *SSHBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, erro
 	}
 	keys, _ := b.store.MetricKeys(ctx, jobID) // summaries: exact, remote-safe
 	detail := BuildJobDetail(*j, tasks, keys)
-	detail.Consumers, err = b.store.ListConsumers(ctx, j.ID, "")
-	if err != nil {
-		return nil, err
-	}
-	detail.Job.Consumers = consumerCounts(detail.Consumers)
 	attachTaskLinks(ctx, b.store, detail.Tasks)
 	if cfg, err := b.reg.Get(ctx, j.ProjectName); err == nil && cfg.Wandb != nil {
 		detail.Wandb = &WandbInfo{
@@ -1501,13 +1500,10 @@ func (b *SSHBackend) SubmitJob(ctx context.Context, cfg job.JobConfig, opts Subm
 		tasks[i] = t
 	}
 	b.queue.PushBatch(tasks)
-	if cfg.Into != "" {
-		return jobID, len(rows), nil // consumers belong to the job's first batch
-	}
-	for _, cfg := range cfg.Consumers {
-		if _, err := b.AddConsumer(ctx, jobID, cfg); err != nil {
-			return jobID, len(rows), fmt.Errorf("tasks submitted; consumer preparation failed: %w", err)
-		}
+	// Scoring scripts read the job from job.json; publish it now rather
+	// than at the next reconcile pass. Best effort: the pass retries.
+	if err := b.publishJobSnapshot(ctx, jobID); err != nil {
+		b.logger.Warn("publish job.json", "job", jobID, "error", err)
 	}
 	return jobID, len(rows), nil
 }
@@ -1526,10 +1522,7 @@ func (b *SSHBackend) PreviewSubmit(ctx context.Context, cfg job.JobConfig) (Prev
 	if err != nil {
 		return PreviewResult{}, err
 	}
-	for _, c := range cfg.Consumers {
-		text += fmt.Sprintf("\nconsumer %s (manual start after submit): %s\n", c.Name, c.Command)
-	}
-	return PreviewResult{Preview: text, Preflight: plan.Preflight, Plan: &plan, Consumers: cfg.Consumers}, nil
+	return PreviewResult{Preview: text, Preflight: plan.Preflight, Plan: &plan}, nil
 }
 
 // ── Archive ───────────────────────────────────────────────────────────────
@@ -1553,12 +1546,7 @@ func (b *SSHBackend) ListArchivedJobs(ctx context.Context) ([]JobSummary, error)
 	}
 	out := make([]JobSummary, 0, len(jobs))
 	for _, j := range jobs {
-		cs, err := b.store.ListConsumers(ctx, j.ID, "")
-		if err != nil {
-			return nil, err
-		}
 		summary := BuildJobSummary(j, byJob[j.ID])
-		summary.Consumers = consumerCounts(cs)
 		out = append(out, summary)
 	}
 	return out, nil

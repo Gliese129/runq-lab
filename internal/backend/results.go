@@ -102,8 +102,12 @@ func jobResultsFromDB(ctx context.Context, st *store.Store, jobID string) (*JobR
 			continue
 		}
 		axes["section"] = row.Section
-		rec := &resultRec{taskID: row.TaskID, ts: row.TS, axes: axes, metrics: metrics, order: i}
-		rec.identity, rec.label = identityKey(axes["model"], row.TaskID)
+		taskID, producer := store.SplitSourceID(row.TaskID)
+		if producer != "" { // a script's results for this task (runq.job())
+			axes["producer"] = producer
+		}
+		rec := &resultRec{taskID: taskID, ts: row.TS, axes: axes, metrics: metrics, order: i}
+		rec.identity, rec.label = identityKey(axes["model"], taskID)
 		recs = append(recs, rec)
 	}
 

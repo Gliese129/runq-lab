@@ -120,22 +120,6 @@ func (s *Server) guardAllows(w http.ResponseWriter, r *http.Request, target stri
 		}
 		return got == target || deny("draft belongs to another target")
 
-	case "consumers":
-		if len(seg) < 2 {
-			return deny("consumer listing requires job scope")
-		}
-		resolver, ok := s.backend.(interface {
-			ConsumerTarget(context.Context, string) (string, error)
-		})
-		if !ok {
-			return deny("consumer ownership unavailable")
-		}
-		got, err := resolver.ConsumerTarget(r.Context(), seg[1])
-		if err != nil {
-			writeError(w, err)
-			return false
-		}
-		return got == target || deny("consumer belongs to another target")
 	case "tasks":
 		switch {
 		case len(seg) == 1 && get:

@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 
 	"github.com/gliese129/runq-lab/internal/rfs"
@@ -35,8 +36,19 @@ type ExactHistory struct {
 	Series []ExactSeries `json:"series"`
 }
 
+// ProducerResultsStream names the results stream of a producer
+// (results.<producer>.jsonl); "" is the task's own results.jsonl.
+func ProducerResultsStream(producer string) string {
+	if producer == "" {
+		return "results"
+	}
+	return "results." + producer
+}
+
+var historyStream = regexp.MustCompile(`^(metrics|results|results\.[A-Za-z0-9_.-]+)$`)
+
 func QueryExactHistory(ctx context.Context, fsys rfs.FS, dir, stream, by string, count int) (*ExactHistory, error) {
-	if stream != "results" && stream != "metrics" {
+	if !historyStream.MatchString(stream) {
 		return nil, fmt.Errorf("invalid history stream")
 	}
 	if by != "step" && by != "time" {
@@ -47,8 +59,11 @@ func QueryExactHistory(ctx context.Context, fsys rfs.FS, dir, stream, by string,
 	}
 	return queryExactHistory(ctx, fsys, dir, stream, by, count, nil)
 }
-func QueryExactFramesAt(ctx context.Context, fsys rfs.FS, dir, by string, ats []float64) (*ExactHistory, error) {
-	return queryExactHistory(ctx, fsys, dir, "results", by, 2, ats)
+func QueryExactFramesAt(ctx context.Context, fsys rfs.FS, dir, stream, by string, ats []float64) (*ExactHistory, error) {
+	if !historyStream.MatchString(stream) || stream == "metrics" {
+		return nil, fmt.Errorf("invalid history stream")
+	}
+	return queryExactHistory(ctx, fsys, dir, stream, by, 2, ats)
 }
 func queryExactHistory(ctx context.Context, fsys rfs.FS, dir, stream, by string, count int, ats []float64) (*ExactHistory, error) {
 	args := []string{"-c", exactHistoryScript, dir, stream, strconv.Itoa(count), by}

@@ -114,8 +114,8 @@ runq draft job.yaml                  # after fixing a failed task, plan and subm
 runq clean --job <job_id> --show      # preview; deletion is irreversible
 ```
 
-Structured commands provide JSON output. Job IDs look like `jb…`, tasks `tk…`, consumers `cs…`.
-Reusable progress/paper tables and CPU scorers: [views and consumers](docs/views.md).
+Structured commands provide JSON output. Job IDs look like `jb…`, tasks `tk…`.
+Reusable progress/paper tables and scoring scripts: [views and runq.job()](docs/views.md).
 Full reference: [docs/cli.md](./docs/cli.md)
 
 ## For agents

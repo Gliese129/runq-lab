@@ -508,3 +508,20 @@ func (s *Store) RenameJob(ctx context.Context, ref, name string) (string, error)
 	}
 	return ids[0], nil
 }
+
+// JobSnapshotHash is the hash of the job.json last published for the job
+// ("" = never published).
+func (s *Store) JobSnapshotHash(ctx context.Context, jobID string) (string, error) {
+	var h string
+	err := s.db.QueryRowContext(ctx, `SELECT job_json_hash FROM jobs WHERE id = ?`, jobID).Scan(&h)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return h, err
+}
+
+// SetJobSnapshotHash records the hash of the job.json just published.
+func (s *Store) SetJobSnapshotHash(ctx context.Context, jobID, hash string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE jobs SET job_json_hash = ? WHERE id = ?`, hash, jobID)
+	return err
+}

@@ -68,13 +68,6 @@ func (s *Server) viewSeries(ctx context.Context, spec views.Spec, input views.In
 		if err != nil {
 			return nil, err
 		}
-		consumers, err := provider.ViewStore().ListConsumers(ctx, j.ID, "")
-		if err != nil {
-			return nil, err
-		}
-		for _, c := range consumers {
-			tasks = append(tasks, store.TaskRow{ID: c.ID, JobID: j.ID, ParamsJSON: "{}"})
-		}
 		for _, t := range tasks {
 			var params map[string]any
 			_ = json.Unmarshal([]byte(t.ParamsJSON), &params)
@@ -251,8 +244,8 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type source struct {
-		id, job string
-		params  map[string]any
+		id, producer, job string
+		params            map[string]any
 	}
 	sources := []source{}
 	for _, j := range jobs {
@@ -261,18 +254,22 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 			viewError(w, err)
 			return
 		}
+		params := map[string]map[string]any{}
 		for _, t := range tasks {
-			var params map[string]any
-			_ = json.Unmarshal([]byte(t.ParamsJSON), &params)
-			sources = append(sources, source{t.ID, j.ID, params})
+			var p map[string]any
+			_ = json.Unmarshal([]byte(t.ParamsJSON), &p)
+			params[t.ID] = p
+			sources = append(sources, source{t.ID, "", j.ID, p})
 		}
-		consumers, err := st.ListConsumers(r.Context(), j.ID, "")
+		// Results scripts wrote per task with runq.job() animate too.
+		producers, err := st.ProducerSources(r.Context(), j.ID)
 		if err != nil {
 			viewError(w, err)
 			return
 		}
-		for _, c := range consumers {
-			sources = append(sources, source{c.ID, j.ID, nil})
+		for _, id := range producers {
+			taskID, producer := store.SplitSourceID(id)
+			sources = append(sources, source{id, producer, j.ID, params[taskID]})
 		}
 	}
 	lo, hi := math.Inf(1), math.Inf(-1)
@@ -315,7 +312,7 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			for _, rec := range f.Records {
-				inputs[i].Records = append(inputs[i].Records, views.Record{SourceID: src.id, JobID: src.job, Section: rec.Section, TS: rec.TS, Axes: rec.Axes, Metrics: rec.Metrics, Params: src.params})
+				inputs[i].Records = append(inputs[i].Records, views.Record{SourceID: src.id, Producer: src.producer, JobID: src.job, Section: rec.Section, TS: rec.TS, Axes: rec.Axes, Metrics: rec.Metrics, Params: src.params})
 			}
 		}
 	}

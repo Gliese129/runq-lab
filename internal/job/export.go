@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gliese129/runq-lab/internal/consumer"
 	"gopkg.in/yaml.v3"
 )
 
@@ -29,7 +28,6 @@ type ExportInput struct {
 	Target      string
 	Command     string
 	Overrides   *Overrides
-	Consumers   []consumer.Config
 	Baseline    string // run name; left out when it is the first row
 	Rows        []Row
 	ParamOrder  []string // project param order; others follow sorted
@@ -107,8 +105,8 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 	for _, extra := range []struct {
 		key string
 		val any
-	}{{"overrides", in.Overrides}, {"consumers", in.Consumers}} {
-		if extra.key == "overrides" && in.Overrides == nil || extra.key == "consumers" && len(in.Consumers) == 0 {
+	}{{"overrides", in.Overrides}} {
+		if in.Overrides == nil {
 			continue
 		}
 		n := &yaml.Node{}

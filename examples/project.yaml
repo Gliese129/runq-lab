@@ -52,7 +52,7 @@ defaults:
 
 # Optional wandb integration. When present, runq writes
 # <task_dir>/wandb_config.json and the SDK folds it into ctx.wandb_like_cfg:
-#   run = wandb.init(**ctx.wandb_like_cfg); ctx.link_wandb(run)
+#   run = wandb.init(**ctx.wandb_like_cfg); runq.link("wandb", run)
 # Omit the block to disable; SDK metrics still land in metrics.jsonl.
 # wandb:
 #   project: my-experiment

@@ -19,7 +19,8 @@ func TestRetiredCommandsNameTheirReplacement(t *testing.T) {
 		"target use tsubame":      "-t <target>",
 		"version":                 "runq --version",
 		"open jb1":                "runq dashboard",
-		"consumer ls jb1":         "runq ps <jb…>",
+		"consumer add jb1 score":  "runq.job()",
+		"consumer ls jb1":         "runq.job()",
 	} {
 		args := strings.Fields(path)
 		cmd, rest, err := rootCmd.Find(args)
@@ -32,6 +33,19 @@ func TestRetiredCommandsNameTheirReplacement(t *testing.T) {
 		err = cmd.RunE(cmd, rest)
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: got %v, want it to name %q", path, err, want)
+		}
+	}
+}
+
+// cs… ids (removed consumers) answer with the replacement, offline.
+func TestConsumerIDsAreRetired(t *testing.T) {
+	for _, args := range [][]string{{"show", "cs1a2b"}, {"logs", "cs1a2b"}, {"kill", "cs1a2b"}} {
+		cmd, rest, err := rootCmd.Find(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cmd.RunE(cmd, rest); err == nil || !strings.Contains(err.Error(), "runq.job()") {
+			t.Errorf("%v: got %v, want the runq.job() replacement", args, err)
 		}
 	}
 }

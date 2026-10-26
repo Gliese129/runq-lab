@@ -61,7 +61,6 @@ export interface ViewSource {
   observation_state: 'ok' | 'unconfirmed' | 'never'
   last_heartbeat_at: number | null
   attention: Record<string, unknown>[]
-  consumers?: Record<string, unknown>[]
   incomplete?: boolean
   warnings?: string[]
 }

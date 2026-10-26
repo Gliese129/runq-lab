@@ -184,7 +184,9 @@ CREATE TABLE IF NOT EXISTS sync_state (
     PRIMARY KEY (target, resource)
 );
 
--- Source IDs are either task IDs or consumer IDs; the owning job is the FK.
+-- Source IDs are task IDs, "<task_id>@<producer>" (results.<producer>.jsonl), or ids of
+-- the removed consumers (cs…, read-only; consumers tables are no longer written).
+-- The owning job is the FK.
 CREATE TABLE IF NOT EXISTS record_latest (
  task_id TEXT NOT NULL, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
  section TEXT NOT NULL, key_json TEXT NOT NULL, step REAL, ts INTEGER NOT NULL,

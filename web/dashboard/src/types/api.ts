@@ -199,29 +199,8 @@ export interface WandbInfo {
   base_url: string
 }
 
-/** A light CPU process attached to a job (judge, summarizer). It does not
- *  affect the job's status; it is started by hand on a node (iqrsh/tmux). */
-export interface Consumer {
-  id: string
-  job_id: string
-  name: string
-  command: string
-  status: 'ready' | 'running' | 'stopped' | 'failed' | 'killed' | 'lost' | string
-  run_sh: string
-  host?: string
-  pid?: number
-  started_at: number | null
-  finished_at: number | null
-  last_heartbeat_at: number | null
-  last_output_at: number | null
-  last_data_at: number | null
-  exit_code: number | null
-  reason?: string
-}
-
 export interface JobDetail {
   capabilities?: Capabilities
-  consumers?: Consumer[]
   job: JobSummary
   tasks: TaskView[]
   metric_keys: string[]

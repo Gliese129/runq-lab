@@ -76,7 +76,7 @@ def run():
                 index["offset"] = raw.tell()
                 try:
                     rec = json.loads(line)
-                    if stream == "results":
+                    if stream != "metrics":
                         axes = rec.get("axes") or {}
                         metrics = rec.get("metrics") or {}
                         if not isinstance(axes, dict) or not isinstance(metrics, dict):

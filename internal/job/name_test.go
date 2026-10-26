@@ -3,6 +3,8 @@ package job
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestNormalizeLegacyName(t *testing.T) {
@@ -43,5 +45,15 @@ func TestNormalizeLegacyJobPreflight(t *testing.T) {
 	}
 	if _, err := Rows(&c); err != nil {
 		t.Fatalf("job-level extra_run no longer refuses: %v", err)
+	}
+}
+
+func TestNormalizeLegacyConsumers(t *testing.T) {
+	var c JobConfig
+	if err := yaml.Unmarshal([]byte("name: x\nconsumers:\n  - name: score\n    command: python score.py\n"), &c); err != nil {
+		t.Fatalf("old job.yaml with consumers: must still load: %v", err)
+	}
+	if warns := c.NormalizeLegacy(); len(warns) != 1 || c.Consumers != nil || !strings.Contains(warns[0], "runq.job()") {
+		t.Fatalf("consumers: must be dropped with a warning naming runq.job(): %v %+v", warns, c.Consumers)
 	}
 }

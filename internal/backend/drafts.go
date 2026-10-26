@@ -291,7 +291,7 @@ func (m *MultiBackend) DraftYAML(ctx context.Context, ref string) ([]byte, error
 	}
 	in := job.ExportInput{DraftID: d.ID, Rev: d.Rev, Into: cfg.Into, RerunFailed: cfg.RerunFailed, Project: d.Project, Name: cfg.Name, Description: cfg.Description,
 		Section: cfg.Section, Target: cfg.Target, Command: cfg.Command, Overrides: cfg.Overrides,
-		Consumers: cfg.Consumers, Baseline: cfg.Baseline, Rows: rows}
+		Baseline: cfg.Baseline, Rows: rows}
 	if proj, err := m.registry.GetCached(ctx, d.Project); err == nil {
 		for _, p := range proj.Params {
 			in.ParamOrder = append(in.ParamOrder, p.Name)

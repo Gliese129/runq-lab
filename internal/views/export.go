@@ -261,7 +261,7 @@ func Export(r *Result, format string, wide, color bool) (string, error) {
 // the id first, so the next command (logs, show) is a copy away.
 func attentionLine(a map[string]any) string {
 	var id string
-	for _, k := range []string{"task_id", "consumer_id", "job_id"} {
+	for _, k := range []string{"task_id", "job_id"} {
 		if v, ok := a[k].(string); ok && v != "" {
 			id = v
 			break
@@ -272,9 +272,6 @@ func attentionLine(a map[string]any) string {
 	line := strings.TrimSpace(id + " " + status)
 	if reason != "" {
 		line += ": " + reason
-	}
-	if host, _ := a["host"].(string); host != "" {
-		line += fmt.Sprintf(" (host %s, pid %v)", host, a["pid"])
 	}
 	return line
 }

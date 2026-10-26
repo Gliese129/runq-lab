@@ -60,7 +60,7 @@ agent) or you are about to set one up, read `references/heartbeat.md` first.
 | Log tail | `runq logs <task_id> -n 200` |
 | Last matching log lines | `runq logs <task_id> --grep 'loss\|step' -n 20` (ERE, runs on the target) |
 | Result rows from `runq.record` | `runq view --job <job_id> --json` |
-| Kill | `runq kill <task_id\|job_id\|consumer_id>` |
+| Kill | `runq kill <task_id\|job_id>` |
 | Rename a job or project (ids never change) | `runq rename <jb…\|pj…\|project-name> "<new name>"` |
 | Sections of a project / file a job | `runq section ls <project>` · `runq submit job.yaml -s <section>` · `runq section move <section> <jb…>` |
 | Register a project / update it | `runq project project.yaml` (re-run after editing the file) |
@@ -77,7 +77,8 @@ Older names you may remember, and what replaced them in v0.6:
 | `status <job>`, `job ls`, `job show` | `runq ps <job_id> --fresh --json` |
 | `job kill` | `runq kill <job_id>` |
 | `best`, `collect`, `results` | `runq view --job <job_id> --json` |
-| `task show`, `consumer show`, `project show` | `runq show <id>` |
+| `task show`, `project show` | `runq show <id>` |
+| `consumer add/ls/show`, `ctx.job_tasks()` | a scoring script you run: `runq.job("<job_dir>")` |
 | `project add -f`, `submit --project-file` | `runq project <file>` |
 | `job archive`, `project archive` | `runq archive <id> [--restore]` |
 | `submit --dry` | `runq draft <job.yaml>` |
@@ -207,7 +208,7 @@ multi-stage prepare→train→eval with skip-if-done, in-task sharding, GPU
 telemetry. Implement those in the training code (Python) where possible, and
 mention it in your report so the researcher knows where that logic lives.
 
-For scoring alongside a job, prepare a consumer and start its `run.sh` in your own iqrsh/tmux session; see `references/views.md`.
+For scoring alongside a job, run a script yourself (login node, or your own iqrsh/tmux session) that reads the job with `runq.job("<job_dir>")` and records per task; see `references/views.md`.
 
 A task ID executes once. On failure: inspect the error, fix it, preview, then submit a new task.
 
@@ -243,7 +244,7 @@ the "first 128 rows done" check counted rows and never read one. Build these hab
 ## 6. Reporting to the researcher
 
 Declare a view once, then read `runq view <name>` on heartbeat; use `references/views.md` for the data contract.
-For iqrsh consumer restarts, reuse the same consumer and run.sh; follow the exit-confirmation rules in that reference. Task retry remains removed.
+Task retry remains removed.
 
 1. Lead with the fact, then the evidence for it (task id, file and field, log line
    with its time). A short paragraph is usually enough.
@@ -324,17 +325,17 @@ first; otherwise sync your edits to the target before submitting and say so.
 
 ```python
 run = wandb.init(**ctx.wandb_like_cfg)   # project/entity/tags from the project's wandb: block
-ctx.link_wandb(run)                       # the dashboard and `runq show <tk…>` link to the run
+runq.link("wandb", run)                   # the dashboard and `runq show <tk…>` link to the run
 ```
 
-Call `ctx.link_wandb(run)` right after init so the researcher can open the run from
+Call `runq.link("wandb", run)` right after init so the researcher can open the run from
 the dashboard. Rank gating, offline runs, directories: `references/sdk.md`.
 
 ## 11. More
 
 - Heartbeats: priorities, setup questions, fault vs deviation, quiet ticks → `references/heartbeat.md`
 - HPC targets, templates, SSH, reservations (`qsub -ar`) → `references/hpc.md`
-- Views, paper tables, charts and consumers → `references/views.md`
+- Views, paper tables, charts and scoring scripts (`runq.job()`) → `references/views.md`
 - SDK: params, metrics, results, directories, W&B → `references/sdk.md`
 - Error message → what to do → `references/troubleshooting.md`
 
