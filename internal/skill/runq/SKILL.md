@@ -3,11 +3,11 @@ name: runq
 description: >
   Operate runq (runq-lab) — the experiment runner that submits ablation sweeps
   to HPC schedulers (SGE/UGE, Slurm, PBS) and local GPU executors, tracks every
-  task, and serves a dashboard. Use whenever the user wants to submit, re-run,
-  monitor, debug, kill or clean experiments; write project.yaml / job.yaml
-  or runq targets; read task logs or results; or wire W&B into a runq task —
-  even if they never say "runq". A repo with project.yaml, job.yaml or a .runq/
-  directory runs its experiments through runq.
+  task, and serves a dashboard. Use when the user asks for runq, or wants
+  experiments queued on a scheduler, tracked or compared as cells of an
+  ablation; when you write project.yaml / job.yaml or runq targets; or when you
+  read, debug, kill or clean runq jobs, logs and results. A quick one-off run
+  in the shell you already have (an interactive node, a laptop) runs directly.
 ---
 
 # runq — guide for agents (v0.6)
@@ -17,6 +17,17 @@ built so an experiment is a short YAML file plus plain training code: it handles
 the environment, directories, code sync and bookkeeping, so your effort
 goes into the experiment itself. The advice below comes from real sessions —
 each item saved hours of tokens when followed.
+
+## Is this a runq run?
+
+runq earns its setup when the run is worth keeping a record of. Use it when the
+run goes through a scheduler (qsub/sbatch, a reservation), when it is one cell
+of an ablation the researcher will compare (its smoke test too — see §7), or
+when they asked for runq. Run it directly in the shell you have when it is a
+quick one-off outside any job: a small model on an interactive node (iqrsh,
+salloc, a laptop GPU), a script check, a debugging rerun you watch yourself.
+If unsure, run directly and mention that `runq draft` can turn it into a
+tracked job.
 
 ## 0. Start by orienting
 

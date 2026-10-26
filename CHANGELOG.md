@@ -56,6 +56,9 @@
 
 ### Changes
 
+- The skill no longer triggers on every experiment-shaped request: it asks
+  whether the run is worth a record (scheduler, ablation cell, asked for
+  runq) and runs quick one-offs on an interactive node directly.
 - One experiment = one job that keeps growing: `runq draft job.yaml --into jb…`
   plans an append (the preview, `draft show` and the draft page mark every row
   new, already there, or failed), `runq submit dr… --into jb… [--rerun-failed]`
