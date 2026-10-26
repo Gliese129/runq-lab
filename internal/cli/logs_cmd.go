@@ -4,15 +4,19 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gliese129/runq-lab/internal/api"
 	"github.com/gliese129/runq-lab/internal/backend"
 	"github.com/gliese129/runq-lab/internal/logfile"
 	"github.com/gliese129/runq-lab/internal/utils"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // ── runq logs（spec §7.2: GET /tasks/{id}/log, follow → SSE stream）──
@@ -22,9 +26,13 @@ import (
 
 var logsCmd = &cobra.Command{
 	Use:   "logs <task_id>",
-	Short: "Show task output (default: tail + follow)",
-	Example: `  runq logs a3f9              # last 200 lines, then follow (SSE)
+	Short: "Show task output (tail; at a terminal, then follow)",
+	Long: `Print the tail of a task's log. At a terminal it then follows the log
+until Ctrl-C; with stdout piped or captured (scripts, agents) it prints the
+tail and exits. --timeout <dur> follows for at most that long, terminal or not.`,
+	Example: `  runq logs a3f9              # last 200 lines, then follow at a terminal
   runq logs a3f9 --no-follow  # print tail and exit
+  runq logs a3f9 --timeout 2m # follow for up to 2 minutes
   runq logs a3f9 -n 500       # tail size
   runq logs a3f9 --grep 'loss|throughput'          # last 200 matching lines
   runq logs a3f9 --grep '^(DONE|LOAD)' -n 5        # last 5 matches (extended regex)`,
@@ -34,10 +42,26 @@ var logsCmd = &cobra.Command{
 		noFollow, _ := cmd.Flags().GetBool("no-follow")
 		lines, _ := cmd.Flags().GetInt("lines")
 		pattern, _ := cmd.Flags().GetString("grep")
+		timeout, _ := cmd.Flags().GetDuration("timeout")
+		follow := logsFollow(noFollow, timeout, stdoutIsTerminal())
+		if follow && timeout > 0 {
+			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+			defer cancel()
+			cmd.SetContext(ctx)
+			defer func() {
+				if ctx.Err() == context.DeadlineExceeded {
+					fmt.Println(utils.Dimf("── stopped following after %s (--timeout) ──", shortDuration(timeout)))
+				}
+			}()
+		}
 
 		return withBackend(cmd, func(be backend.Backend) error {
 			if strings.HasPrefix(id, "cs") {
-				return consumerLogs(cmd, be, id, noFollow)
+				err := consumerLogs(cmd, be, id, !follow)
+				if errors.Is(err, context.DeadlineExceeded) {
+					return nil
+				}
+				return err
 			}
 			view, err := be.GetTask(cmd.Context(), id)
 			if err != nil {
@@ -62,12 +86,23 @@ var logsCmd = &cobra.Command{
 			for _, l := range page.Lines {
 				fmt.Println(l)
 			}
-			if noFollow {
+			if !follow {
 				return nil
 			}
 			return followLogSSE(cmd, view.ID, page.NextOffset)
 		})
 	},
+}
+
+// stdoutIsTerminal is a var so tests can play terminal / pipe.
+var stdoutIsTerminal = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
+
+// logsFollow decides whether `runq logs` follows after the tail. Following
+// is for a person watching a terminal; a captured stdout (scripts, agents)
+// gets the tail and returns instead of hanging. --timeout asks for a
+// bounded follow, so it follows anywhere.
+func logsFollow(noFollow bool, timeout time.Duration, tty bool) bool {
+	return !noFollow && (tty || timeout > 0)
 }
 
 // printLogGrep prints the last n lines of one task log that match an
@@ -140,7 +175,8 @@ func followLogSSE(cmd *cobra.Command, taskID string, offset int64) error {
 }
 
 func init() {
-	logsCmd.Flags().Bool("no-follow", false, "Print tail and exit (no follow)")
+	logsCmd.Flags().Bool("no-follow", false, "Print tail and exit (the default when stdout is not a terminal)")
+	logsCmd.Flags().Duration("timeout", 0, "Follow for at most this long, then exit (follows even when stdout is not a terminal)")
 	logsCmd.Flags().IntP("lines", "n", logfile.DefaultPageLines, "Tail size (lines); with --grep, how many of the last matches")
 	logsCmd.Flags().String("grep", "", "Only lines matching this extended regex (grepped on the target; implies --no-follow)")
 

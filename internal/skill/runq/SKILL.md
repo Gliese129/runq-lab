@@ -54,9 +54,10 @@ agent) or you are about to set one up, read `references/heartbeat.md` first.
 | Change a draft | `runq draft show dr… --yaml > plan.yaml`, edit, `runq draft edit dr… -f plan.yaml` · `runq draft ps` |
 | Add cells to an existing job (more seeds, a missing row, a failed cell) | `runq draft job.yaml --into <jb…> [--rerun-failed]` → read new / skipped, then `runq submit dr…` |
 | Jobs / one job's tasks | `runq ps --json` · `runq ps <job_id> --json` (add `--fresh` to probe the scheduler first) |
+| Wait for a state change (in place of sleep loops) | `runq ps <jb…> --wait --json` — returns when a task changes state or all finish, at most 30m (`--wait=2h` for longer); a timeout adds `no change in 30m (last refresh …)` on stderr and exits 0 |
 | A submitted job back as job.yaml (`tasks:` rows) | `runq export <jb…> [-o file]` |
 | One job (run table) / task (command, dirs, scheduler id, times, links) / project | `runq show <jb…\|tk…\|pj…>` |
-| Log tail | `runq logs <task_id> --no-follow -n 200` |
+| Log tail | `runq logs <task_id> -n 200` |
 | Last matching log lines | `runq logs <task_id> --grep 'loss\|step' -n 20` (ERE, runs on the target) |
 | Result rows from `runq.record` | `runq view --job <job_id> --json` |
 | Kill | `runq kill <task_id\|job_id\|consumer_id>` |
@@ -85,8 +86,8 @@ Older names you may remember, and what replaced them in v0.6:
 | target `workspace:` | target `data_path:` |
 | `init`, `project edit`, `target edit` | write the YAML directly, then `--project-file` / `runq target check` |
 
-`runq logs` follows the log by default, which suits a human at a terminal; from a
-tool call, add `--no-follow` or `--grep` so the command returns.
+`runq logs` follows the log only at a terminal; from a tool call it prints the tail
+and returns. For a bounded follow, add `--timeout 2m`.
 
 For reusable progress and paper tables: `runq view <file.yaml|name>` — see `references/views.md`.
 

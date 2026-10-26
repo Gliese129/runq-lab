@@ -77,6 +77,11 @@ func init() {
 	// --fresh（spec §7 全局 flag）：绕过 daemon 缓存 TTL 强制刷新（受服务端
 	// 5min 下限保护）；未真刷时提示「x 秒前已刷新」而非静默 no-op（D22）。
 	rootCmd.PersistentFlags().Bool("fresh", false, "force-refresh cached target data before the command (rate-limited server-side)")
+	// --wait[=max]：ps / show 阻塞到显示的状态变化、全部结束或到上限，再照常输出
+	// （approach/wait-global-flag）。其他命令带了报错。
+	rootCmd.PersistentFlags().String("wait", "", "ps / show: wait up to `max` for the statuses shown to change or all finish, then print (--wait=10m; bare --wait = "+waitDefault+")")
+	rootCmd.PersistentFlags().Lookup("wait").NoOptDefVal = waitDefault
+	rootCmd.PersistentPreRunE = checkWaitSupported
 
 	// Register command groups.
 	rootCmd.AddGroup(
@@ -107,6 +112,7 @@ func init() {
 // Execute is the entry point called from main.
 func Execute() error {
 	rootCmd.SetOut(os.Stdout)
+	rootCmd.SetArgs(joinWaitValue(os.Args[1:]))
 	printRemoteContextBanner()
 	err := rootCmd.Execute()
 	if err != nil && os.Getenv("RUNQ_SOCKET") != "" && isSocketDialError(err) {

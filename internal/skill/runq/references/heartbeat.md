@@ -66,16 +66,20 @@ does not need rewriting at every submit.
 1. **Quiet path: one command.** `runq ps <job> --json` (or `runq view <name>`),
    compared with what the last tick saw (status, step, ext_id). Unchanged and
    healthy → the quiet reply. Read AGENTS.md, the skill and the ledger handoff
-   only when something changed.
+   only when something changed. When a turn needs the next state change (a
+   task about to start or finish), wait with `runq ps <job> --wait=10m --json`:
+   one call that returns at the change, or prints `no change in 10m (last
+   refresh …)`. It reads the local service, so waiting costs the cluster nothing.
 2. **After a transition, read content.** Right after a checkpoint save, a resume,
    an eval switch or a new stage, look at the next outputs: decode 2–3 samples,
    check language, reward, loss. In the session above, generations after every
    save were garbage for one step; the checks read counts and log tails, so it
    surfaced 10 steps late.
 3. **Keep the tick short.** Run bounded commands only — no interactive or TTY
-   sessions, no wait loops. Hand long work (verification, statistics, data prep)
-   to a runq job or a detached command that writes a log, then end the tick and
-   read the result next time. Where the site has a free interactive node, use
+   sessions; in place of sleep loops, use `--wait` with a max that fits the
+   tick. Hand long work (verification, statistics, data prep) to a runq job or
+   a detached command that writes a log, then end the tick and read the result
+   next time. Where the site has a free interactive node, use
    its detached form (TSUBAME: `iqrsh` with a command; other sites differ —
    check their docs or `references/hpc.md`).
 4. **Before a submit:** list in-flight tasks (`runq ps -t <target> --json`),

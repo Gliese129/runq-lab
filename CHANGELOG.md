@@ -173,6 +173,13 @@
 - `runq open [job_id | task_id]` prints that page's URL and opens it in the
   browser. `runq view --open` uses the same service URL.
 - Skill: agents include the job/task dashboard link when reporting.
+- `--wait[=max]` (global; `runq ps`, `runq ps <jb…>`, `runq show <jb…|tk…>`):
+  blocks until the statuses shown change or all finish (max 30m by default),
+  then prints as usual with the last refresh time; a timeout prints `no change
+  in 30m (last refresh …)` and exits 0. Use it in place of sleep loops.
+- `runq logs` follows only at a terminal; piped or captured output gets the
+  tail and exits. `--timeout <dur>` follows for at most that long.
+
 
 ## v0.6.0 — 2026-10-16
 

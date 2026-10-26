@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -22,9 +23,11 @@ var psCmd = &cobra.Command{
 	Example: `  runq ps               # job table
   runq ps 8f2a           # task table for job 8f2a
   runq ps --json
-  runq ps -t tsubame --fresh`,
-	Args: cobra.MaximumNArgs(1),
-	RunE: runPs,
+  runq ps -t tsubame --fresh
+  runq ps 8f2a --wait --json   # block until a task changes state (max 30m)`,
+	Args:        cobra.MaximumNArgs(1),
+	Annotations: map[string]string{waitAnnotation: "ps"},
+	RunE:        runPs,
 }
 
 func runPs(cmd *cobra.Command, args []string) error {
@@ -33,8 +36,20 @@ func runPs(cmd *cobra.Command, args []string) error {
 	return withBackend(cmd, func(be backend.Backend) error {
 		// Task view: ps <job_id> → flat task table.
 		if len(args) == 1 {
-			applyFresh(cmd, be, args[0])
-			tasks, _, err := be.ListTasks(cmd.Context(), backend.TaskListOptions{JobID: args[0]})
+			jobID, err := resolveJobRef(cmd.Context(), be, args[0]) // unique prefix is enough
+			if err != nil {
+				return err
+			}
+			applyFresh(cmd, be, jobID)
+			opts := backend.TaskListOptions{JobID: jobID}
+			wait, err := runWait(cmd, func(ctx context.Context) (waitSnapshot, error) {
+				tasks, _, err := be.ListTasks(ctx, opts)
+				return tasksSnapshot(tasks), err
+			})
+			if err != nil {
+				return err
+			}
+			tasks, _, err := be.ListTasks(cmd.Context(), opts)
 			if err != nil {
 				return err
 			}
@@ -45,6 +60,7 @@ func runPs(cmd *cobra.Command, args []string) error {
 			}
 			if jsonOut { // consumers: runq show <jb…> --json
 				printJSON(tasks)
+				wait.print(os.Stderr) // stdout stays the array; tasks carry refreshed_at
 				return nil
 			}
 			if err := printDashboardTasks(tasks); err != nil {
@@ -56,11 +72,19 @@ func runPs(cmd *cobra.Command, args []string) error {
 			if len(tasks) > 0 {
 				printDashboardLink(os.Stdout, dashboard.JobURL(base, tasks[0].Project, tasks[0].JobID))
 			}
+			wait.print(os.Stdout)
 			return nil
 		}
 
 		// Job view.
 		applyFresh(cmd, be, "")
+		wait, err := runWait(cmd, func(ctx context.Context) (waitSnapshot, error) {
+			jobs, err := be.ListJobs(ctx, "")
+			return jobsSnapshot(jobs), err
+		})
+		if err != nil {
+			return err
+		}
 		jobs, err := be.ListJobs(cmd.Context(), "")
 		if err != nil {
 			return err
@@ -71,6 +95,7 @@ func runPs(cmd *cobra.Command, args []string) error {
 		}
 		if jsonOut {
 			printJSON(jobs)
+			wait.print(os.Stderr)
 			return nil
 		}
 		if err := printDashboardJobs(jobs); err != nil {
@@ -82,6 +107,7 @@ func runPs(cmd *cobra.Command, args []string) error {
 			}
 		}
 		printDashboardLink(os.Stdout, base)
+		wait.print(os.Stdout)
 		return nil
 	})
 }

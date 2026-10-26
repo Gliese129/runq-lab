@@ -3,7 +3,10 @@
 Conventions: job ids look like `jb…`, task ids like `tk…` — take them from
 `--json` output instead of parsing tables. Every read command supports `--json`.
 `--fresh` (global) forces one scheduler probe before the read (rate-limited
-server-side). Errors say what is wrong and how to fix it, and exit non-zero.
+server-side). `--wait[=max]` (global; `ps` and `show <jb…|tk…>` only) blocks
+until the statuses the command would show change or all finish, at most `max`
+(default 30m), then prints the normal output plus the service's last poll time.
+Errors say what is wrong and how to fix it, and exit non-zero.
 `runq <command> --help` is always the authoritative, current form.
 When the service serves the dashboard, `submit`, `ps` and `show` JSON carry a
 `url` for each job/task page (text output prints a `dashboard:` line).
@@ -29,11 +32,12 @@ When the service serves the dashboard, `submit`, `ps` and `show` JSON carry a
 | `runq ps --json` | Jobs: name, id, project, section, status, counts (alias `ls`; `-t` filters by target) |
 | `runq ps <job_id> --json` | That job's tasks: run name, status, scheduler state, queue, step, elapsed, params |
 | `runq ps <job_id> --fresh --json` | Same, after forcing a scheduler probe |
+| `runq ps <job_id> --wait --json` | Same, once a task changes state or all finish (at most 30m; `--wait=2h` for longer). Exit 0 either way; the line `no change in 30m (last refresh 13:42:10)` (stderr with `--json`) says it timed out. Without an id it waits on the job table. It reads the local service, which keeps polling the scheduler on its own, so waiting adds no cluster load |
 | `runq export <jb…> [-o file]` | The job as job.yaml `tasks:` rows (fixed_params = baseline, rows = differences); submitting it reproduces the plan |
-| `runq show <jb… \| tk… \| cs… \| dr… \| pj… \| project>` | One thing by id (unique prefix is enough): a job with its run table, a task as JSON (command, dirs, external id, status source, links), a consumer, a draft, a project |
-| `runq logs <task_id> --no-follow -n 200` | Last 200 log lines, then exit |
+| `runq show <jb… \| tk… \| cs… \| dr… \| pj… \| project>` | One thing by id (unique prefix is enough): a job with its run table, a task as JSON (command, dirs, external id, status source, links), a consumer, a draft, a project. With `--wait`, a job or task prints once its state changes or it finishes; `--json` gains `"wait": {"outcome", "waited_seconds", "last_refresh"}` (outcome `changed`, `finished` or `timeout`) |
+| `runq logs <task_id> -n 200` | Last 200 log lines; at a terminal it then follows until Ctrl-C, otherwise it exits (`--no-follow` makes a terminal exit too) |
 | `runq logs <task_id> --grep '<regex>' -n 20` | Last 20 lines matching an extended regex, grepped on the target |
-| `runq logs <task_id>` | Tail **and follow** (blocks — interactive use only) |
+| `runq logs <task_id> --timeout 2m` | Tail, then follow for at most 2 minutes — at a terminal or not |
 | `runq view --job <job_id> --json` | Result rows written by `runq.record(...)` |
 | `runq dashboard` | Print the dashboard URL and open it in the browser; job, task and draft pages are linked from `show`, `ps` and `draft` |
 
@@ -107,8 +111,8 @@ walks project → job → confirmation.
 ## Notes for scripts and agents
 
 - `runq submit` queues real cluster jobs — explore with `runq draft`, which submits nothing.
-- `runq logs` follows by default and blocks; pass `--no-follow` or `--grep`.
-- Check progress with one `runq ps <job_id> --json`; don't loop.
+- `runq logs` prints the tail and returns when stdout is not a terminal; add `--timeout <dur>` for a bounded follow.
+- Check progress with one `runq ps <job_id> --json`; to wait for the next change, use `runq ps <job_id> --wait --json` — one bounded call in place of a sleep loop.
 - When reporting to the researcher, include the `url` of the job or task.
 - `runq clean` is irreversible; preview with `--show`.
 

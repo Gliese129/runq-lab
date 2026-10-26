@@ -25,11 +25,16 @@ status counts, target, section, draft, and its run table), a task (tk…), a
 consumer (cs…), a draft (dr…), or a project (pj… or its name).`,
 	Example: `  runq show jb7817
   runq show tk5e6f7a8b --json
-  runq show tij-slime-guru-a1`,
-	Args: cobra.ExactArgs(1),
+  runq show tij-slime-guru-a1
+  runq show jb7817 --wait=2h   # block until the job's state changes or it finishes`,
+	Args:        cobra.ExactArgs(1),
+	Annotations: map[string]string{waitAnnotation: "show"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ref := args[0]
 		jsonOut, _ := cmd.Flags().GetBool("json")
+		if max, _ := waitMax(cmd); max > 0 && !strings.HasPrefix(ref, "jb") && !strings.HasPrefix(ref, "tk") {
+			return errWaitUnsupported
+		}
 		switch {
 		case strings.HasPrefix(ref, "tk"):
 			return runTaskShow(cmd, args)
@@ -47,7 +52,7 @@ consumer (cs…), a draft (dr…), or a project (pj… or its name).`,
 				printJSON(c)
 				return nil
 			case strings.HasPrefix(ref, "jb"):
-				return showJob(ctx, be, ref, jsonOut)
+				return showJob(cmd, be, ref, jsonOut)
 			}
 			cfg, err := be.GetProject(ctx, ref)
 			if err != nil {
@@ -59,8 +64,19 @@ consumer (cs…), a draft (dr…), or a project (pj… or its name).`,
 	},
 }
 
-func showJob(ctx context.Context, be backend.Backend, ref string, jsonOut bool) error {
+func showJob(cmd *cobra.Command, be backend.Backend, ref string, jsonOut bool) error {
+	ctx := cmd.Context()
 	id, err := resolveJobRef(ctx, be, ref)
+	if err != nil {
+		return err
+	}
+	wait, err := runWait(cmd, func(ctx context.Context) (waitSnapshot, error) {
+		d, err := be.GetJob(ctx, id)
+		if err != nil {
+			return waitSnapshot{}, err
+		}
+		return jobDetailSnapshot(d), nil
+	})
 	if err != nil {
 		return err
 	}
@@ -69,7 +85,10 @@ func showJob(ctx context.Context, be backend.Backend, ref string, jsonOut bool) 
 		return err
 	}
 	if jsonOut {
-		printJSON(detail)
+		printJSON(struct {
+			*backend.JobDetail
+			Wait *waitResult `json:"wait,omitempty"`
+		}{detail, wait})
 		return nil
 	}
 	j := detail.Job
@@ -117,6 +136,7 @@ func showJob(ctx context.Context, be backend.Backend, ref string, jsonOut bool) 
 		}
 	}
 	printDashboardLink(os.Stdout, dashboard.JobURL(dashboardBase(ctx, be), j.Project, j.ID))
+	wait.print(os.Stdout)
 	return nil
 }
 
