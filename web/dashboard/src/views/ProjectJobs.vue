@@ -1,37 +1,6 @@
 <template>
-  <div class="project-page" :class="layoutClass">
-    <!-- Sections: how this project's jobs are grouped. Click filters the
-         list; drop a job row here to move it (nothing moves on disk). -->
-    <!-- Kept in the grid while sections load, so the columns never jump. -->
-    <nav v-if="sections.length || layoutClass !== 'cols-1'" class="sections-col" :aria-label="t('sections.title')">
-      <div class="col-title">{{ t('sections.title') }}</div>
-      <button
-        type="button" class="section-row" :class="{ on: picked === '' }"
-        @click="picked = ''"
-      >
-        <span class="flex-grow-1 text-truncate">{{ t('sections.all') }}</span>
-        <span class="count">{{ projectJobs.length }}</span>
-      </button>
-      <button
-        v-for="s in sections" :key="s.name" type="button"
-        class="section-row" :class="{ on: picked === s.name, over: dragOver === s.name }"
-        :title="ruleHint(s)"
-        @click="picked = picked === s.name ? '' : s.name"
-        @dragover.prevent="dragOver = s.name"
-        @dragleave="dragOver = dragOver === s.name ? '' : dragOver"
-        @drop.prevent="onDrop(s.name, $event)"
-      >
-        <v-icon v-if="s.builtin" size="12" class="mr-1 text-on-surface-variant">{{ s.name === 'smoke' ? 'mdi-flask-outline' : 'mdi-tray' }}</v-icon>
-        <span class="flex-grow-1 text-truncate">{{ sectionLabel(s.name) }}</span>
-        <span class="count">{{ s.jobs }}</span>
-      </button>
-      <form v-if="sections.length" class="new-section" @submit.prevent="createSection">
-        <input v-model="newSection" :placeholder="t('sections.new_placeholder')" :aria-label="t('sections.new_placeholder')">
-      </form>
-      <div class="hint">{{ t('sections.drag_hint') }}</div>
-    </nav>
-
-    <div class="main-col">
+  <div class="project-page" :class="{ 'cols-3': threeCol }">
+    <div class="main-col" @dragstart="dragging = true" @dragend="dragging = false; dragOver = ''">
     <div class="d-flex align-center ga-3 mb-4">
       <ProjectDot :project="project" :size="12" />
       <div class="text-h6 font-weight-medium text-truncate">{{ project }}</div>
@@ -54,6 +23,43 @@
         <v-icon size="14" class="mr-1">mdi-table-eye</v-icon>{{ v.title || v.name }}
       </router-link>
     </div>
+
+    <!-- Sections: how this project's jobs are grouped. A tab filters the
+         list; drop a job row on one to move it (nothing moves on disk).
+         The bar renders while sections load, so the list never jumps. -->
+    <nav
+      v-if="sections.length || sectionsQuery.isLoading.value"
+      class="section-tabs" :class="{ dragging }" :aria-label="t('sections.title')"
+    >
+      <button type="button" class="tab" :class="{ on: picked === '' }" @click="picked = ''">
+        {{ t('sections.all') }}<span class="count">{{ projectJobs.length }}</span>
+      </button>
+      <button
+        v-for="s in sections" :key="s.name" type="button"
+        class="tab target" :class="{ on: picked === s.name, over: dragOver === s.name }"
+        :title="ruleHint(s)"
+        @click="picked = picked === s.name ? '' : s.name"
+        @dragover.prevent="dragOver = s.name"
+        @dragleave="dragOver = dragOver === s.name ? '' : dragOver"
+        @drop.prevent="onDrop(s.name, $event)"
+      >
+        {{ sectionLabel(s.name) }}<span class="count">{{ s.jobs }}</span>
+      </button>
+      <form v-if="adding" class="new-section" @submit.prevent="createSection">
+        <input
+          ref="newInput" v-model="newSection"
+          :placeholder="t('sections.new_placeholder')" :aria-label="t('sections.new')"
+          @keydown.esc="closeAdding" @blur="!newSection.trim() && closeAdding()"
+        >
+      </form>
+      <button
+        v-else-if="sections.length" type="button" class="add" :title="t('sections.new')" :aria-label="t('sections.new')"
+        @click="openAdding"
+      >
+        <v-icon size="16">mdi-plus</v-icon>
+      </button>
+      <span v-if="dragging" class="hint">{{ t('sections.drag_hint') }}</span>
+    </nav>
 
     <v-text-field
       v-model="searchQuery"
@@ -117,7 +123,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useProjectStore } from '@/stores/projects'
@@ -197,11 +203,9 @@ const projectJobs = computed(() =>
     ? scopedJobs.value
     : (listQuery.data.value ?? []).filter(j => j.project === props.project))
 
-// ── Layout: ≥1600px sections | jobs | preview; ≥1100px sections | jobs;
-// narrower, one column (sections on top). ──
+// ── Layout: ≥1600px jobs | preview; narrower, jobs only. ──
 const { width } = useDisplay()
 const threeCol = computed(() => width.value >= 1600)
-const layoutClass = computed(() => (threeCol.value ? 'cols-3' : width.value >= 1100 ? 'cols-2' : 'cols-1'))
 const selectedId = ref('')
 
 // ── Sections ──
@@ -209,9 +213,22 @@ const qc = useQueryClient()
 const sectionsQuery = useSectionsQuery(() => props.project)
 const sections = computed<Section[]>(() => sectionsQuery.data.value ?? [])
 const picked = ref('')
+const dragging = ref(false)
 const dragOver = ref('')
+const adding = ref(false)
 const newSection = ref('')
-watch(() => props.project, () => { picked.value = ''; selectedId.value = '' })
+const newInput = ref<HTMLInputElement>()
+watch(() => props.project, () => { picked.value = ''; selectedId.value = ''; closeAdding() })
+
+async function openAdding() {
+  adding.value = true
+  await nextTick()
+  newInput.value?.focus()
+}
+function closeAdding() {
+  adding.value = false
+  newSection.value = ''
+}
 
 function sectionLabel(name: string) {
   return name === 'unsorted' ? t('sections.unsorted') : name
@@ -235,7 +252,7 @@ async function createSection() {
   if (!name) return
   try {
     await sectionsApi.create(props.project, name)
-    newSection.value = ''
+    closeAdding()
     void qc.invalidateQueries({ queryKey: qk.sections(props.project) })
   } catch (err: any) { snack.error(err?.message || t('common.error')) }
 }
@@ -261,29 +278,36 @@ function openJob(j: JobSummary) {
 
 <style scoped>
 .project-page { max-width: 1040px; margin: 0 auto; }
-.project-page.cols-2, .project-page.cols-3 { display: grid; gap: 20px; align-items: start; max-width: none; }
-.project-page.cols-2 { grid-template-columns: 200px minmax(0, 1fr); max-width: 1320px; }
-.project-page.cols-3 { grid-template-columns: 200px minmax(0, 1fr) minmax(380px, 36%); }
+.project-page.cols-3 {
+  display: grid; gap: 20px; align-items: start; max-width: none;
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 36%);
+}
 .main-col { min-width: 0; }
-.sections-col { position: sticky; top: 16px; }
-.cols-1 .sections-col { position: static; display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-.cols-1 .sections-col .col-title, .cols-1 .sections-col .hint, .cols-1 .new-section { display: none; }
-.cols-1 .section-row { width: auto; border: 0.5px solid rgb(var(--v-theme-outline-variant)); border-radius: 999px; padding: 2px 10px; }
-.col-title { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); padding: 0 8px 6px; }
-.section-row {
-  display: flex; align-items: center; width: 100%; gap: 4px; padding: 5px 8px; border-radius: 6px;
-  font-size: 13px; text-align: left; background: none; border: none; color: rgb(var(--v-theme-on-surface)); cursor: pointer;
+.section-tabs {
+  display: flex; align-items: center; gap: 20px; margin-bottom: 16px; padding: 0 14px;
+  border-bottom: 0.5px solid rgb(var(--v-theme-outline-variant)); overflow-x: auto; scrollbar-width: none;
 }
-.section-row:hover { background: rgb(var(--v-theme-on-surface), 0.05); }
-.section-row.on { background: rgb(var(--v-theme-on-surface), 0.08); font-weight: 500; }
-.section-row.over { background: rgb(var(--v-theme-primary), 0.12); outline: 1px dashed rgb(var(--v-theme-primary), 0.5); }
-.section-row .count { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
+.section-tabs .tab {
+  display: inline-flex; align-items: baseline; gap: 6px; flex: none; padding: 8px 0 7px; margin-bottom: -0.5px;
+  font-size: 13px; white-space: nowrap; background: none; border: none; border-bottom: 2px solid transparent;
+  color: rgb(var(--v-theme-on-surface-variant)); cursor: pointer; transition: color 0.12s, border-color 0.12s;
+}
+.section-tabs .tab:hover { color: rgb(var(--v-theme-on-surface)); }
+.section-tabs .tab.on { color: rgb(var(--v-theme-on-surface)); font-weight: 500; border-bottom-color: rgb(var(--v-theme-on-surface)); }
+.section-tabs .count { font-size: 11px; font-variant-numeric: tabular-nums; color: rgb(var(--v-theme-on-surface-variant)); font-weight: 400; }
+/* While a job row is dragged, every section tab reads as a drop target. */
+.section-tabs.dragging .tab.target { border-bottom-color: rgb(var(--v-theme-primary), 0.35); }
+.section-tabs .tab.target.over { color: rgb(var(--v-theme-primary)); border-bottom-color: rgb(var(--v-theme-primary)); }
+.section-tabs .add {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 22px; height: 22px;
+  border-radius: 6px; background: none; border: none; cursor: pointer; color: rgb(var(--v-theme-on-surface-variant));
+}
+.section-tabs .add:hover { background: rgb(var(--v-theme-on-surface), 0.06); color: rgb(var(--v-theme-on-surface)); }
 .new-section input {
-  width: 100%; margin-top: 6px; font-size: 12px; padding: 4px 8px; border-radius: 6px; font-family: inherit;
-  border: 0.5px dashed rgb(var(--v-theme-outline-variant)); background: transparent; color: rgb(var(--v-theme-on-surface)); outline: none;
+  width: 140px; font-size: 13px; padding: 2px 8px; border-radius: 6px; font-family: inherit; outline: none;
+  border: 0.5px solid rgb(var(--v-theme-primary)); background: transparent; color: rgb(var(--v-theme-on-surface));
 }
-.new-section input:focus { border-style: solid; border-color: rgb(var(--v-theme-primary)); }
-.hint { font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); padding: 8px; }
+.section-tabs .hint { margin-left: auto; flex: none; font-size: 12px; color: rgb(var(--v-theme-primary)); }
 .side-empty { color: rgb(var(--v-theme-on-surface-variant)); padding: 24px; }
 .bucket-title { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); padding: 0 14px 4px; }
 .empty { color: rgb(var(--v-theme-on-surface-variant)); padding: 24px 14px; }
