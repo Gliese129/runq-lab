@@ -6,6 +6,7 @@ import socketserver
 import sys
 import tempfile
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -69,6 +70,50 @@ def test_job_rebases_recorded_paths_on_the_dir_read(clean_env, tmp_path):
     t1 = runq.experiment(d, producer="score").cells[0].selected
     assert t1.task_dir == d / "tk1"
     assert t1.output_dir == d / "tk1" / "outputs"
+
+
+def _mixed(job_dir, root_a, root_b):
+    snap = _snapshot(job_dir, recorded_root=root_a)
+    snap["version"] = 2
+    for t in snap["tasks"]:
+        t["target"] = "tsubame"
+    snap["tasks"].append(
+        {"id": "tk3", "run_name": "R3", "status": "success", "params": {"kl": 0.3},
+         "task_dir": f"{root_b}/tk3", "output_dir": f"{root_b}/tk3/outputs",
+         "checkpoint_dir": f"{root_b}/tk3/checkpoints", "batch_seq": 2, "version": 1,
+         "selected": True, "target": "abci"})
+    (job_dir / "job.json").write_text(json.dumps(snap))
+
+
+@pytest.mark.parametrize("recorded_a", [None, "/gs/work/kl/jb1"])
+def test_job_keeps_another_targets_paths(clean_env, tmp_path, recorded_a):
+    """A version that ran on another target (--into) is not rebased onto this mount."""
+    d = tmp_path / "mnt" / "jb1"
+    (d / "tk1").mkdir(parents=True)
+    (d / "tk2").mkdir()
+    _mixed(d, recorded_a or str(d), "/groups/abci/kl/jb1")
+    exp = runq.experiment(d, producer="score")
+    t1, t2, t3 = [c.selected for c in exp.cells]
+    assert (t1.target, t1.local, t1.output_dir) == ("tsubame", True, d / "tk1" / "outputs")
+    assert t2.local and t2.task_dir == d / "tk2"
+    assert (t3.target, t3.local) == ("abci", False)
+    assert t3.task_dir == Path("/groups/abci/kl/jb1/tk3")
+    assert t3.output_dir == Path("/groups/abci/kl/jb1/tk3/outputs")
+    with pytest.raises(FileNotFoundError, match="target abci"):
+        t3.result({"acc": 1.0})
+    assert not (d / "tk3").exists()
+    t1.result({"acc": 1.0})
+    assert (d / "tk1" / "results.score.jsonl").exists()
+
+
+def test_job_read_on_the_second_target(clean_env, tmp_path):
+    """The copy on the --into target reads its own versions locally, the first batch's remotely."""
+    d = tmp_path / "abci" / "jb1"
+    (d / "tk3").mkdir(parents=True)
+    _mixed(d, "/gs/work/kl/jb1", str(d))
+    t1, _, t3 = [c.selected for c in runq.experiment(d, producer="score").cells]
+    assert (t1.local, t1.task_dir) == (False, Path("/gs/work/kl/jb1/tk1"))
+    assert (t3.local, t3.task_dir) == (True, d / "tk3")
 
 
 def test_job_without_ref_inside_a_task_reads_its_own_job(clean_env, job_dir, monkeypatch):

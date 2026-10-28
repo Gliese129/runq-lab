@@ -24,8 +24,11 @@ unless given). runq ingests those files like the version's own results.jsonl;
 views tell producers apart.
 
 Run the script where the job directory is readable (the cluster's login
-node for an HPC target). No runq service is needed, except to resolve an
-``ex…`` (or older ``jb…``) id instead of a path. ``runq.job()`` is the
+node for an HPC target). An experiment that ran on several targets lists
+every version in each target's job.json; a version from another target
+keeps its recorded paths, has ``v.local`` false, and ``v.result`` raises
+naming ``v.target`` — score it on that target. No runq service is needed,
+except to resolve an ``ex…`` (or older ``jb…``) id instead of a path. ``runq.job()`` is the
 older name of ``runq.experiment()``; ``JobTask``, ``exp.tasks`` and
 ``.record()`` are the older names of ``Version``, the cells' selected
 versions and ``.result()``.
@@ -66,6 +69,10 @@ class Version:
     version: int  # its number within its cell (1 = the cell's first)
     selected: bool  # the version its cell shows
     producer: str = field(repr=False)
+    target: str = ""  # where it ran
+    # Its directory is on the filesystem the experiment was read from. False
+    # for another target's version: its paths are that target's, unread here.
+    local: bool = True
 
     @property
     def results_file(self) -> Path:
@@ -73,12 +80,21 @@ class Version:
 
     def result(self, values: dict | None = None, *, section: str | None = None, **axes) -> None:
         """``runq.result`` for this version, written as this script's results."""
-        _writer(self.results_file).write_values(values, section, axes, fn=".result", stacklevel=3)
+        self._writer().write_values(values, section, axes, fn=".result", stacklevel=3)
 
     def record(self, metrics: dict | None = None, *, section: str | None = None, **axes) -> None:
         """Deprecated: renamed :meth:`result`."""
         warnings.warn(".record() is renamed .result()", DeprecationWarning, stacklevel=2)
-        _writer(self.results_file).write_values(metrics, section, axes, fn=".result", stacklevel=3)
+        self._writer().write_values(metrics, section, axes, fn=".result", stacklevel=3)
+
+    def _writer(self):
+        if not self.local:
+            raise FileNotFoundError(
+                f"version {self.id} ({self.run_name}) ran on target {self.target}; its directory "
+                f"{self.task_dir} is not on this filesystem — run this script on {self.target} "
+                "with the experiment directory there"
+            )
+        return _writer(self.results_file)
 
 
 def __getattr__(name: str):
@@ -168,6 +184,7 @@ def experiment(ref: str | os.PathLike | None = None, *, producer: str | None = N
     if not isinstance(data, dict) or not isinstance(data.get("tasks"), list):
         raise ValueError(f"runq.experiment: {path} is not an experiment snapshot")
     head = data.get("job") or {}
+    here = _targets_here(job_dir, data["tasks"], head.get("target", ""))
     return Experiment(
         id=head.get("id", ""),
         name=head.get("name", ""),
@@ -176,7 +193,7 @@ def experiment(ref: str | os.PathLike | None = None, *, producer: str | None = N
         target=head.get("target", ""),
         created_at=head.get("created_at"),
         dir=job_dir,
-        versions=[_task(job_dir, t, producer) for t in data["tasks"]],
+        versions=[_task(job_dir, t, producer, head.get("target", ""), here) for t in data["tasks"]],
         updated_at=data.get("updated_at"),
         observed_at=data.get("observed_at"),
         observation_state=data.get("observation_state", ""),
@@ -189,11 +206,31 @@ def job(ref: str | os.PathLike | None = None, *, producer: str | None = None) ->
     return experiment(ref, producer=producer)
 
 
-def _task(job_dir: Path, t: dict, producer: str) -> Version:
-    # job.json records target paths. Rebase them on the directory actually
-    # read, so a job read through another mount point still writes in place.
+def _targets_here(job_dir: Path, tasks: list, default: str) -> set[str]:
+    """The targets whose versions live in job_dir: those with a version
+    recorded in it or a version directory present in it (the same directory
+    read through another mount point). Falls back to the experiment's target."""
+    try:
+        present = {p.name for p in job_dir.iterdir()}
+    except OSError:
+        present = set()
+    here = set()
+    for t in tasks:
+        recorded = Path(t.get("task_dir") or t["id"])
+        if recorded.parent == job_dir or recorded.name in present:
+            here.add(t.get("target") or default)
+    return here or {default}
+
+
+def _task(job_dir: Path, t: dict, producer: str, default_target: str = "",
+          here: set[str] | None = None) -> Version:
+    # job.json records target paths. Rebase this target's on the directory
+    # actually read, so a job read through another mount point still writes
+    # in place; another target's versions keep their recorded paths.
+    target = t.get("target") or default_target
+    local = here is None or target in here
     recorded = t.get("task_dir") or t["id"]
-    task_dir = job_dir / Path(recorded).name
+    task_dir = job_dir / Path(recorded).name if local else Path(recorded)
 
     def under(key: str, default: str) -> Path:
         raw = t.get(key)
@@ -219,6 +256,8 @@ def _task(job_dir: Path, t: dict, producer: str) -> Version:
         version=t.get("version", 1),
         selected=t.get("selected", True),  # a version-1 snapshot lists selected versions only
         producer=producer,
+        target=target,
+        local=local,
     )
 
 

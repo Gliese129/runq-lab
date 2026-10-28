@@ -67,7 +67,9 @@ for cell in exp.cells:
 
 `v.result` is `runq.result` for that version, written to
 `<task_dir>/results.<producer>.jsonl` (producer = the script's name); runq
-ingests it like the task's own results. See
+ingests it like the task's own results. A version that ran on another target
+has `v.local == False` and keeps that target's paths; `v.result` on it raises
+naming `v.target`, so score it there. See
 [scoring scripts](../../docs/views.md#scoring-scripts-with-runqexperiment).
 
 ## Output and W&B directories

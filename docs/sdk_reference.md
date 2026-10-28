@@ -194,6 +194,7 @@ for cell in exp.cells:                    # cell.name, cell.params, cell.selecte
     v = cell.selected                     # the version the cell shows
     v.id, v.run_name, v.status, v.params, v.task_dir, v.output_dir, v.checkpoint_dir
     v.started_at, v.finished_at, v.last_output_at, v.batch_seq, v.version, v.selected
+    v.target, v.local                     # where it ran; False = on another target's filesystem
     v.result({"acc": stats.est(per_problem)}, section="math")
 exp.versions                              # every version, shown or not
 ```
@@ -203,6 +204,11 @@ exp.versions                              # every version, shown or not
 whenever it sees the experiment change. With no `ref` inside a runq task it is the
 task's own experiment; a `ex…` id works when the runq service socket is reachable
 (`RUNQ_SOCKET` or the local one). A missing or unreadable job.json raises.
+An experiment that ran on several targets (`--into` another target) lists every
+version in each target's job.json: versions of the target you read from are
+rebased onto that directory; the others keep their recorded paths, have
+`v.local == False`, and their `v.result` raises naming `v.target` — score
+them on that target.
 
 `v.result` is `runq.result` for that version — same validation, same frozen
 section keys — appended to `<task_dir>/results.<producer>.jsonl`. `producer`

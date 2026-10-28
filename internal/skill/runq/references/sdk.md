@@ -85,6 +85,8 @@ tmux); runq does not start or stop it. `v.result` = `runq.result` for that versi
 written to `<task_dir>/results.<producer>.jsonl` (producer = script name, or
 `producer=`); views show it as source `<tk…>@<producer>`, also after the version
 finished. job.json updates when the experiment changes; re-read it to wait for versions.
+Versions from another target (`--into` there) are listed too but have `v.local == False`
+(paths are that target's; `v.result` raises naming `v.target`): skip them or score on that target.
 `exp.tasks` and `JobTask` are older names (`[c.selected for c in exp.cells]`, `Version`).
 
 ## W&B

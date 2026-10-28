@@ -108,9 +108,9 @@
 | 实验/格子/提交/版本模型：--into 按格子名追加版本、选中版本、command 软约束、改名 experiment | verified | run: `cd /Users/miaozean/Desktop/workspace/JobScheduler && go vet ./... && go test ./... && cd sdk/python && .venv/bin/python -m pytest -q && cd ../../web/dashboard && $(ls -d ~/.nvm/versions/node/*/bin \| tail -1)/node node_modules/.bin/vue-tsc --noEmit && $(ls -d ~/.nvm/versions/node/*/bin \| tail -1)/node node_modules/vitest/vitest.mjs run` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-27 15:34) |
 | runq.stats、log/result 改名、默认结果视图、曲线页分组置顶、W&B 分流 | implemented | not verified |
 | SDK 读跨 target 实验时只改写本 target 版本的路径 | verified | run: `cd sdk/python && .venv/bin/python -m pytest -q tests/test_job.py tests/test_stats.py` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-28 12:31) |
-| 审计 P1：remote CLI 转发越过 target 权限边界（短 id、版本引用、跨 target 实验） | implemented | not verified |
+| 审计 P1：remote CLI 转发越过 target 权限边界（短 id、版本引用、跨 target 实验） | verified | run: `cd /Users/miaozean/Desktop/workspace/JobScheduler && git rev-parse --short HEAD && go vet ./... && go test ./internal/dashboard/ ./internal/store/ ./internal/backend/` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-28 13:10) |
 | 修审计 P1#3/#4、P2#6/#7：默认视图的格子与 producer、est 校验与严格 JSON、CSV/原始记录保留 est | verified | run: `cd /Users/miaozean/Desktop/workspace/JobScheduler/.claude/worktrees/runq-stats-b781b8 && git rev-parse --short HEAD && go vet ./... && go test ./internal/views/ ./internal/backend/ ./internal/store/ ./internal/dashboard/ ./internal/cli/ && cd sdk/python && .venv/bin/python -m pytest -q` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-28 12:36) |
-| 修审计 P1 clean 破坏版本选中与版本引用、P2 export 混拼 submission | implemented | not verified |
+| 修审计 P1 clean 破坏版本选中与版本引用、P2 export 混拼 submission | verified | run: `cd /Users/miaozean/Desktop/workspace/JobScheduler && git rev-parse --short HEAD && go test ./internal/store/ ./internal/backend/ ./internal/cli/` passed (darwin 27.0.0 arm64, node v22.23.0, 2026-10-28 13:10) |
 
 ## Change history
 
