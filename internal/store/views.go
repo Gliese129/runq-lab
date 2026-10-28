@@ -206,6 +206,7 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 			return in, err
 		}
 		params := map[string]map[string]any{}
+		cells := map[string]string{}
 		versions := map[string]int{}
 		picks, err := s.CellPicks(ctx, j.ID)
 		if err != nil {
@@ -232,6 +233,7 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 			var p map[string]any
 			_ = json.Unmarshal([]byte(t.ParamsJSON), &p)
 			params[t.ID] = p
+			cells[t.ID] = t.CellName()
 			status[t.ID] = t.Status
 			obs, err := s.SourceObservation(ctx, t.ID)
 			if err != nil {
@@ -258,7 +260,7 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 			}
 			if tableJobs[j.ID] {
 				taskID, producer := SplitSourceID(r.TaskID)
-				v := views.Record{SourceID: r.TaskID, Producer: producer, JobID: r.JobID, Section: r.Section, TS: r.TS, Params: params[taskID],
+				v := views.Record{SourceID: r.TaskID, Producer: producer, JobID: r.JobID, Section: r.Section, TS: r.TS, Params: params[taskID], Cell: cells[taskID],
 					Status: status[taskID], Version: versions[taskID], Pinned: pinned[taskID]}
 				if err := json.Unmarshal([]byte(r.AxesJSON), &v.Axes); err != nil {
 					return in, err

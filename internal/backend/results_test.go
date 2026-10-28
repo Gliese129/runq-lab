@@ -436,3 +436,23 @@ func TestResultsGroupBySectionAndProducer(t *testing.T) {
 		t.Fatalf("groups = %+v, want two", out.Schema.Groups)
 	}
 }
+
+// A runq.stats estimate reaches Raw records as its value plus its parts,
+// not as null.
+func TestResultsFlattenEst(t *testing.T) {
+	st := seedResultsStore(t, "t1")
+	insertRecords(t, st, "t1", [][2]string{
+		{`{"k":1}`, `{"acc":{"value":0.5,"stderr":0.04,"n":125,"ci95":[0.42,0.58],"show":["STDERR"]},"loss":1.5}`},
+	}, 100)
+	res, err := jobResultsFromDB(context.Background(), st, "j1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]float64{"acc": 0.5, "acc.stderr": 0.04, "acc.n": 125, "acc.ci95_lo": 0.42, "acc.ci95_hi": 0.58, "loss": 1.5}
+	for k, v := range want {
+		col := res.Cols.Metrics[k]
+		if len(col) != 1 || col[0] == nil || *col[0] != v {
+			t.Errorf("%s = %v, want %v", k, col, v)
+		}
+	}
+}

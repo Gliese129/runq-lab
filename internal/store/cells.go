@@ -34,6 +34,15 @@ func CellKey(task TaskRow, byID map[string]*TaskRow) string {
 	return "task:" + task.ID
 }
 
+// CellName is the cell's name as views show it: the run name, or the task
+// id for a pre-rc6 task without one.
+func (t TaskRow) CellName() string {
+	if t.RunName != "" {
+		return t.RunName
+	}
+	return t.ID
+}
+
 // versionOrder sorts versions oldest first: by submission, then in the
 // order given (callers list tasks in insertion order).
 func versionOrder(v []TaskRow) {

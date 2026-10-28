@@ -22,6 +22,9 @@ type Record struct {
 	Index   []string       `json:"index,omitempty"`
 	Metrics map[string]any `json:"metrics"`
 	Params  map[string]any `json:"params,omitempty"`
+	// Cell is the name of the cell the record's version belongs to: its
+	// identity, which params alone are not (two cells may share them).
+	Cell string `json:"cell,omitempty"`
 	// The version the record came from: its status, its number within
 	// its cell, and whether the researcher pinned it (else it is the
 	// cell's latest).
@@ -73,11 +76,14 @@ type Cell struct {
 	// An estimate's own presentation (runq.stats): which of std / stderr /
 	// ci95 / n it shows, its unit and better direction, and the band the
 	// shown error spans (lo..hi), which the table's ± and the chart share.
-	Show         []string      `json:"show,omitempty"`
-	Unit         string        `json:"unit,omitempty"`
-	Better       string        `json:"better,omitempty"`
-	Lo           *float64      `json:"lo,omitempty"`
-	Hi           *float64      `json:"hi,omitempty"`
+	Show   []string `json:"show,omitempty"`
+	Unit   string   `json:"unit,omitempty"`
+	Better string   `json:"better,omitempty"`
+	Lo     *float64 `json:"lo,omitempty"`
+	Hi     *float64 `json:"hi,omitempty"`
+	// CILo / CIHi are an estimate's 95% interval, shown or not.
+	CILo         *float64      `json:"ci95_lo,omitempty"`
+	CIHi         *float64      `json:"ci95_hi,omitempty"`
 	Contributors []Contributor `json:"contributors,omitempty"`
 }
 type Row struct {
@@ -235,7 +241,9 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 	if len(sections) == 0 {
 		seen := map[string]bool{}
 		for _, r := range in.Records {
-			seen[r.Section] = true
+			if s.Producer == nil || r.Producer == *s.Producer {
+				seen[r.Section] = true
+			}
 		}
 		sections = keys(seen)
 		if len(sections) > 1 {
@@ -248,7 +256,7 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 	ambiguous := map[string]bool{}
 	selected := []Record{}
 	for _, r := range in.Records {
-		if !contains(sections, r.Section) {
+		if !contains(sections, r.Section) || s.Producer != nil && r.Producer != *s.Producer {
 			continue
 		}
 		selected = append(selected, r)
@@ -273,6 +281,7 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 		for k := range r.Params {
 			fields["param."+k] = true
 		}
+		fields[CellKey] = true
 	}
 	identity := []string{}
 	for _, sec := range sections {
@@ -329,7 +338,7 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 			}
 		}
 		for _, k := range rowKeys {
-			if !contains(identity, k) && !strings.HasPrefix(k, "param.") {
+			if !contains(identity, k) && !isCellKey(k) {
 				errors = append(errors, "rows contains non-identity field "+k)
 			}
 			if !fields[k] {
@@ -387,6 +396,9 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 		}
 		for k, v := range r.Params {
 			vals["param."+k] = v
+		}
+		if _, axis := vals[CellKey]; !axis {
+			vals[CellKey] = cellOf(r)
 		}
 		key := map[string]any{}
 		for _, k := range rowKeys {

@@ -40,6 +40,26 @@ def test_est_given():
         stats.est(0.5, stderr=0.1, show=stats.STD)
 
 
+def test_est_rejects_what_json_cannot_hold():
+    # NaN would make a non-standard JSON line runq drops whole; a negative
+    # spread inverts the interval.
+    for kw, match in (({"stderr": float("nan")}, "stderr"), ({"stderr": -0.1}, "stderr"),
+                      ({"std": float("inf"), "n": 4}, "std"), ({"n": -1}, "count")):
+        with pytest.raises(ValueError, match=match):
+            stats.est(0.5, **kw)
+    with pytest.raises(ValueError, match="lo > hi"):
+        stats.Est(0.5, ci95=(0.6, 0.4))
+    with pytest.raises(ValueError, match="value"):
+        stats.Est(float("nan"))
+
+
+def test_event_lines_are_strict_json(clean_env, tmp_path, monkeypatch, capsys):
+    from runq._events import _append_jsonl_line
+    path = tmp_path / "x.jsonl"
+    _append_jsonl_line(path, {"a": float("nan")}, "results")
+    assert not path.exists() and "not written" in capsys.readouterr().err
+
+
 def test_est_rejects_2d_and_empty_is_none():
     with pytest.raises(ValueError, match="1-D"):
         stats.est(np.ones((3, 4)))

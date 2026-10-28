@@ -37,7 +37,15 @@
   own show / unit / better (bold best per metric and column), and draw its
   shown error as a band. Without a column `format`, an est prints rounded to
   its error's second significant digit (`43.0% ± 2.3%`); other numbers stay in
-  full decimal. View spec: `metric_rows`, chart `y` / `color` lists.
+  full decimal. View spec: `producer` (`""` = the versions' own results, a
+  script's name = its results; default views always write it), the `cell` row
+  key (a cell's name, added by default views when cells share every param),
+  `metric_rows`, chart `y` / `color` lists. CSV adds `.stderr`, `.ci95_lo`,
+  `.ci95_hi` per column; Raw records show an estimate as its value plus
+  `k.stderr`, `k.n`, `k.ci95_lo`, `k.ci95_hi`.
+- SDK: `Est` rejects non-finite numbers, negative std / stderr and an inverted
+  CI95; jsonl lines are strict JSON (a line with NaN is reported and not
+  written, instead of being dropped whole by runq).
 - Dashboard: Results → By section (default views with linked table ↔ chart
   hover, LaTeX / Markdown / CSV per block); a Curves tab per experiment —
   sections by `log_group` prefix, a `runq.stats` series as one chart, cells

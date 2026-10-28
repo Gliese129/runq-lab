@@ -71,7 +71,8 @@ func DefaultSpecs(project string, in Input, varying []string) (specs []Spec, gro
 	names := map[string]bool{}
 	for _, g := range order {
 		records := byGroup[g]
-		spec := Spec{Name: viewName(g.producer, g.section, names), Project: project, Section: g.section, Title: jobViewTitle(g.producer, g.section),
+		producer := g.producer
+		spec := Spec{Name: viewName(g.producer, g.section, names), Project: project, Section: g.section, Producer: &producer, Title: jobViewTitle(g.producer, g.section),
 			Highlight: map[string]string{"best": "bold"}} // the best per an est's own better
 		if len(jobs) == 1 {
 			spec.Jobs = jobs
@@ -107,6 +108,9 @@ func DefaultSpecs(project string, in Input, varying []string) (specs []Spec, gro
 				cells = append(cells, "param."+k)
 			}
 		}
+		if !axes[CellKey] && !paramsSeparate(records, cells) {
+			cells = append(cells, CellKey)
+		}
 		spec.Rows = append(append(append([]string{}, plainAxes...), indexAxes...), cells...)
 		for _, m := range keys(metrics) {
 			// Section-qualified: a metric may share its name with an axis.
@@ -139,6 +143,25 @@ func DefaultSpecs(project string, in Input, varying []string) (specs []Spec, gro
 		groups = append(groups, records)
 	}
 	return specs, groups
+}
+
+// paramsSeparate reports whether the param keys tell every two cells in
+// records apart. Cells may share all their params (a rerun under another
+// name); then the cell's name has to be a row key too.
+func paramsSeparate(records []Record, keys []string) bool {
+	seen := map[string]string{}
+	for _, r := range records {
+		p := map[string]any{}
+		for _, k := range keys {
+			p[k] = r.Params[strings.TrimPrefix(k, "param.")]
+		}
+		id, cell := canonical(p), cellOf(r)
+		if prev, ok := seen[id]; ok && prev != cell {
+			return false
+		}
+		seen[id] = cell
+	}
+	return true
 }
 
 // slotValue is one name as a string, several as a list.

@@ -107,7 +107,7 @@ func jobResultsFromDB(ctx context.Context, st *store.Store, jobID string) (*JobR
 		if producer != "" { // a script's results for this task (runq.job())
 			axes["producer"] = producer
 		}
-		rec := &resultRec{taskID: taskID, ts: row.TS, axes: axes, metrics: metrics, order: i}
+		rec := &resultRec{taskID: taskID, ts: row.TS, axes: axes, metrics: flattenEst(metrics), order: i}
 		rec.identity, rec.label = identityKey(axes["model"], taskID)
 		// A section or a scoring script is its own series: two producers
 		// scoring one model must not collapse into one "latest" row.
@@ -360,4 +360,28 @@ func jobResultsFromDB(ctx context.Context, st *store.Store, jobID string) (*JobR
 	out.Schema.XAxes = xAxes
 	out.Schema.Metrics = metricKeys
 	return out, nil
+}
+
+// flattenEst spreads a runq.stats estimate into numbers this response can
+// carry: k is its value, k.std / k.stderr / k.n / k.ci95_lo / k.ci95_hi
+// the parts it has.
+func flattenEst(metrics map[string]any) map[string]any {
+	out := make(map[string]any, len(metrics))
+	for k, v := range metrics {
+		est, ok := v.(map[string]any)
+		if _, has := est["value"]; !ok || !has {
+			out[k] = v
+			continue
+		}
+		out[k] = est["value"]
+		for _, part := range []string{"std", "stderr", "n"} {
+			if f, ok := est[part].(float64); ok {
+				out[k+"."+part] = f
+			}
+		}
+		if ci, ok := est["ci95"].([]any); ok && len(ci) == 2 {
+			out[k+".ci95_lo"], out[k+".ci95_hi"] = ci[0], ci[1]
+		}
+	}
+	return out
 }

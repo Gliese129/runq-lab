@@ -163,7 +163,7 @@ warns when a later row changes them.
 | Call | Returns |
 |---|---|
 | `stats.est(x, *, show=None, unit=None, better=None, ci=stats.NORMAL)` | `Est`: mean of a 1-D array (one number per unit — problem, seed; NaN skipped, `n` = used) with `std` (ddof 1), `stderr`, `n`, `ci95` (lo, hi) |
-| `stats.est(0.437, stderr=0.038, n=125)` | an estimate computed elsewhere (`std=` and `n=` give stderr) |
+| `stats.est(0.437, stderr=0.038, n=125)` | an estimate computed elsewhere (`std=` and `n=` give stderr); every number must be finite and std / stderr ≥ 0, else `ValueError` |
 | `stats.pass_at_k(correct, k=None)` | `correct`: bool `(problems, samples)`; per problem `1 - C(n-c, k)/C(n, k)`, mean over problems, stderr across them. `k=None` → 1, 2, 4, …, plus n; a list → `Series` over k; an int → one `Est` |
 | `stats.maj_at_k(answers, gold, k=None)` | majority-vote accuracy averaged over every k-subset of samples (exact up to 10 000 subsets, else 10 000 random ones with seed 0); a tie counts as the share of tied answers that are gold; `None` is an answer that is never correct |
 

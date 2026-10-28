@@ -33,7 +33,8 @@ the rows, with nothing guessed from names:
 | two or more index axes | a plain table, axes as row keys | none |
 
 Several cells add their varying params as row keys, so rows group by metric,
-then cell. Each value prints with its own `show` (± std, ± stderr, [CI95], n),
+then cell; when two cells share every param (a rerun under another name), the
+`cell` key (the cell's name) is added so both rows stay. Each value prints with its own `show` (± std, ± stderr, [CI95], n),
 `unit` (pct: ×100 with %, the decimal point moved in the digits) and `better`
 (the best cell per metric and column in bold), rounded to the place of the
 error's second significant digit: `43.0% ± 2.3%`, `1235 ± 23` (the error is
@@ -41,6 +42,10 @@ the stderr, else the shown std or CI half-width; a value without one prints in
 full decimal). In the
 dashboard (Results → By section) hovering a table cell marks the chart point and
 the other way round; each block copies as LaTeX / Markdown / CSV.
+
+A default view reads one writer's rows: its spec says `producer: ""` (the
+versions' own `runq.result`) or `producer: <script>`; a saved view without
+`producer` reads every writer, the latest row per key winning.
 
 `runq view --experiment <ex…> --spec` prints these views as view YAML (one
 document per section, `metric_rows: true` for the metric-row layout). Save one,
@@ -148,7 +153,8 @@ runq view paper --open
 ```
 
 LaTeX uses booktabs, and multirow when pivoted; `--latex-color` requires xcolor.
-CSV retains numeric values and mean/std/n. Image export and `--open`'s
+CSV retains numeric values and mean/std/n, and for an estimate its
+stderr and CI95 bounds (`.stderr`, `.ci95_lo`, `.ci95_hi`). Image export and `--open`'s
 `/projects/<project>/views/<name>` page are frontend responsibilities.
 
 Chart templates: compare (x/y/color), sweep (x/y), heatmap (x/y/value), progress

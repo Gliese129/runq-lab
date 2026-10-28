@@ -61,10 +61,17 @@ def _append_jsonl_line(path, obj: dict, kind: str) -> None:
         )
         return
     try:
+        # Strict JSON: runq reads lines with a standard parser, and a NaN
+        # would cost the whole line, valid values included.
+        line = json.dumps(obj, separators=(",", ":"), allow_nan=False) + "\n"
+    except ValueError as e:
+        print(f"runq: {kind} event not written ({e}): {obj!r}", file=sys.stderr)
+        return
+    try:
         # Append-and-flush per event. Slight overhead but guarantees
         # tail -f gives a live view (Codex review #1).
         with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(obj, separators=(",", ":")) + "\n")
+            f.write(line)
             f.flush()
     except OSError as e:
         print(

@@ -11,6 +11,25 @@ import (
 // MetricKey is the row key metric_rows adds: the metric a row shows.
 const MetricKey = "metric"
 
+// CellKey is the row key naming a record's cell. Views use it where the
+// params alone do not tell two cells apart.
+const CellKey = "cell"
+
+// cellOf is the record's cell name, or its task id when it has none.
+func cellOf(r Record) string {
+	if r.Cell != "" {
+		return r.Cell
+	}
+	task, _, _ := strings.Cut(r.SourceID, "@")
+	return task
+}
+
+// isCellKey reports whether a row key says which cell a row is: a param
+// or the cell's name.
+func isCellKey(name string) bool {
+	return strings.HasPrefix(name, "param.") || name == CellKey
+}
+
 // asEst reports whether v is an estimate written by runq.stats: an object
 // with a "value" (null when no unit had one).
 func asEst(v any) (map[string]any, bool) {
@@ -44,6 +63,13 @@ func applyEst(cell *Cell, est map[string]any, format string, now int64) error {
 			if s, ok := s.(string); ok {
 				cell.Show = append(cell.Show, s)
 			}
+		}
+	}
+	if b, ok := est["ci95"].([]any); ok && len(b) == 2 {
+		l, lok := b[0].(float64)
+		h, hok := b[1].(float64)
+		if lok && hok {
+			cell.CILo, cell.CIHi = &l, &h
 		}
 	}
 	cell.Unit, _ = est["unit"].(string)
@@ -254,7 +280,7 @@ func metricRows(out *Result) {
 }
 
 // rankEst marks the best estimate (rank 1 = bold, ties too) among the rows that
-// differ only in their cell (param.* keys), per column, by each estimate's
+// differ only in their cell (param.* and cell keys), per column, by each estimate's
 // own better. A lone value has no rank.
 func rankEst(out *Result) {
 	for ci := range out.Columns {
@@ -273,7 +299,7 @@ func rankEst(out *Result) {
 			}
 			k := map[string]any{"better": c.Better}
 			for name, v := range r.Key {
-				if !strings.HasPrefix(name, "param.") {
+				if !isCellKey(name) {
 					k[name] = v
 				}
 			}

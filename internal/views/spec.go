@@ -9,11 +9,15 @@ import (
 )
 
 type Spec struct {
-	Name      string           `json:"view" yaml:"view"`
-	Project   string           `json:"project" yaml:"project"`
-	Title     string           `json:"title,omitempty" yaml:"title,omitempty"`
-	Jobs      any              `json:"jobs,omitempty" yaml:"jobs,omitempty"`
-	Section   string           `json:"section,omitempty" yaml:"section,omitempty"`
+	Name    string `json:"view" yaml:"view"`
+	Project string `json:"project" yaml:"project"`
+	Title   string `json:"title,omitempty" yaml:"title,omitempty"`
+	Jobs    any    `json:"jobs,omitempty" yaml:"jobs,omitempty"`
+	Section string `json:"section,omitempty" yaml:"section,omitempty"`
+	// Producer limits the view to one writer's records: "" the versions'
+	// own runq.result, a name that scoring script's results. Unset reads
+	// every producer (the latest record per row wins).
+	Producer  *string          `json:"producer,omitempty" yaml:"producer,omitempty"`
 	Group     []string         `json:"group,omitempty" yaml:"group,omitempty"`
 	Rows      []string         `json:"rows,omitempty" yaml:"rows,omitempty"`
 	Expect    map[string][]any `json:"expect,omitempty" yaml:"expect,omitempty"`

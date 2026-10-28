@@ -37,10 +37,11 @@ Each (scoring script, section) gets a view laid out from the rows themselves:
 - **Two or more index axes**: a plain table with the axes as row keys, no chart.
 
 Several cells add their varying params as row keys (rows grouped by metric, then
-cell). Every value prints with its own `show` (± stderr, ± std, [CI95], n), `unit`
+cell; `cell` too when two cells share every param). Every value prints with its own `show` (± stderr, ± std, [CI95], n), `unit`
 (pct) and `better` (the best cell per metric and column is bold), rounded to the
 error's second significant digit (`43.0% ± 2.3%`).
-`runq view --experiment <ex…> --spec` prints these views as view YAML — save one,
+`runq view --experiment <ex…> --spec` prints these views as view YAML (with
+`producer:` naming whose rows they read) — save one,
 edit it (e.g. `format: pct2` on a column for fixed decimals), then `runq view <file>`.
 
 **Keep the data contract stable.** Each source/section freezes its first axis and
@@ -111,7 +112,7 @@ baseline: {method: base}
 Set `better: higher|lower` per numeric column. Deduplication precedes seed
 aggregation, then pivot/rank/baseline. Alternatives: mean_sem, mean_ci95, mean,
 median. `runq view paper --format latex` uses booktabs/multirow;
-`--latex-color` requires xcolor. CSV includes mean/std/n. Percentage deltas are pp.
+`--latex-color` requires xcolor. CSV includes mean/std/n and an estimate's stderr / CI95 bounds. Percentage deltas are pp.
 
 ```yaml
 charts:

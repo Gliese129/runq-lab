@@ -244,8 +244,8 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type source struct {
-		id, producer, job string
-		params            map[string]any
+		id, producer, job, cell string
+		params                  map[string]any
 	}
 	sources := []source{}
 	for _, j := range jobs {
@@ -254,12 +254,12 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 			viewError(w, err)
 			return
 		}
-		params := map[string]map[string]any{}
+		params, cells := map[string]map[string]any{}, map[string]string{}
 		for _, t := range tasks {
 			var p map[string]any
 			_ = json.Unmarshal([]byte(t.ParamsJSON), &p)
-			params[t.ID] = p
-			sources = append(sources, source{t.ID, "", j.ID, p})
+			params[t.ID], cells[t.ID] = p, t.CellName()
+			sources = append(sources, source{t.ID, "", j.ID, t.CellName(), p})
 		}
 		// Results scripts wrote per task with runq.job() animate too.
 		producers, err := st.ProducerSources(r.Context(), j.ID)
@@ -269,7 +269,7 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, id := range producers {
 			taskID, producer := store.SplitSourceID(id)
-			sources = append(sources, source{id, producer, j.ID, params[taskID]})
+			sources = append(sources, source{id, producer, j.ID, cells[taskID], params[taskID]})
 		}
 	}
 	lo, hi := math.Inf(1), math.Inf(-1)
@@ -312,7 +312,7 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			for _, rec := range f.Records {
-				inputs[i].Records = append(inputs[i].Records, views.Record{SourceID: src.id, Producer: src.producer, JobID: src.job, Section: rec.Section, TS: rec.TS, Axes: rec.Axes, Metrics: rec.Metrics, Params: src.params})
+				inputs[i].Records = append(inputs[i].Records, views.Record{SourceID: src.id, Producer: src.producer, JobID: src.job, Section: rec.Section, TS: rec.TS, Axes: rec.Axes, Metrics: rec.Metrics, Params: src.params, Cell: src.cell})
 			}
 		}
 	}

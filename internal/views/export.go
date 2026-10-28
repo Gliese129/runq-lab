@@ -27,7 +27,7 @@ func Export(r *Result, format string, wide, color bool) (string, error) {
 			if c.Group != nil {
 				label = Plain(c.Group) + "/" + label
 			}
-			header = append(header, label, label+".mean", label+".std", label+".n")
+			header = append(header, label, label+".mean", label+".std", label+".n", label+".stderr", label+".ci95_lo", label+".ci95_hi")
 		}
 		_ = w.Write(header)
 		for _, row := range r.Rows {
@@ -36,7 +36,7 @@ func Export(r *Result, format string, wide, color bool) (string, error) {
 				v = append(v, plain(row.Key[k]))
 			}
 			for _, c := range row.Cells {
-				v = append(v, plain(c.Value), ptrFloat(c.Mean), ptrFloat(c.Std), ptrInt(c.N))
+				v = append(v, plain(c.Value), ptrFloat(c.Mean), ptrFloat(c.Std), ptrInt(c.N), ptrFloat(c.SEM), ptrFloat(c.CILo), ptrFloat(c.CIHi))
 			}
 			_ = w.Write(v)
 		}

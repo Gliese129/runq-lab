@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import enum
 import math
+import numbers
 from dataclasses import dataclass
 
 
@@ -116,6 +117,32 @@ class Est:
     unit: Unit | None = None
     better: Better | None = None
 
+    def __post_init__(self):
+        # An est goes into JSON as is: every number finite, every spread
+        # non-negative, the interval in order. Checked here, so neither
+        # stats.est nor a hand-built Est can write a line runq drops.
+        def number(name, v, *, spread=False):
+            if v is None:
+                return
+            if isinstance(v, bool) or not isinstance(v, numbers.Real) or not math.isfinite(v):
+                raise ValueError(f"Est: {name} must be a finite number or None, got {v!r}")
+            if spread and v < 0:
+                raise ValueError(f"Est: {name} must be >= 0, got {v!r}")
+
+        number("value", self.value)
+        number("std", self.std, spread=True)
+        number("stderr", self.stderr, spread=True)
+        count = isinstance(self.n, numbers.Integral) and not isinstance(self.n, bool)
+        if self.n is not None and (not count or self.n < 0):
+            raise ValueError(f"Est: n must be a count, got {self.n!r}")
+        if self.ci95 is not None:
+            if len(self.ci95) != 2:
+                raise ValueError(f"Est: ci95 must be (lo, hi), got {self.ci95!r}")
+            number("ci95 lo", self.ci95[0])
+            number("ci95 hi", self.ci95[1])
+            if self.ci95[0] > self.ci95[1]:
+                raise ValueError(f"Est: ci95 lo > hi: {self.ci95!r}")
+
     def __float__(self) -> float:
         return math.nan if self.value is None else float(self.value)
 
@@ -192,7 +219,9 @@ class Series:
         return zip(self.index, self.values, strict=True)
 
     def __eq__(self, other) -> bool:
-        return isinstance(other, Series) and (self.axis, self.index, self.values) == (other.axis, other.index, other.values)
+        if not isinstance(other, Series):
+            return False
+        return (self.axis, self.index, self.values) == (other.axis, other.index, other.values)
 
     __hash__ = None
 

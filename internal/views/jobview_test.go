@@ -1,6 +1,7 @@
 package views
 
 import (
+	"gopkg.in/yaml.v3"
 	"strings"
 	"testing"
 )
@@ -174,5 +175,85 @@ func TestDefaultViewAxisNamedMetric(t *testing.T) {
 	}
 	if specs[0].MetricRows || out[0].Columns[0].Name != "pass@1" {
 		t.Fatalf("spec %+v columns %+v", specs[0], out[0].Columns)
+	}
+}
+
+// Two cells may share every param (a rerun under another name): the
+// default view keeps both, keyed by the cell's name.
+func TestDefaultViewCellsWithEqualParams(t *testing.T) {
+	in := Input{Records: []Record{
+		{SourceID: "tk1", Cell: "R1", JobID: "ex1", Section: "eval", TS: 1, Params: map[string]any{"lr": 0.1}, Metrics: map[string]any{"acc": 0.2}},
+		{SourceID: "tk2", Cell: "R2", JobID: "ex1", Section: "eval", TS: 2, Params: map[string]any{"lr": 0.1}, Metrics: map[string]any{"acc": 0.9}},
+	}}
+	out, specs, err := JobViews("p", in, []string{"lr"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(specs[0].Rows, CellKey) || len(out[0].Rows) != 2 {
+		t.Fatalf("rows %v: %d rows", specs[0].Rows, len(out[0].Rows))
+	}
+	got := map[any]any{}
+	for _, r := range out[0].Rows {
+		got[r.Key[CellKey]] = r.Cells[0].Value
+	}
+	if got["R1"] != 0.2 || got["R2"] != 0.9 {
+		t.Fatalf("values by cell: %v", got)
+	}
+	// Params that do tell cells apart stay the only cell key.
+	in.Records[1].Params = map[string]any{"lr": 0.2}
+	_, specs, _ = JobViews("p", in, []string{"lr"}, 1)
+	if contains(specs[0].Rows, CellKey) {
+		t.Fatalf("rows %v: cell key not needed", specs[0].Rows)
+	}
+}
+
+// A default view's spec names its producer, so saving it (through YAML)
+// renders the same rows: the version's own results, not a scoring
+// script's in the same section.
+func TestDefaultSpecKeepsProducer(t *testing.T) {
+	in := Input{Records: []Record{
+		{SourceID: "tk1", Cell: "R1", JobID: "ex1", Section: "eval", TS: 1, Metrics: map[string]any{"acc": 0.2}},
+		{SourceID: "tk1@judge", Cell: "R1", Producer: "judge", JobID: "ex1", Section: "eval", TS: 2, Metrics: map[string]any{"acc": 0.9}},
+	}}
+	out, specs, err := JobViews("p", in, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, spec := range specs {
+		raw, err := yaml.Marshal(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var saved Spec
+		if err := yaml.Unmarshal(raw, &saved); err != nil {
+			t.Fatal(err)
+		}
+		again, err := Render(saved, in, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a, b := out[i].Rows[0].Cells[0].Value, again.Rows[0].Cells[0].Value; a != b {
+			t.Fatalf("%s: default %v, saved %v\n%s", spec.Name, a, b, raw)
+		}
+	}
+	if out[0].Rows[0].Cells[0].Value != 0.2 || out[1].Rows[0].Cells[0].Value != 0.9 {
+		t.Fatalf("own then judge: %v, %v", out[0].Rows[0].Cells[0].Value, out[1].Rows[0].Cells[0].Value)
+	}
+}
+
+// CSV keeps an estimate's parts, not just its value.
+func TestCSVKeepsEstParts(t *testing.T) {
+	in := Input{Records: []Record{{SourceID: "tk1", JobID: "ex1", Section: "eval",
+		Metrics: map[string]any{"acc": map[string]any{"value": 0.5, "stderr": 0.04, "n": 125.0, "ci95": []any{0.42, 0.58}, "show": []any{"STDERR"}}}}}}
+	out, _, err := JobViews("p", in, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	csv, err := Export(out[0], "csv", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(csv, "value.stderr,value.ci95_lo,value.ci95_hi") || !strings.Contains(csv, ",0.5,,,125,0.04,0.42,0.58") {
+		t.Fatalf("csv:\n%s", csv)
 	}
 }
