@@ -19,6 +19,7 @@ type appendTarget struct {
 	root    string // the experiment's directory on this lane's target ("" = none yet)
 	tasks   []store.TaskRow
 	picks   map[string]string // pinned versions: cell → task id
+	last    map[string]int    // highest version number each cell handed out
 	batches []store.JobBatch
 	first   store.JobBatch // its name is the W&B group of every submission
 	seq     int            // the submission number this append gets
@@ -68,6 +69,9 @@ func (b *Backend) loadAppendTarget(ctx context.Context, jobID, project string) (
 	if t.picks, err = b.Store.CellPicks(ctx, j.ID); err != nil {
 		return nil, err
 	}
+	if t.last, err = b.Store.CellLastVersions(ctx, j.ID); err != nil {
+		return nil, err
+	}
 	if t.batches, err = b.Store.ListJobBatches(ctx, j.ID); err != nil {
 		return nil, err
 	}
@@ -101,7 +105,7 @@ func ExistingCells(tasks []store.TaskRow, picks map[string]string, batches []sto
 		if c.Name == "" {
 			continue // a pre-rc6 task without a name: no row can name it
 		}
-		e := job.ExistingCell{Name: c.Name, Versions: len(c.Versions)}
+		e := job.ExistingCell{Name: c.Name}
 		for _, v := range c.Versions {
 			if !store.IsTerminalTaskStatus(v.Status) {
 				e.InFlight = true
@@ -132,16 +136,14 @@ func classifyAppend(plan *submitplan.Plan, t *appendTarget, rerun []string, proj
 	if err != nil {
 		return job.AppendSummary{}, fmt.Errorf("--into %s: %w", t.job.ID, err)
 	}
-	versions := make(map[string]int, len(existing))
-	for _, e := range existing {
-		versions[e.Name] = e.Versions
-	}
 	kept := plan.Tasks[:0]
 	for i, task := range plan.Tasks {
 		if cells[i].Class == job.CellSkipped {
 			continue
 		}
-		if n := versions[task.RunName]; n > 0 && task.Env != nil {
+		// The number the store will give it (store.nextVersionTx; one
+		// append per job at a time): never a deleted version's number.
+		if n := t.last[task.RunName]; n > 0 && task.Env != nil {
 			task.Env["RUNQ_VERSION"] = strconv.Itoa(n + 1) // W&B names it "<cell> #N"
 		}
 		kept = append(kept, task)

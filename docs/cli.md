@@ -2,7 +2,8 @@
 
 Conventions: an experiment (formerly a job) has an id like `ex…` (older ones
 `jb…`); one version of a cell is `tk…`, or `ex…/<cell>[@vN]` (no `@vN` = the
-version the cell shows) wherever a task id is taken — take ids from
+version the cell shows; numbers are never reused, so `@vN` of a cleaned
+version is an error) wherever a task id is taken — take ids from
 `--json` output instead of parsing tables. Every read command supports `--json`.
 `--fresh` (global) forces one scheduler probe before the read (rate-limited
 server-side). `--wait[=max]` (global; `ps` and `show <ex…|tk…>` only) blocks
@@ -35,7 +36,7 @@ When the service serves the dashboard, `submit`, `ps` and `show` JSON carry a
 | `runq ps <ex…> --json` | That experiment's versions: cell, version number, id, status (a version its cell no longer shows says `replaced`), scheduler state, queue, step, elapsed, params |
 | `runq ps <job_id> --fresh --json` | Same, after forcing a scheduler probe |
 | `runq ps <job_id> --wait --json` | Same, once a version changes state or all finish (at most 30m; `--wait=2h` for longer). Exit 0 either way; the line `no change in 30m (last refresh 13:42:10)` (stderr with `--json`) says it timed out. Without an id it waits on the experiment table. It reads the local service, which keeps polling the scheduler on its own, so waiting adds no cluster load |
-| `runq export <ex…> [-o file]` | The experiment as job.yaml `cells:` rows (fixed_params = baseline, rows = differences), one per cell from the version it shows; a snapshot (a row whose version ran another command says so in a comment) |
+| `runq export <ex…> [-o file]` | The experiment as job.yaml `cells:` rows (fixed_params = baseline, rows = differences), one per cell from the version it shows; a snapshot: command, target and overrides are all the latest submission's, and a row whose version came from a submission with other ones says so in a comment |
 | `runq show <ex… \| tk… \| dr… \| pj… \| project>` | One thing by id (unique prefix is enough): an experiment with its run table, a version as JSON (command, dirs, external id, status source, links), a draft, a project. With `--wait`, an experiment or version prints once its state changes or it finishes; `--json` gains `"wait": {"outcome", "waited_seconds", "last_refresh"}` (outcome `changed`, `finished` or `timeout`) |
 | `runq logs <task_id> -n 200` | Last 200 log lines; at a terminal it then follows until Ctrl-C, otherwise it exits (`--no-follow` makes a terminal exit too) |
 | `runq logs <task_id> --grep '<regex>' -n 20` | Last 20 lines matching an extended regex, grepped on the target |

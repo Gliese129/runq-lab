@@ -19,6 +19,11 @@ type TaskRow struct {
 	// BatchSeq is the submission batch that created the task (1 = the
 	// job's first submit; appends with --into add 2, 3, …).
 	BatchSeq int
+	// Version numbers the task within its cell: 1 = the cell's first. It is
+	// given once, when the task is inserted, from the cell's counter
+	// (cell_versions), and never changes: deleting a version leaves a gap
+	// instead of renumbering the rest, so `<experiment>/<cell>@vN` stays put.
+	Version int
 	// SupersededBy is set on every version of a cell but the selected one
 	// (it names the selected version; see cells.go). Such a task is history:
 	// it no longer counts toward the job's results, views or counts.
@@ -112,7 +117,7 @@ const allTaskColumns = `id, job_id, project_name, command, params_json,
 	pid, start_time, log_path, working_dir, env_json,
 	resumable, extra_args, uid, timeout,
 	enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-	native_state, queue, failure_detail, target_generation, timing_json, run_name, batch_seq, superseded_by`
+	native_state, queue, failure_detail, target_generation, timing_json, run_name, batch_seq, superseded_by, version`
 
 // scanTask reads one result row into a TaskRow.
 // Column order must match allTaskColumns.
@@ -144,6 +149,7 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 		runName       sql.NullString
 		batchSeq      sql.NullInt64
 		supersededBy  sql.NullString
+		version       sql.NullInt64
 	)
 
 	var target sql.NullString
@@ -154,7 +160,7 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 		&resumable, &extraArgs, &uid, &timeout, &enqueuedAt, &startedAt, &finishedAt,
 		&taskDir, &target, &externalID, &statusSource, &killRequested,
 		&nativeState, &queue, &failureDetail, &targetGen, &timingJSON, &runName,
-		&batchSeq, &supersededBy,
+		&batchSeq, &supersededBy, &version,
 	)
 	if err != nil {
 		return nil, err
@@ -164,6 +170,7 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 	t.RunName = runName.String
 	t.BatchSeq = batchSeqOrFirst(int(batchSeq.Int64))
 	t.SupersededBy = supersededBy.String
+	t.Version = int(version.Int64)
 	t.PID = int(pid.Int64)
 	t.StartTime = startTime.Int64
 	t.LogPath = logPath.String
@@ -195,51 +202,35 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 
 // InsertTask inserts a single task row.
 func (s *Store) InsertTask(ctx context.Context, t *TaskRow) error {
-	initializeTaskTiming(t)
-	query := `INSERT INTO tasks (
-		id, job_id, project_name, command, params_json,
-		gpus_needed, gpus, status, retry_count, max_retry,
-		pid, start_time, log_path, working_dir, env_json,
-		resumable, extra_args, uid, timeout,
-		enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-		native_state, queue, failure_detail, target_generation, timing_json, run_name, batch_seq
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-
-	resumable := 0
-	if t.Resumable {
-		resumable = 1
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
 	}
-	killRequested := 0
-	if t.KillRequested {
-		killRequested = 1
+	defer tx.Rollback()
+	if err := s.InsertTaskTx(ctx, tx, t); err != nil {
+		return err
 	}
-
-	_, err := s.db.ExecContext(ctx, query,
-		t.ID, t.JobID, t.ProjectName, t.Command, t.ParamsJSON,
-		t.GPUsNeeded, nullString(t.GPUs), t.Status, 0, 0,
-		nullInt(t.PID), nullInt64(t.StartTime), nullString(t.LogPath),
-		nullString(t.WorkingDir), nullString(t.EnvJSON),
-		resumable, t.ExtraArgs, nullInt(t.UID), nullInt(t.Timeout),
-		t.EnqueuedAt.Unix(),
-		nullTimeToUnix(t.StartedAt), nullTimeToUnix(t.FinishedAt),
-		nullString(t.TaskDir), targetOrDefault(t.Target), nullString(t.ExternalID), nullString(t.StatusSource), killRequested,
-		nullString(t.NativeState), nullString(t.Queue), nullString(t.FailureDetail),
-		t.TargetGeneration, nullString(t.TimingJSON), nullString(t.RunName), batchSeqOrFirst(t.BatchSeq),
-	)
-	return err
+	return tx.Commit()
 }
 
-// InsertTaskTx inserts a task row within an existing transaction (used by InsertJobWithTasks).
+// InsertTaskTx inserts a task row within an existing transaction (used by
+// InsertJobWithTasks). A named task gets the next version number of its
+// cell; an unnamed (pre-rc6) one is version 1.
 func (s *Store) InsertTaskTx(ctx context.Context, tx *sql.Tx, t *TaskRow) error {
 	initializeTaskTiming(t)
+	v, err := nextVersionTx(ctx, tx, t.JobID, t.RunName)
+	if err != nil {
+		return fmt.Errorf("number version of %s: %w", t.ID, err)
+	}
+	t.Version = v
 	query := `INSERT INTO tasks (
 		id, job_id, project_name, command, params_json,
 		gpus_needed, gpus, status, retry_count, max_retry,
 		pid, start_time, log_path, working_dir, env_json,
 		resumable, extra_args, uid, timeout,
 		enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-		native_state, queue, failure_detail, target_generation, timing_json, run_name, batch_seq
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		native_state, queue, failure_detail, target_generation, timing_json, run_name, batch_seq, version
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	resumable := 0
 	if t.Resumable {
@@ -250,7 +241,7 @@ func (s *Store) InsertTaskTx(ctx context.Context, tx *sql.Tx, t *TaskRow) error 
 		killRequested = 1
 	}
 
-	_, err := tx.ExecContext(ctx, query,
+	_, err = tx.ExecContext(ctx, query,
 		t.ID, t.JobID, t.ProjectName, t.Command, t.ParamsJSON,
 		t.GPUsNeeded, nullString(t.GPUs), t.Status, 0, 0,
 		nullInt(t.PID), nullInt64(t.StartTime), nullString(t.LogPath),
@@ -260,7 +251,7 @@ func (s *Store) InsertTaskTx(ctx context.Context, tx *sql.Tx, t *TaskRow) error 
 		nullTimeToUnix(t.StartedAt), nullTimeToUnix(t.FinishedAt),
 		nullString(t.TaskDir), targetOrDefault(t.Target), nullString(t.ExternalID), nullString(t.StatusSource), killRequested,
 		nullString(t.NativeState), nullString(t.Queue), nullString(t.FailureDetail),
-		t.TargetGeneration, nullString(t.TimingJSON), nullString(t.RunName), batchSeqOrFirst(t.BatchSeq),
+		t.TargetGeneration, nullString(t.TimingJSON), nullString(t.RunName), batchSeqOrFirst(t.BatchSeq), t.Version,
 	)
 	return err
 }
@@ -779,8 +770,10 @@ func (s *Store) DeleteOrphanJobs(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if _, err := s.db.ExecContext(ctx, DeleteOrphanBatchesSQL); err != nil {
-		return 0, err
+	for _, q := range append([]string{DeleteOrphanBatchesSQL}, DeleteOrphanCellsSQL...) {
+		if _, err := s.db.ExecContext(ctx, q); err != nil {
+			return 0, err
+		}
 	}
 	return result.RowsAffected()
 }

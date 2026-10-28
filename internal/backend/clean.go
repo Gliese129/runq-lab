@@ -160,6 +160,20 @@ func PerformClean(ctx context.Context, st *store.Store, fsFor func(store.TaskRow
 		deleted = append(deleted, dbDeleted{u.task, preview[i].Action})
 	}
 
+	// The experiments that lost versions get the same refresh as after an
+	// append or a pick: picks of deleted versions go, every cell selects
+	// among what is left, and the status follows.
+	synced := map[string]bool{}
+	for _, d := range deleted {
+		if synced[d.task.JobID] {
+			continue
+		}
+		synced[d.task.JobID] = true
+		if err := store.SyncJobAfterDeleteTx(ctx, tx, d.task.JobID); err != nil {
+			return nil, fmt.Errorf("refresh job %q during clean: %w", d.task.JobID, err)
+		}
+	}
+
 	// Delete orphan jobs (terminal jobs with no remaining tasks) within the
 	// same tx. The terminal-status guard mirrors store.DeleteOrphanJobs —
 	// never remove pending/running/paused jobs that just haven't spawned
@@ -187,8 +201,10 @@ func PerformClean(ctx context.Context, st *store.Store, fsFor func(store.TaskRow
 			return nil, fmt.Errorf("count deleted jobs during clean: %w", err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, store.DeleteOrphanBatchesSQL); err != nil {
-		return nil, fmt.Errorf("delete orphan batches during clean: %w", err)
+	for _, q := range append([]string{store.DeleteOrphanBatchesSQL}, store.DeleteOrphanCellsSQL...) {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return nil, fmt.Errorf("delete records of orphan jobs during clean: %w", err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {

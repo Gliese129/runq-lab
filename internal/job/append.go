@@ -28,7 +28,6 @@ type ExistingCell struct {
 	InFlight bool   // some version is still queued or running
 	Params   TaskParams
 	Command  string // the command template its version was submitted with
-	Versions int    // how many versions the cell has
 }
 
 // CellClass is the verdict for one planned row.

@@ -1885,11 +1885,12 @@ func (m *MultiBackend) MoveJob(ctx context.Context, jobRef, section string) (str
 	return ids[0], nil
 }
 
-// ExportJob writes a job back in job.yaml form (`tasks:` rows): one row per
+// ExportJob writes a job back in job.yaml form (`cells:` rows): one row per
 // cell, from its selected version. A snapshot, not the job's record (the
-// ledger is): command, target and overrides are the latest submission's, and
-// a row whose version ran another command says so in a comment. Jobs from
-// before rc6 get run names derived from their first row.
+// ledger is): the file's command, target and overrides are all the latest
+// submission's, and a row whose version came from a submission with other
+// ones says so in a comment. Jobs from before rc6 get run names derived
+// from their first row.
 func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error) {
 	j, err := m.store.ResolveJobRef(ctx, ref)
 	if err != nil {
@@ -1905,10 +1906,6 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 	}
 	var cfg job.JobConfig
 	_ = json.Unmarshal([]byte(j.ConfigJSON), &cfg)
-	needs := map[string][]string{}
-	for _, tr := range cfg.Tasks {
-		needs[tr.Run] = tr.NeedsCode
-	}
 	projCmd := ""
 	if proj, err := m.registry.GetCached(ctx, j.ProjectName); err == nil {
 		projCmd = proj.CmdTemplate
@@ -1919,22 +1916,37 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 		}
 		return c
 	}
-	commands := map[int]string{1: effective(cfg.Command)}
-	latest := cfg
+	// One snapshot per submission; a job from before batches has only its own.
+	type submission struct {
+		command, target string
+		overrides       *job.Overrides
+		needs           map[string][]string
+	}
+	snapshot := func(c job.JobConfig, target string) submission {
+		sub := submission{command: effective(c.Command), target: target, overrides: c.Overrides, needs: map[string][]string{}}
+		for _, tr := range c.Tasks {
+			sub.needs[tr.Run] = tr.NeedsCode
+		}
+		return sub
+	}
+	subs := map[int]submission{1: snapshot(cfg, j.Target)}
+	latest := 1
 	if batches, err := m.store.ListJobBatches(ctx, j.ID); err == nil {
 		for _, b := range batches {
-			var bc job.JobConfig
-			_ = json.Unmarshal([]byte(b.ConfigJSON), &bc)
-			commands[b.Seq] = effective(bc.Command)
-			for _, tr := range bc.Tasks {
-				needs[tr.Run] = tr.NeedsCode
+			bc := cfg
+			if b.ConfigJSON != "" {
+				bc = job.JobConfig{}
+				_ = json.Unmarshal([]byte(b.ConfigJSON), &bc)
 			}
-			if b.Seq > 1 {
-				latest = bc
-			}
+			subs[b.Seq] = snapshot(bc, b.Target)
+			latest = max(latest, b.Seq)
 		}
 	}
-	rows := make([]job.Row, 0, len(tasks))
+	type exported struct {
+		row job.Row
+		seq int
+	}
+	var picked []exported
 	for _, c := range store.GroupCells(tasks, picks) {
 		for _, t := range c.Versions {
 			if t.ID != c.Selected {
@@ -1944,8 +1956,28 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 			if err := json.Unmarshal([]byte(t.ParamsJSON), &params); err != nil {
 				return nil, fmt.Errorf("task %s params: %w", t.ID, err)
 			}
-			rows = append(rows, job.Row{Run: t.RunName, NeedsCode: needs[t.RunName], Params: params, Command: commands[t.BatchSeq]})
+			if _, ok := subs[t.BatchSeq]; !ok {
+				subs[t.BatchSeq] = subs[1]
+			}
+			picked = append(picked, exported{job.Row{Run: t.RunName, Params: params}, t.BatchSeq})
 		}
+	}
+	file := subs[latest]
+	rows := make([]job.Row, len(picked))
+	for i, p := range picked {
+		sub := subs[p.seq]
+		r := p.row
+		r.NeedsCode, r.Command = sub.needs[r.Run], sub.command
+		if sub.target != file.target {
+			r.Target = sub.target
+		}
+		if !sameOverrides(sub.overrides, file.overrides) {
+			r.Overrides = sub.overrides
+			if r.Overrides == nil {
+				r.Overrides = &job.Overrides{}
+			}
+		}
+		rows[i] = r
 	}
 	// Pre-rc6 tasks have no run names: re-plan the stored config for its
 	// names when it still yields the same rows, else derive them.
@@ -1960,19 +1992,19 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 	in := job.ExportInput{
 		JobID: j.ID, ExportedAt: time.Now(), Project: j.ProjectName,
 		Name: j.Name, Description: j.Description, Section: j.Section,
-		Overrides: latest.Overrides, Baseline: cfg.Baseline, Rows: rows,
-		Command: effective(latest.Command),
+		Overrides: file.overrides, Baseline: cfg.Baseline, Rows: rows,
+		Command: file.command,
 	}
 	if proj, err := m.registry.GetCached(ctx, j.ProjectName); err == nil {
 		for _, d := range proj.Params {
 			in.ParamOrder = append(in.ParamOrder, d.Name)
 		}
-		if j.Target != proj.Target {
-			in.Target = j.Target
+		if file.target != proj.Target {
+			in.Target = file.target
 		}
 		in.DefaultCommand = proj.CmdTemplate
 	} else {
-		in.Target = j.Target
+		in.Target = file.target
 	}
 	return job.ExportYAML(in)
 }
@@ -2028,6 +2060,18 @@ var (
 	_ JobRenamer    = (*MultiBackend)(nil)
 	_ VersionPinner = (*MultiBackend)(nil)
 )
+
+func sameOverrides(a, b *job.Overrides) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	if a == nil {
+		x, _ = json.Marshal(job.Overrides{})
+	}
+	if b == nil {
+		y, _ = json.Marshal(job.Overrides{})
+	}
+	return string(x) == string(y)
+}
 
 func sameParams(a, b []job.Row) bool {
 	if len(a) != len(b) {

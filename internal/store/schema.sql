@@ -279,6 +279,14 @@ CREATE TABLE IF NOT EXISTS cell_picks (
  PRIMARY KEY (job_id, cell)
 );
 
+-- The highest version number each cell (run name) has handed out. A new
+-- version gets last + 1; deleting versions never lowers it, so a number
+-- is never reused and `<experiment>/<cell>@vN` keeps meaning one task.
+CREATE TABLE IF NOT EXISTS cell_versions (
+ job_id TEXT NOT NULL, cell TEXT NOT NULL, last INTEGER NOT NULL,
+ PRIMARY KEY (job_id, cell)
+);
+
 -- What a finished job left on disk (du of its job directory), measured
 -- once in the background after it turns terminal and again by
 -- `clean --checkpoints --show`. The draft preview's space estimate is

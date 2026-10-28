@@ -4,6 +4,15 @@
 
 ### Breaking
 
+- Version numbers are stored with each version and never reused: `clean`
+  no longer renumbers a cell's remaining versions, and `ex…/<cell>@vN` of a
+  cleaned version is an error instead of another version. Existing versions
+  are numbered in their current order on upgrade. `clean` now also drops
+  picks of cleaned versions, re-selects each cell and refreshes the
+  experiment's status, like an append or a pick does.
+- `runq export` takes the file's command, target and overrides all from the
+  latest submission (target used to come from the first); a row whose
+  version came from a submission with other ones says so in a comment.
 - SDK: `runq.report` → `runq.log` (training curves, `metrics.jsonl`) and
   `runq.record` → `runq.result` (result rows, `results.jsonl`); a version's
   `.record()` → `.result()`. The old names work with a DeprecationWarning until

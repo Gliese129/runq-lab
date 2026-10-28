@@ -506,7 +506,8 @@ func (e *AmbiguousRefError) Error() string {
 }
 
 // resolveVersionRef resolves <experiment>/<cell>[@vN]: version N of the cell
-// (1 = its first), or its selected version without @vN.
+// (1 = its first; numbers are never reused), or its selected version
+// without @vN. A deleted version is an error, never another version.
 func (s *Store) resolveVersionRef(ctx context.Context, expRef, cellRef string) (string, error) {
 	j, err := s.ResolveJobRef(ctx, expRef)
 	if err != nil {
@@ -526,6 +527,10 @@ func (s *Store) resolveVersionRef(ctx context.Context, expRef, cellRef string) (
 	if err != nil {
 		return "", err
 	}
+	last, err := s.CellLastVersions(ctx, j.ID)
+	if err != nil {
+		return "", err
+	}
 	for _, c := range GroupCells(tasks, picks) {
 		if c.Name != name {
 			continue
@@ -533,10 +538,20 @@ func (s *Store) resolveVersionRef(ctx context.Context, expRef, cellRef string) (
 		if n == 0 {
 			return c.Selected, nil
 		}
-		if n > len(c.Versions) {
-			return "", fmt.Errorf("cell %q of %s has %d version(s), not %d: %w", name, j.ID, len(c.Versions), n, ErrRefNotFound)
+		var have []string
+		for _, v := range c.Versions {
+			if v.Version == n {
+				return v.ID, nil
+			}
+			have = append(have, fmt.Sprintf("v%d", v.Version))
 		}
-		return c.Versions[n-1].ID, nil
+		if n <= last[name] {
+			return "", fmt.Errorf("version %d of cell %q of %s was deleted (versions left: %s): %w", n, name, j.ID, strings.Join(have, ", "), ErrRefNotFound)
+		}
+		return "", fmt.Errorf("cell %q of %s has no version %d (versions: %s): %w", name, j.ID, n, strings.Join(have, ", "), ErrRefNotFound)
+	}
+	if n > 0 && last[name] >= n {
+		return "", fmt.Errorf("version %d of cell %q of %s was deleted (no versions left): %w", n, name, j.ID, ErrRefNotFound)
 	}
 	return "", fmt.Errorf("%s has no cell %q: %w", j.ID, name, ErrRefNotFound)
 }

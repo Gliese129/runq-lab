@@ -190,6 +190,9 @@ func (s *Store) DeleteJob(ctx context.Context, jobID string) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM cell_picks WHERE job_id = ?", jobID); err != nil {
 		return fmt.Errorf("delete cell picks: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM cell_versions WHERE job_id = ?", jobID); err != nil {
+		return fmt.Errorf("delete cell versions: %w", err)
+	}
 	result, err := tx.ExecContext(ctx, "DELETE FROM jobs WHERE id = ?", jobID)
 	if err != nil {
 		return fmt.Errorf("delete job: %w", err)

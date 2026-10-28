@@ -894,11 +894,9 @@ func fillLegacyRunNames(configJSON string, views []TaskView) {
 // numberVersions sets each view's version number within its cell; views and
 // tasks are parallel.
 func numberVersions(views []TaskView, tasks []store.TaskRow) {
-	n := map[string]int{}
-	for _, c := range store.GroupCells(tasks, nil) {
-		for i, v := range c.Versions {
-			n[v.ID] = i + 1
-		}
+	n := make(map[string]int, len(tasks))
+	for _, t := range tasks {
+		n[t.ID] = t.Version
 	}
 	for i := range views {
 		views[i].Version = n[views[i].ID]

@@ -2,6 +2,7 @@ package job
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -144,9 +145,18 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 			}
 			m.Content = append(m.Content, str("needs_code"), nc)
 		}
+		var differs []string
 		if r.Command != "" && !SameCommand(r.Command, in.Command) {
-			m.LineComment = "command: " + r.Command
+			differs = append(differs, "command: "+r.Command)
 		}
+		if r.Target != "" {
+			differs = append(differs, "target: "+r.Target)
+		}
+		if r.Overrides != nil {
+			o, _ := json.Marshal(r.Overrides)
+			differs = append(differs, "overrides: "+string(o))
+		}
+		m.LineComment = strings.Join(differs, "; ")
 		tasks.Content = append(tasks.Content, m)
 	}
 	add("cells", tasks)

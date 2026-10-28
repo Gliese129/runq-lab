@@ -243,7 +243,14 @@ func (s *Store) addMissingColumns(ctx context.Context) error {
 	if err := addColumnIfMissing(ctx, s.db, "record_schema", "kinds_json", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
 		return fmt.Errorf("add record_schema.kinds_json: %w", err)
 	}
-	return s.backfillFirstBatches(ctx)
+	// Version numbers persisted per task (see TaskRow.Version).
+	if err := addColumnIfMissing(ctx, s.db, "tasks", "version", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("add tasks.version: %w", err)
+	}
+	if err := s.backfillFirstBatches(ctx); err != nil {
+		return err
+	}
+	return s.backfillVersions(ctx)
 }
 
 // backfillProjectIDs gives every pre-rc6 project an id, then enforces

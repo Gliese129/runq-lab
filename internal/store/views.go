@@ -217,10 +217,8 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 			pinned[id] = true
 		}
 		if all, err := s.JobTasksInOrder(ctx, j.ID); err == nil {
-			for _, c := range GroupCells(all, picks) {
-				for i, v := range c.Versions {
-					versions[v.ID] = i + 1
-				}
+			for _, v := range all {
+				versions[v.ID] = v.Version
 			}
 		}
 		status := map[string]string{}

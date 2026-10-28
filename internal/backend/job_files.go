@@ -87,16 +87,6 @@ func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow, target st
 	if err != nil {
 		return snap, "", err
 	}
-	picks, err := st.CellPicks(ctx, j.ID)
-	if err != nil {
-		return snap, "", err
-	}
-	version := map[string]int{}
-	for _, c := range store.GroupCells(tasks, picks) {
-		for i, v := range c.Versions {
-			version[v.ID] = i + 1
-		}
-	}
 	var selected []store.TaskRow
 	snap = JobSnapshot{Version: jobSnapshotVersion, Tasks: []JobSnapshotTask{},
 		Job: JobSnapshotJob{ID: j.ID, Name: j.Name, Project: j.ProjectName, Status: j.Status, Target: j.Target, CreatedAt: j.CreatedAt.Unix()}}
@@ -124,7 +114,7 @@ func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow, target st
 			ID: t.ID, RunName: t.RunName, Status: t.Status, Params: params, TaskDir: t.TaskDir,
 			OutputDir: workspace.OutputsDir(t.TaskDir), CheckpointDir: workspace.CheckpointsDir(t.TaskDir),
 			StartedAt: unixPtr(t.StartedAt), FinishedAt: unixPtr(t.FinishedAt), LastOutputAt: obs.LastOutputAt, BatchSeq: t.BatchSeq,
-			Version: version[t.ID], Selected: t.SupersededBy == "", Target: taskTarget,
+			Version: t.Version, Selected: t.SupersededBy == "", Target: taskTarget,
 		})
 	}
 	snap.ObservedAt, snap.ObservationState, err = st.JobObservation(ctx, selected)
