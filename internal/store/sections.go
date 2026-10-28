@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path"
 	"regexp"
@@ -421,12 +422,24 @@ func (s *Store) SortUnsorted(ctx context.Context, project string) (int, error) {
 	return moved, nil
 }
 
+// ErrRefNotFound: a ref names no job/task (wrapped with the ref).
+var ErrRefNotFound = errors.New("not found")
+
+// likePrefix is ref as a LIKE prefix pattern: % and _ in a typed ref are
+// literal characters, not wildcards (use with ESCAPE '\').
+func likePrefix(ref string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(ref) + "%"
+}
+
 // ResolveJobRef finds a job by id or unique id prefix.
 func (s *Store) ResolveJobRef(ctx context.Context, ref string) (*JobRow, error) {
+	if ref == "" {
+		return nil, fmt.Errorf("job %q: %w", ref, ErrRefNotFound)
+	}
 	if j, err := s.GetJob(ctx, ref); err != nil || j != nil {
 		return j, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM jobs WHERE id LIKE ? ORDER BY id LIMIT 6`, ref+"%")
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM jobs WHERE id LIKE ? ESCAPE '\' ORDER BY id LIMIT 6`, likePrefix(ref))
 	if err != nil {
 		return nil, err
 	}
@@ -442,7 +455,7 @@ func (s *Store) ResolveJobRef(ctx context.Context, ref string) (*JobRow, error) 
 	rows.Close()
 	switch len(ids) {
 	case 0:
-		return nil, fmt.Errorf("job %q not found", ref)
+		return nil, fmt.Errorf("job %q: %w", ref, ErrRefNotFound)
 	case 1:
 		return s.GetJob(ctx, ids[0])
 	}
@@ -454,7 +467,10 @@ func (s *Store) ResolveTaskRef(ctx context.Context, ref string) (string, error) 
 	if exp, cell, ok := strings.Cut(ref, "/"); ok {
 		return s.resolveVersionRef(ctx, exp, cell)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM tasks WHERE id = ? OR id LIKE ? ORDER BY id = ? DESC, id LIMIT 6`, ref, ref+"%", ref)
+	if ref == "" {
+		return "", fmt.Errorf("task %q: %w", ref, ErrRefNotFound)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM tasks WHERE id = ? OR id LIKE ? ESCAPE '\' ORDER BY id = ? DESC, id LIMIT 6`, ref, likePrefix(ref), ref)
 	if err != nil {
 		return "", err
 	}
@@ -472,7 +488,7 @@ func (s *Store) ResolveTaskRef(ctx context.Context, ref string) (string, error) 
 	}
 	switch len(ids) {
 	case 0:
-		return "", fmt.Errorf("task %q not found", ref)
+		return "", fmt.Errorf("task %q: %w", ref, ErrRefNotFound)
 	case 1:
 		return ids[0], nil
 	}
@@ -518,9 +534,9 @@ func (s *Store) resolveVersionRef(ctx context.Context, expRef, cellRef string) (
 			return c.Selected, nil
 		}
 		if n > len(c.Versions) {
-			return "", fmt.Errorf("cell %q of %s has %d version(s), not %d", name, j.ID, len(c.Versions), n)
+			return "", fmt.Errorf("cell %q of %s has %d version(s), not %d: %w", name, j.ID, len(c.Versions), n, ErrRefNotFound)
 		}
 		return c.Versions[n-1].ID, nil
 	}
-	return "", fmt.Errorf("%s has no cell %q", j.ID, name)
+	return "", fmt.Errorf("%s has no cell %q: %w", j.ID, name, ErrRefNotFound)
 }

@@ -1053,23 +1053,61 @@ func (m *MultiBackend) PerTargetHealth() []TargetHealth {
 }
 
 // ── Ownership lookups (remote-CLI guard, RQ-45) ───────────────────────────
-// Store-level point reads: the guard must resolve WHOSE job/task an id
-// names before letting a forwarded request act on it. "" = not found.
+// The one resolver for the ids /jobs/{id} and /tasks/{id} carry: a full
+// id, a unique prefix, or (tasks) <experiment>/<cell>[@vN]. The dashboard
+// rewrites the path to the resolved id before any handler runs, and the
+// forward guard admits on the same answer, so both see one object.
 
-func (m *MultiBackend) JobTarget(ctx context.Context, jobID string) (string, error) {
-	j, err := m.store.GetJob(ctx, jobID)
-	if err != nil || j == nil {
-		return "", err
-	}
-	return j.Target, nil
+// OwnedRef is a resolved ref: the full id and every target the object
+// spans (a job: its first target plus each version's; a task: its own).
+type OwnedRef struct {
+	ID      string
+	Targets []string
 }
 
-func (m *MultiBackend) TaskTarget(ctx context.Context, taskID string) (string, error) {
-	t, err := m.store.GetTask(ctx, taskID)
-	if err != nil || t == nil {
-		return "", err
+// ResolveJobOwner: unknown → ErrNotFound, ambiguous → *store.AmbiguousRefError.
+func (m *MultiBackend) ResolveJobOwner(ctx context.Context, ref string) (OwnedRef, error) {
+	j, err := m.store.ResolveJobRef(ctx, ref)
+	if err == nil && j == nil {
+		err = store.ErrRefNotFound
 	}
-	return t.Target, nil
+	if err != nil {
+		return OwnedRef{}, ownerLookupErr("job", ref, err)
+	}
+	targets, err := m.store.JobTaskTargets(ctx, j.ID)
+	if err != nil {
+		return OwnedRef{}, err
+	}
+	out := OwnedRef{ID: j.ID, Targets: []string{j.Target}}
+	for _, t := range targets {
+		if t != j.Target {
+			out.Targets = append(out.Targets, t)
+		}
+	}
+	return out, nil
+}
+
+// ResolveTaskOwner: unknown → ErrNotFound, ambiguous → *store.AmbiguousRefError.
+func (m *MultiBackend) ResolveTaskOwner(ctx context.Context, ref string) (OwnedRef, error) {
+	id, err := m.store.ResolveTaskRef(ctx, ref)
+	if err != nil {
+		return OwnedRef{}, ownerLookupErr("task", ref, err)
+	}
+	t, err := m.store.GetTask(ctx, id)
+	if err != nil {
+		return OwnedRef{}, err
+	}
+	if t == nil {
+		return OwnedRef{}, fmt.Errorf("task %q: %w", ref, ErrNotFound)
+	}
+	return OwnedRef{ID: t.ID, Targets: []string{t.Target}}, nil
+}
+
+func ownerLookupErr(kind, ref string, err error) error {
+	if errors.Is(err, store.ErrRefNotFound) {
+		return fmt.Errorf("%s %q: %w", kind, ref, ErrNotFound)
+	}
+	return err
 }
 
 // ── L4: freshness routing ──────────────────────────────────────────────────

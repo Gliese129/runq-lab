@@ -18,6 +18,13 @@ package dashboard
 //   - submit/plan/preview bodies get target forced-or-verified; job/task
 //     actions resolve ownership through the store first (killing another
 //     cluster's job from here is exactly the escalation this exists for).
+//     The id is resolved by the same resolver the handlers use (refs.go:
+//     full id, unique prefix, <experiment>/<cell>[@vN]) and the path is
+//     rewritten to the full id, so the guard checks the object the handler
+//     acts on. Unknown and ambiguous ids stop here. A job is admitted only
+//     when EVERY target it spans is this one: an experiment whose versions
+//     run on several targets is whole-job-addressable only from the
+//     controller (its versions on this target stay reachable as tasks).
 
 import (
 	"bytes"
@@ -34,16 +41,10 @@ import (
 // guardBodyLimit caps buffered request bodies (submit configs are small).
 const guardBodyLimit = 10 << 20
 
-// targetOwner is the store-backed ownership lookup (MultiBackend).
-type targetOwner interface {
-	JobTarget(ctx context.Context, jobID string) (string, error)
-	TaskTarget(ctx context.Context, taskID string) (string, error)
-}
-
 // RemoteCLIHandler wraps the full v1 mux in the forward guard for one
 // target. Everything not explicitly allowed is 403.
 func (s *Server) RemoteCLIHandler(target string) http.Handler {
-	owner, _ := s.backend.(targetOwner)
+	owner, _ := s.backend.(refOwner)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/health" {
 			writeJSON(w, http.StatusOK, map[string]any{"controller_id": s.controllerID, "forward_target": target, "version": s.version})
@@ -57,18 +58,19 @@ func (s *Server) RemoteCLIHandler(target string) http.Handler {
 
 // guardAllows applies the allowlist. It may REWRITE r (query/body target
 // scoping) before approving. On refusal it writes the 403 itself.
-func (s *Server) guardAllows(w http.ResponseWriter, r *http.Request, target string, owner targetOwner) bool {
+func (s *Server) guardAllows(w http.ResponseWriter, r *http.Request, target string, owner refOwner) bool {
 	deny := func(what string) bool {
 		writeErr(w, http.StatusForbidden, backend.CodeForbidden,
 			fmt.Sprintf("%s is not available through the remote-CLI forward (scoped to target %q)", what, target))
 		return false
 	}
 
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/")
-	if path == r.URL.Path { // not under /api/v1 (static SPA etc.)
+	// Decoded segments; an escaped %2F stays inside its segment.
+	seg, ok := apiSegments(r.URL)
+	if !ok { // not under /api/v1 (static SPA etc.)
 		return deny("non-API path")
 	}
-	seg := strings.Split(path, "/")
+	path := strings.Join(seg, "/")
 	get := r.Method == http.MethodGet
 
 	switch seg[0] {
@@ -91,7 +93,7 @@ func (s *Server) guardAllows(w http.ResponseWriter, r *http.Request, target stri
 			r.URL.RawQuery = q.Encode()
 			return true
 		case len(seg) >= 2: // /jobs/{id}[/...] — ownership gate
-			return s.checkOwner(w, r, target, "job", seg[1], owner)
+			return s.checkOwner(w, r, target, seg[1], owner)
 		}
 		return deny(r.Method + " " + path)
 
@@ -123,7 +125,7 @@ func (s *Server) guardAllows(w http.ResponseWriter, r *http.Request, target stri
 			r.URL.RawQuery = q.Encode()
 			return true
 		case len(seg) >= 2:
-			return s.checkOwner(w, r, target, "task", seg[1], owner)
+			return s.checkOwner(w, r, target, seg[1], owner)
 		}
 		return deny(r.Method + " " + path)
 
@@ -155,37 +157,44 @@ func (s *Server) guardAllows(w http.ResponseWriter, r *http.Request, target stri
 	return deny(r.Method + " " + path)
 }
 
-// checkOwner resolves which target owns the addressed job/task and admits
-// only this forward's own. Fail closed: no resolver, lookup error, or
-// unknown id (let the real handler 404 AFTER we know it's not a foreign id
-// — an unknown id resolves to "", which never equals a target name).
-func (s *Server) checkOwner(w http.ResponseWriter, r *http.Request, target, kind, id string, owner targetOwner) bool {
+// checkOwner resolves the addressed job/task with the handlers' resolver
+// (rewriting r to the full id) and admits only an object whose every
+// target is this forward's. Fail closed: no resolver, lookup error,
+// unknown id (404) or ambiguous prefix (409, candidates withheld — they
+// may name other targets' ids) are all answered here.
+func (s *Server) checkOwner(w http.ResponseWriter, r *http.Request, target, ref string, owner refOwner) bool {
 	if owner == nil {
 		writeErr(w, http.StatusForbidden, backend.CodeForbidden, "ownership resolution unavailable — refusing by default")
 		return false
 	}
-	var got string
-	var err error
-	if kind == "job" {
-		got, err = owner.JobTarget(r.Context(), id)
-	} else {
-		got, err = owner.TaskTarget(r.Context(), id)
-	}
-	if err != nil {
+	kind, got, _, err := resolvePathRef(r, owner)
+	switch {
+	case err == nil:
+	case isAmbiguous(err):
+		writeErr(w, http.StatusConflict, backend.CodeAmbiguous, fmt.Sprintf("%s id prefix is ambiguous — use a longer id", kind))
+		return false
+	default:
 		writeError(w, err)
 		return false
 	}
-	if got == "" {
-		// Unknown id: pass through for an honest 404 from the real handler
-		// (a guard 403 here would leak "this id exists elsewhere").
+	var foreign []string
+	for _, t := range got.Targets {
+		if t != target {
+			foreign = append(foreign, t)
+		}
+	}
+	switch {
+	case len(foreign) == 0:
 		return true
-	}
-	if got != target {
+	case len(foreign) < len(got.Targets): // spans this target and others
 		writeErr(w, http.StatusForbidden, backend.CodeForbidden,
-			fmt.Sprintf("%s %q belongs to another target", kind, id))
-		return false
+			fmt.Sprintf("%s %s also runs on other targets (%s) — act on the whole %s from the controller, or on this target's versions by task id",
+				kind, got.ID, strings.Join(foreign, ", "), kind))
+	default:
+		writeErr(w, http.StatusForbidden, backend.CodeForbidden,
+			fmt.Sprintf("%s %q belongs to another target", kind, ref))
 	}
-	return true
+	return false
 }
 
 // forceBodyField overwrites one body field unconditionally.

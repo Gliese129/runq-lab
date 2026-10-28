@@ -592,6 +592,24 @@ func (s *Store) CountTasks(ctx context.Context, filter TaskFilter) (int, error) 
 	return n, nil
 }
 
+// JobTaskTargets lists the distinct targets a job's tasks run on.
+func (s *Store) JobTaskTargets(ctx context.Context, jobID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT target FROM tasks WHERE job_id = ? AND target != '' ORDER BY target`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // ListTasksForJobs returns tasks belonging to the given job IDs.
 // Returns nil, nil for an empty input slice.
 func (s *Store) ListTasksForJobs(ctx context.Context, jobIDs []string) ([]TaskRow, error) {

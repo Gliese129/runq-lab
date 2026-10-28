@@ -94,7 +94,7 @@ func NewServerWithAssets(be backend.Backend, cfg *config.GlobalConfig, assetsDir
 }
 
 func (s *Server) Handler() http.Handler {
-	return accessLogMiddleware(s.accessLog, recoverMiddleware(corsMiddleware(versionGateMiddleware(s.mux))))
+	return accessLogMiddleware(s.accessLog, recoverMiddleware(corsMiddleware(versionGateMiddleware(s.canonicalRefMiddleware(s.mux)))))
 }
 
 // versionGateMiddleware is the client-version guardrail: a runq client that
