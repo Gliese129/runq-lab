@@ -61,3 +61,13 @@ func TestBaseNoTaskDirOmitsPaths(t *testing.T) {
 		t.Errorf("identity vars missing: %#v", env)
 	}
 }
+
+func TestBaseResultsURL(t *testing.T) {
+	env := BaseEnv(Identity{TaskID: "tk1", JobID: "ex1", ResultsURL: "http://127.0.0.1:8077/#/projects/p/ex1?tab=results"})
+	if env["RUNQ_RESULTS_URL"] != "http://127.0.0.1:8077/#/projects/p/ex1?tab=results" {
+		t.Fatalf("RUNQ_RESULTS_URL = %q", env["RUNQ_RESULTS_URL"])
+	}
+	if _, ok := BaseEnv(Identity{TaskID: "tk1"})["RUNQ_RESULTS_URL"]; ok {
+		t.Fatal("no dashboard → no RUNQ_RESULTS_URL")
+	}
+}

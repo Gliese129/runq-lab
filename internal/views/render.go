@@ -17,8 +17,11 @@ type Record struct {
 	Section  string         `json:"section"`
 	TS       int64          `json:"ts"`
 	Axes     map[string]any `json:"axes"`
-	Metrics  map[string]any `json:"metrics"`
-	Params   map[string]any `json:"params,omitempty"`
+	// Index names the axes that came from a runq.stats series (k for
+	// pass@k): the default view lays out and plots along these only.
+	Index   []string       `json:"index,omitempty"`
+	Metrics map[string]any `json:"metrics"`
+	Params  map[string]any `json:"params,omitempty"`
 	// The version the record came from: its status, its number within
 	// its cell, and whether the researcher pinned it (else it is the
 	// cell's latest).
@@ -57,16 +60,24 @@ type Data struct {
 	Error     string `json:"error,omitempty"`
 }
 type Cell struct {
-	Value        any           `json:"value"`
-	Text         string        `json:"text"`
-	Mean         *float64      `json:"mean,omitempty"`
-	Std          *float64      `json:"std,omitempty"`
-	N            *int          `json:"n,omitempty"`
-	SEM          *float64      `json:"sem,omitempty"`
-	CI95         *float64      `json:"ci95,omitempty"`
-	Rank         int           `json:"rank,omitempty"`
-	Delta        *float64      `json:"delta,omitempty"`
-	DeltaText    string        `json:"delta_text,omitempty"`
+	Value     any      `json:"value"`
+	Text      string   `json:"text"`
+	Mean      *float64 `json:"mean,omitempty"`
+	Std       *float64 `json:"std,omitempty"`
+	N         *int     `json:"n,omitempty"`
+	SEM       *float64 `json:"sem,omitempty"`
+	CI95      *float64 `json:"ci95,omitempty"`
+	Rank      int      `json:"rank,omitempty"`
+	Delta     *float64 `json:"delta,omitempty"`
+	DeltaText string   `json:"delta_text,omitempty"`
+	// An estimate's own presentation (runq.stats): which of std / stderr /
+	// ci95 / n it shows, its unit and better direction, and the band the
+	// shown error spans (lo..hi), which the table's ± and the chart share.
+	Show         []string      `json:"show,omitempty"`
+	Unit         string        `json:"unit,omitempty"`
+	Better       string        `json:"better,omitempty"`
+	Lo           *float64      `json:"lo,omitempty"`
+	Hi           *float64      `json:"hi,omitempty"`
 	Contributors []Contributor `json:"contributors,omitempty"`
 }
 type Row struct {
@@ -97,6 +108,7 @@ type Result struct {
 	Charts      []map[string]any  `json:"charts,omitempty"`
 	Data        map[string]Data   `json:"data,omitempty"`
 	RowKeys     []string          `json:"row_keys"`
+	PivotAxis   string            `json:"pivot_axis,omitempty"` // the axis pivoted into column groups
 	Highlight   map[string]string `json:"highlight,omitempty"`
 	KeyFormats  map[string]string `json:"key_formats,omitempty"`
 }
@@ -353,8 +365,10 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 			continue
 		}
 		for _, slot := range []string{"x", "y", "color", "facet", "label", "value", "done", "total"} {
-			if v, ok := c[slot].(string); ok && !slots[v] {
-				errors = append(errors, fmt.Sprintf("chart %d %s: unknown %q; available %v", i, slot, v, keys(slots)))
+			for _, v := range slotNames(c[slot]) {
+				if !slots[v] && !(s.MetricRows && v == MetricKey) {
+					errors = append(errors, fmt.Sprintf("chart %d %s: unknown %q; available %v", i, slot, v, keys(slots)))
+				}
 			}
 		}
 	}
@@ -417,11 +431,24 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 			}
 		}
 	}
+	// Rows without expect: by their keys in rows order, numbers by value
+	// (k = 1, 2, 4, 16 — not 1, 16, 2, 4).
+	rest := []string{}
 	for _, id := range keys(samples) {
 		if !contains(order, id) {
-			order = append(order, id)
+			rest = append(rest, id)
 		}
 	}
+	sort.SliceStable(rest, func(i, j int) bool {
+		a, b := samples[rest[i]].key, samples[rest[j]].key
+		for _, k := range rowKeys {
+			if c := compareValues(a[k], b[k]); c != 0 {
+				return c < 0
+			}
+		}
+		return false
+	})
+	order = append(order, rest...)
 	for _, id := range order {
 		x := samples[id]
 		row := Row{Key: x.key, Cells: []Cell{}, Empty: len(x.records) == 0}
@@ -468,7 +495,11 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 						return nil, err
 					}
 					cell.Value = v
-					cell.Text, err = Format(v, col.Format, now)
+					if est, ok := asEst(v); ok {
+						err = applyEst(&cell, est, col.Format, now)
+					} else {
+						cell.Text, err = Format(v, col.Format, now)
+					}
 					if err != nil {
 						return nil, &Invalid{[]string{"column " + col.Name + ": " + err.Error()}}
 					}
@@ -504,7 +535,14 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 		}
 		pivot(out, *s.Pivot)
 	}
+	if s.MetricRows {
+		if contains(out.RowKeys, MetricKey) {
+			return nil, &Invalid{[]string{"metric_rows: a row key is already named " + MetricKey}}
+		}
+		metricRows(out)
+	}
 	rankAndBaseline(out, s)
+	rankEst(out)
 	for _, e := range s.Extra {
 		v, err := evalValue(e.Value, in.Extras[e.Job])
 		if err != nil {
@@ -655,6 +693,7 @@ func tCritical(df int) float64 {
 	return z + (z*z*z+z)/(4*v) + (5*math.Pow(z, 5)+16*z*z*z+3*z)/(96*v*v)
 }
 func pivot(out *Result, p Pivot) {
+	out.PivotAxis = p.Axis
 	vals := append([]any{}, p.Order...)
 	seen := map[string]bool{}
 	for _, v := range vals {

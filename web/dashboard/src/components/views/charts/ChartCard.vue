@@ -1,7 +1,7 @@
 <template>
   <div class="chart-card" :class="{ wide: width === 'double' }">
     <div class="chart-bar">
-      <span class="chart-name">{{ spec.template }}</span>
+      <span class="chart-name">{{ chartName }}</span>
       <v-spacer />
       <v-btn-toggle v-model="width" density="compact" variant="text" mandatory class="chart-width">
         <v-btn value="single" size="x-small">{{ t('views.single_col') }}</v-btn>
@@ -15,7 +15,8 @@
           <v-list-item @click="exportSvg"><v-list-item-title class="text-body-2">SVG</v-list-item-title></v-list-item>
           <v-list-item @click="exportPng"><v-list-item-title class="text-body-2">PNG (300 dpi)</v-list-item-title></v-list-item>
           <v-list-item @click="exportPdf"><v-list-item-title class="text-body-2">PDF</v-list-item-title></v-list-item>
-          <template v-if="spec.template !== 'curves'">
+          <!-- animations replay a saved view's history frames -->
+          <template v-if="spec.template !== 'curves' && view">
             <v-divider class="my-1" />
             <v-list-item @click="animate('gif')"><v-list-item-title class="text-body-2">{{ t('views.anim_gif') }}</v-list-item-title></v-list-item>
             <v-list-item @click="animate('webm')"><v-list-item-title class="text-body-2">{{ t('views.anim_webm') }}</v-list-item-title></v-list-item>
@@ -73,16 +74,21 @@ const COMPONENTS: Record<string, Component> = {
   tradeoff: ChartTradeoff, progress: ChartProgress, curves: ChartCurves,
 }
 const comp = computed(() => COMPONENTS[props.spec.template])
+const chartName = computed(() => {
+  const y = props.spec.y
+  return Array.isArray(y) ? y.join(' · ') : typeof y === 'string' ? y : props.spec.template
+})
 // Small multiples need the room of a double column.
 const width = ref<WidthPreset>(props.spec.facet ? 'double' : 'single')
 const chart = ref<{ svg: SVGSVGElement | null } | null>(null)
 
-const fileBase = computed(() => `${props.view}-${props.index + 1}-${props.spec.template}`)
+const fileBase = computed(() => `${props.view || props.result.name}-${props.index + 1}-${props.spec.template}`)
 function el(): SVGSVGElement | null { return chart.value?.svg ?? null }
 
 function exportSvg() {
   const s = el()
   if (s) downloadBlob(new Blob([svgString(s)], { type: 'image/svg+xml' }), `${fileBase.value}.svg`)
+
 }
 async function exportPng() {
   const s = el()

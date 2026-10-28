@@ -37,3 +37,20 @@ describe('view formatting', () => {
     expect(formatKey(3e-6, 'sci1')).toBe('3.0e-6')
   })
 })
+
+describe('metric_rows points', () => {
+  it('reads metrics from rows, x from the columns, bands from the estimate', () => {
+    const est = (v: number) => ({ value: v, text: '', std: 0.3, sem: 0.02, show: ['STDERR'], unit: 'pct', lo: v - 0.02, hi: v + 0.02 })
+    const r: ViewResult = {
+      ...base, row_keys: ['metric', 'param.model'], pivot_axis: 'k',
+      columns: [{ name: 'k=1', at: 1 }, { name: 'k=2', at: 2 }],
+      rows: [
+        { key: { metric: 'acc', 'param.model': 'A1' }, cells: [est(0.5), est(0.6)], updated_at: 0, empty: false },
+        { key: { metric: 'rate', 'param.model': 'A1' }, cells: [est(0.3), est(0.4)], updated_at: 0, empty: false },
+      ],
+    }
+    const pts = points(r, { x: 'k', y: 'acc', color: 'param.model' })
+    expect(pts.map((p) => [p.x, p.y, p.err, p.lo, p.color, p.row, p.col])).toEqual([[1, 0.5, null, 0.48, 'A1', 0, 0], [2, 0.6, null, 0.58, 'A1', 0, 1]])
+    expect(points(r, { x: 'k', y: ['acc', 'rate'], color: 'metric' }).map((p) => p.color)).toEqual(['acc', 'acc', 'rate', 'rate'])
+  })
+})

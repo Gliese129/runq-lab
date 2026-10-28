@@ -795,5 +795,19 @@
   "drafts.append": "追加 {n} 个",
   "drafts.append_title": "追加到这个实验？",
   "drafts.append_body": "将向 {id}（{target}）追加 {n} 个版本；已成功或仍在跑的格子会跳过。",
-  "drafts.nothing_to_append": "所有格子都已在实验里"
+  "drafts.nothing_to_append": "所有格子都已在实验里",
+  "job.tab_curves": "曲线",
+  "views.default_views": "按 section",
+  "views.default_hint": "按结果里记录的信息排版（index 轴、显示的误差、单位、方向）。要改的话，从这里开始：",
+  "views.metric": "指标",
+  "views.better_higher": "越大越好",
+  "views.better_lower": "越小越好",
+  "curves.none": "还没有曲线——在训练脚本里用这个记录：",
+  "curves.pinned": "已置顶",
+  "curves.pinned_hint": "这个项目的每个实验都显示在最上面",
+  "curves.ungrouped": "（无 log_group）",
+  "curves.n_curves": "{n} 张图",
+  "curves.pin": "在这个项目里置顶",
+  "curves.unpin": "取消置顶",
+  "curves.unreadable": "读不到 {cells} 的曲线（它们的 target 在这里连不上）。"
 }

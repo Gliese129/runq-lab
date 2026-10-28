@@ -7,15 +7,45 @@ unconfirmed. Complex diagnosis and recovery belong to the researcher or agent.
 
 ## Record contract
 
-`report` writes per-step training metrics for curves (loss, reward).
-`record` writes evaluation results or progress snapshots for tables (accuracy,
+`runq.log` writes per-step training curves (loss, reward).
+`runq.result` writes evaluation results or progress snapshots for tables (accuracy,
 scored/total). Use stable axes such as split, condition and seed. `step` is an
 ordering coordinate, excluded from identity and section signatures.
 
 ```python
-runq.record({"correct": 91, "scored": 100, "total": 200},
+runq.result({"correct": 91, "scored": 100, "total": 200},
             section="eval", split="test", condition="base", step=100)
 ```
+
+Values may be `runq.stats` estimates — a mean that carries its std, stderr, n,
+CI95 and how to show them — and series such as `stats.pass_at_k(correct)`, which
+write one row per `k` and mark `k` as an index axis.
+
+## Default views
+
+Without a saved view, every (scoring script, section) gets a view laid out from
+the rows, with nothing guessed from names:
+
+| The rows have | Table | Chart |
+|---|---|---|
+| one index axis (a series, e.g. `k`) | rows = metrics, columns = the index values | x = the index, a line per metric with the shown error as a band; with several cells one small chart per metric, a line (colour) per cell |
+| no index axis | a metric / value list | none |
+| two or more index axes | a plain table, axes as row keys | none |
+
+Several cells add their varying params as row keys, so rows group by metric,
+then cell. Each value prints with its own `show` (± std, ± stderr, [CI95], n),
+`unit` (pct: ×100 with %, the decimal point moved in the digits) and `better`
+(the best cell per metric and column in bold), rounded to the place of the
+error's second significant digit: `43.0% ± 2.3%`, `1235 ± 23` (the error is
+the stderr, else the shown std or CI half-width; a value without one prints in
+full decimal). In the
+dashboard (Results → By section) hovering a table cell marks the chart point and
+the other way round; each block copies as LaTeX / Markdown / CSV.
+
+`runq view --experiment <ex…> --spec` prints these views as view YAML (one
+document per section, `metric_rows: true` for the metric-row layout). Save one,
+edit it — `format: pct2` on a column fixes the decimals — and `runq view <file>` saves and
+renders it like any view.
 
 An omitted section is `auto-<8 SHA1 hex>`, hashing the compact JSON pair of sorted
 axis and metric key lists. Explicit names are easier to maintain in views.
@@ -184,17 +214,19 @@ report values are series; script values are the returned JSON.
 A scoring script (an LLM judge, an offline evaluator) is an ordinary Python
 script you or your agent run wherever the job directory is readable — for an
 HPC target the login node or a CPU allocation, inside your own tmux. runq does
-not start, watch or stop it. It reads the experiment and records results per version:
+not start, watch or stop it. It reads the experiment and writes results per cell:
 
 ```python
 import runq
+from runq import stats
 
-exp = runq.experiment("/gs/work/kl/ex7817")      # the job directory: holds job.json
-for t in exp.tasks:
-    if t.status != "success":
+exp = runq.experiment("/gs/work/kl/ex7817")      # the experiment directory: holds job.json
+for cell in exp.cells:
+    v = cell.selected                            # the version the cell shows
+    if v.status != "success":
         continue
-    acc = score(t.output_dir / "preds.jsonl")
-    t.record({"acc": acc}, section="math", split="test")
+    correct = score(v.output_dir / "preds.jsonl")   # bool (problems, samples)
+    v.result({"acc": stats.pass_at_k(correct, unit=stats.PCT)}, section="math")
 ```
 
 `job.json` (in `<job_dir>`, the parent of every `task_dir`) is written at submit
@@ -206,7 +238,7 @@ started_at, finished_at, last_output_at, batch_seq`, plus the experiment header,
 `observed_at` and `observation_state` as of that write. A loop that waits for
 versions re-reads it with `runq.experiment(...)`.
 
-`t.record(...)` is `runq.record` for that version (same leniency, same frozen
+`v.result(...)` is `runq.result` for that version (same leniency, same frozen
 section keys) and appends to `<task_dir>/results.<producer>.jsonl`. The
 producer defaults to the script's file name (`score_math.py` → `score_math`);
 pass `runq.experiment(path, producer="judge")` to choose one (letters, digits, `_ . -`).

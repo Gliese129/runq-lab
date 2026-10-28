@@ -1,5 +1,8 @@
 # Views: choose the shortest route
 
+Often no view is needed: write results with `runq.stats` and the experiment's
+Results tab (and `runq view --experiment <ex…>`) lays each section out from what
+the rows say. Declare a view when the researcher wants a different table.
 Declare a view once. On later heartbeats read `runq view <name>`; inspect source
 freshness/attention, then fetch logs only for actionable IDs. Agent heartbeat
 uses the model; runq process heartbeat is an ordinary watcher and costs no tokens.
@@ -13,14 +16,32 @@ uses the model; runq process heartbeat is an ordinary watcher and costs no token
 
 ## Pick the SDK writer
 
-`report` = per-step training metrics for curves: training loss, reward by update.
-`record` = evaluation/progress cells: accuracy per benchmark, scored/total by split.
+`runq.log` = per-step training curves: training loss, reward by update (also sent
+to a linked W&B run). `runq.result` = what a table shows: accuracy per benchmark,
+scored/total by split.
 
 ```python
-runq.report({"loss": loss}, step=step)
-runq.record({"correct": correct, "scored": scored, "total": total},
+runq.log({"loss": loss}, step=step)
+runq.result({"correct": correct, "scored": scored, "total": total},
             section="eval", split=split, condition=condition, step=scored)
 ```
+
+## Default views (no YAML)
+
+Each (scoring script, section) gets a view laid out from the rows themselves:
+
+- **One index axis** (a `runq.stats` series, e.g. `k` from `pass_at_k`): rows =
+  metrics, columns = the index values, plus a chart along the index — one line per
+  metric, or with several cells one small chart per metric, a line per cell.
+- **No index axis**: a metric / value list, no chart.
+- **Two or more index axes**: a plain table with the axes as row keys, no chart.
+
+Several cells add their varying params as row keys (rows grouped by metric, then
+cell). Every value prints with its own `show` (± stderr, ± std, [CI95], n), `unit`
+(pct) and `better` (the best cell per metric and column is bold), rounded to the
+error's second significant digit (`43.0% ± 2.3%`).
+`runq view --experiment <ex…> --spec` prints these views as view YAML — save one,
+edit it (e.g. `format: pct2` on a column for fixed decimals), then `runq view <file>`.
 
 **Keep the data contract stable.** Each source/section freezes its first axis and
 metric keys. Send all keys on every call, using null for unknowns. Missing keys
@@ -143,23 +164,45 @@ Scripts run on the project's default target in its working_dir/environment.
 Only run short summaries on login nodes. Expired sources run on demand;
 `--refresh` forces refresh. One execution per view at a time; stdout ≤2 MiB.
 Failures retain the last good value/time and display the last 20 stderr lines.
-Put expensive work in a task or a scoring script and emit record snapshots.
+Put expensive work in a task or a scoring script and write `runq.result` rows.
 
 ## Scoring scripts (runq.experiment)
 
 Scoring that is not part of training (an LLM judge, an offline evaluator) is a
 plain script you start yourself where the experiment dir is readable — login node or a
-CPU node in your own iqrsh/tmux; runq does not start, watch or stop it:
+CPU node in your own iqrsh/tmux; runq does not start, watch or stop it.
+
+Worked example: cells [base, A1] × [ja, en] (params `model`, `lang`), 125 PolyMath
+high problems × 16 samples each. The language is a cell param, not part of a
+metric name; delivery rate is pass@k over answers that are correct *and* in the
+asked language:
 
 ```python
+import json
+import numpy as np
 import runq
-exp = runq.experiment("/gs/work/kl/ex123")          # the job dir (holds job.json)
-for t in exp.tasks:
-    if t.status == "success":
-        t.record({"acc": score(t.output_dir)}, section="math", split="test")
+from runq import stats
+
+exp = runq.experiment("/gs/work/kl/ex123")          # the experiment dir (holds job.json)
+for cell in exp.cells:                              # base-ja, base-en, A1-ja, A1-en
+    v = cell.selected
+    if v.status != "success":
+        continue
+    rows = [json.loads(l) for l in open(v.output_dir / "polymath_high.jsonl")]
+    correct = np.array([r["correct"] for r in rows], dtype=bool)   # (125, 16)
+    lang_ok = np.array([r["lang_ok"] for r in rows], dtype=bool)   # answer in cell.params["lang"]
+    v.result({"准确率": stats.pass_at_k(correct, unit=stats.PCT),
+              "交付率": stats.pass_at_k(correct & lang_ok, unit=stats.PCT)},
+             section="PolyMath high")
 ```
 
-`t.record` is `runq.record` for that version, appended to
+One call writes a row per k (1, 2, 4, 8, 16) with stderr across problems. The
+Results tab then shows one table — rows 准确率 / 交付率 × the four cells, columns
+k — and one chart per metric with a line and a stderr band per cell. Diagnostics
+(token counts, format errors) go in a section of their own, e.g.
+`section="diagnostics"`, so the main table stays the one the researcher reads.
+
+`v.result` is `runq.result` for that version, appended to
 `<task_dir>/results.<producer>.jsonl` (producer = script name). runq ingests it
 as source `<tk…>@<producer>` within 5 min (30 s while versions run) for experiments
 unfinished or from the last 14 days; `--fresh` on a command ingests at once and

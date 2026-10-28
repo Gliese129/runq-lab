@@ -13,7 +13,7 @@
             <th v-for="k in rowKeys" :key="k" class="vt-key">{{ keyLabel(k) }}</th>
           </template>
           <th v-for="(c, i) in result.columns" :key="i" class="vt-num">
-            {{ c.name }}<span v-if="c.better" class="vt-arrow">{{ c.better === 'higher' ? '↑' : '↓' }}</span>
+            {{ columnLabel(c) }}<span v-if="c.better" class="vt-arrow">{{ c.better === 'higher' ? '↑' : '↓' }}</span>
           </th>
           <th v-if="rowMeta && !groups.length" class="vt-src">{{ t('views.source') }}</th>
           <th v-if="hasState && !groups.length" />
@@ -22,13 +22,19 @@
       <tbody>
         <tr v-for="(row, ri) in result.rows" :key="ri" :class="{ 'vt-empty': row.empty, 'vt-last': ri === result.rows.length - 1 }">
           <td v-for="(k, ki) in rowKeys" :key="k" class="vt-key">
-            <span v-if="!repeated(ri, ki)">{{ formatKey(row.key[k], result.key_formats?.[k]) }}</span>
+            <template v-if="!repeated(ri, ki)">
+              <span>{{ formatKey(row.key[k], result.key_formats?.[k]) }}</span>
+              <span v-if="k === 'metric' && rowBetter(row)" class="vt-arrow" :title="t('views.better_' + rowBetter(row))">{{ rowBetter(row) === 'higher' ? '↑' : '↓' }}</span>
+            </template>
           </td>
           <template v-if="row.empty">
             <td :colspan="result.columns.length + (hasState ? 1 : 0) + (rowMeta ? 1 : 0)" class="vt-nodata">{{ t('views.no_data') }}</td>
           </template>
           <template v-else>
-            <td v-for="(cell, ci) in row.cells" :key="ci" class="vt-num" :title="cellTitle(cell)">
+            <td
+              v-for="(cell, ci) in row.cells" :key="ci" class="vt-num" :class="{ 'vt-hot': isHot(hot, ri, ci) }" :title="cellTitle(cell)"
+              @mouseenter="hot = { row: ri, col: ci }" @mouseleave="hot = null"
+            >
               <span :class="rankClass(cell)">{{ cell.text }}</span>
               <span v-if="cell.delta_text" class="vt-delta" :class="deltaClass(cell, result.columns[ci])">({{ deltaMark(cell, result.columns[ci]) }}{{ cell.delta_text }})</span>
               <div v-if="!rowMeta && cellMeta(cell)" class="vt-meta" :class="{ bad: cellMeta(cell)!.bad }">{{ cellMeta(cell)!.text }}</div>
@@ -46,24 +52,45 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ViewCell, ViewColumn, ViewResult, ViewRow } from '@/types/views'
-import { formatKey, keyLabel } from './viewFormat'
+import { formatKey, keyLabel as baseKeyLabel } from './viewFormat'
+import { isHot, useViewHover } from './viewHover'
 
 const props = defineProps<{ result: ViewResult }>()
 const { t } = useI18n()
+const hot = useViewHover()
 
 // A key with the same value in every row (e.g. fixed by a filter) says
-// nothing a paper table would print; it stays in the exports.
+// nothing a paper table would print; it stays in the exports. The metric
+// of a metric_rows table always shows: it is what the row is.
 const rowKeys = computed(() => {
   const keys = props.result.row_keys ?? []
   const rows = props.result.rows
   if (rows.length < 2) return keys
-  const varying = keys.filter((k) => rows.some((r) => r.key[k] !== rows[0].key[k]))
+  const varying = keys.filter((k) => k === 'metric' || rows.some((r) => r.key[k] !== rows[0].key[k]))
   return varying.length ? varying : keys
 })
+
+function keyLabel(k: string): string {
+  return k === 'metric' && props.result.row_keys[0] === 'metric' ? t('views.metric') : baseKeyLabel(k)
+}
+
+/** metric_rows columns are "<axis>=<at>"; under the axis header the value
+ *  alone reads better. */
+function columnLabel(c: ViewColumn): string {
+  return c.at !== undefined && byAxis.value ? formatKey(c.at) : c.name
+}
+const byAxis = computed(() => props.result.row_keys[0] === 'metric' && !!props.result.pivot_axis)
+
+/** The direction an estimate row declares (runq.stats better=). */
+function rowBetter(row: ViewRow): string {
+  return row.cells.find((c) => c.better)?.better ?? ''
+}
 const hasState = computed(() => props.result.rows.some((r) => r.state))
 
-/** Consecutive pivot groups → one spanning header cell each. */
+/** Consecutive pivot groups → one spanning header cell each; a metric_rows
+ *  table gets its axis name over all its columns. */
 const groups = computed(() => {
+  if (byAxis.value) return [{ label: props.result.pivot_axis, span: props.result.columns.length }]
   const out: { label: unknown; span: number }[] = []
   for (const c of props.result.columns) {
     if (c.group === undefined || c.group === null) return []
@@ -150,6 +177,7 @@ function cellTitle(cell: ViewCell): string {
 }
 .vt td { border-bottom: 0.5px solid rgb(var(--v-theme-outline-variant), 0.5); }
 .vt tbody tr:hover td { background: rgb(var(--v-theme-on-surface), 0.035); }
+.vt tbody td.vt-hot { background: rgb(var(--v-theme-primary), 0.12); box-shadow: inset 0 0 0 1px rgb(var(--v-theme-primary), 0.5); }
 .vt-key { text-align: left; }
 .vt td.vt-key { color: rgb(var(--v-theme-on-surface)); }
 .vt-num { text-align: right; }

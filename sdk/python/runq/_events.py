@@ -3,12 +3,12 @@
 File contract: each stream has its own file so the semantics split at the
 API boundary and downstream never disambiguates:
 
-- ``metrics.jsonl`` — pure per-step metric stream (``report`` /
-  ``report``); unbounded, summarized on ingest (+ pyramid).
-- ``results.jsonl`` — ``runq.record`` data plane; bounded facts,
-  ingested in full (see :mod:`runq._record`). ``results.<producer>.jsonl``
-  is the same format, written for a task by a script that read the job
-  with ``runq.job()``.
+- ``metrics.jsonl`` — pure per-step metric stream (``runq.log``);
+  unbounded, summarized on ingest (+ pyramid).
+- ``results.jsonl`` — ``runq.result`` data plane; bounded facts,
+  ingested in full (see :mod:`runq._result`). ``results.<producer>.jsonl``
+  is the same format, written for a version by a script that read the
+  experiment with ``runq.experiment()``.
 
 JSONL contract for metric events (matches daemon-side reap):
 
@@ -25,7 +25,7 @@ Step 6 retired the hidden monotonic auto-step counter. The single
 source of truth for "what step is this?" is ``ctx.current_step``,
 maintained by:
 
-- ``report(metrics, step=N)`` — explicit step writes back to ctx.
+- ``log(metrics, step=N)`` — explicit step writes back to ctx.
 - ``loop()`` (step 8) — sets it once per iteration.
 
 When the caller omits ``step`` and ctx has never been written to,
@@ -76,8 +76,8 @@ def _append_jsonl_line(path, obj: dict, kind: str) -> None:
 def _append_event(event: dict) -> None:
     """Append one metric event to metrics.jsonl.
 
-    Result records never come through here — ``record`` writes through
-    :class:`runq._record._ResultsWriter`.
+    Result records never come through here — ``result`` writes through
+    :class:`runq._result._ResultsWriter`.
     """
     if event.get("type") != "metric":
         raise ValueError(f"runq: unsupported event type {event.get('type')!r}")

@@ -113,6 +113,22 @@ def run():
             def record(point):
                 raw.seek(point[1])
                 return json.loads(raw.read(point[2]))
+            def band(r):
+                # The shown error of a runq.stats estimate: (lo, hi), else None.
+                est = r.get("est")
+                v = r.get("value")
+                if not isinstance(est, dict) or not isinstance(v, (int, float)):
+                    return None
+                for kind in est.get("show") or []:
+                    if kind in ("STD", "STDERR"):
+                        spread = est.get(kind.lower())
+                        if isinstance(spread, (int, float)):
+                            return [v - spread, v + spread]
+                    if kind == "CI95":
+                        ci = est.get("ci95")
+                        if isinstance(ci, list) and len(ci) == 2:
+                            return ci
+                return None
             if stream == "metrics":
                 series = []
                 for key, item in sorted(index["series"].items()):
@@ -123,8 +139,16 @@ def run():
                     if len(points) > count:
                         points = [points[round(i*(len(points)-1)/(count-1))] for i in range(count)]
                     records = [record([p[2], p[0], p[1]]) for p in points]
-                    series.append({"key": key, "step": [r["step"] for r in records],
-                                   "value": [r["value"] for r in records], "signature": signature})
+                    item = {"key": key, "step": [r["step"] for r in records],
+                            "value": [r["value"] for r in records], "signature": signature}
+                    bands = [band(r) for r in records]
+                    if any(b is not None for b in bands):
+                        item["lo"] = [b and b[0] for b in bands]
+                        item["hi"] = [b and b[1] for b in bands]
+                    meta = records[-1].get("series") if records else None
+                    if isinstance(meta, dict):
+                        item["series"] = meta
+                    series.append(item)
                 return {"series": series}
             trees = [item.get(axis) for item in index["series"].values() if item.get(axis)]
             if not trees:

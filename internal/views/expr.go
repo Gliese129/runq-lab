@@ -300,6 +300,9 @@ func (e *Expr) Eval(m map[string]any) any {
 	return nil
 }
 func number(v any) (float64, bool) {
+	if est, ok := asEst(v); ok { // an estimate computes as its value
+		v = est["value"]
+	}
 	switch n := v.(type) {
 	case float64:
 		return n, true

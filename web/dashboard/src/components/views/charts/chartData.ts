@@ -10,12 +10,27 @@ export interface Point {
   y: number | null
   /** ± half-width from the aggregate (std), when present */
   err: number | null
+  /** the band of an estimate's shown error (runq.stats), when present */
+  lo: number | null
+  hi: number | null
   n: number | null
   color: unknown
   facet: unknown
   rank?: number
   /** label for tradeoff/progress rows */
   label: string
+  /** where the value sits in the result (linked hover with the table) */
+  row: number
+  col: number
+}
+
+/** A chart slot: one name, or several read together (a cell named by its
+ *  params). */
+export type Slot = string | string[] | undefined
+
+export function slotNames(slot: unknown): string[] {
+  if (Array.isArray(slot)) return slot.map(String)
+  return slot === undefined || slot === null || slot === '' ? [] : [String(slot)]
 }
 
 export function isColumn(r: ViewResult, slot: string): boolean {
@@ -31,29 +46,52 @@ function pivoted(r: ViewResult): boolean {
   return r.columns.some((c) => c.group !== undefined && c.group !== null)
 }
 
+/** metric_rows: every row is one metric (key "metric"), columns are the
+ *  values of the pivot axis (c.at). */
+export function metricRows(r: ViewResult): boolean {
+  return r.row_keys[0] === 'metric'
+}
+
 /** One point per (row, matching y column); category slots read row keys, or
- *  the column group when the slot is not a row key and the table pivots. */
-export function points(r: ViewResult, slots: { x?: string; y: string; color?: string; facet?: string }): Point[] {
+ *  the column group when the slot is not a row key and the table pivots.
+ *  In a metric_rows table y names metrics (rows) and x the columns' axis. */
+export function points(r: ViewResult, slots: { x?: string; y: Slot; color?: Slot; facet?: string }): Point[] {
   const out: Point[] = []
-  const ys = r.columns.map((c, i) => ({ c, i })).filter(({ c }) => c.name === slots.y)
-  for (const row of r.rows) {
-    if (row.empty) continue
-    for (const { c, i } of ys) {
+  const ys = slotNames(slots.y)
+  const byRow = metricRows(r)
+  const colorKeys = slotNames(slots.color)
+  r.rows.forEach((row, ri) => {
+    if (row.empty) return
+    if (byRow && !ys.includes(String(row.key.metric))) return
+    r.columns.forEach((c, ci) => {
+      if (!byRow && !ys.includes(c.name)) return
       const read = (slot?: string) => {
         if (!slot) return undefined
         if (slot in row.key) return row.key[slot]
+        if (byRow) return slot === r.pivot_axis ? c.at : undefined
         if (pivoted(r)) return c.group
         return undefined
       }
-      const cell = row.cells[i]
-      const label = r.row_keys.filter((k) => k !== slots.color && k !== slots.facet && k !== slots.x).map((k) => formatKey(row.key[k], r.key_formats?.[k])).join(' · ')
+      const color = colorKeys.length > 1 ? colorKeys.map((k) => formatKey(read(k), r.key_formats?.[k])).join(' · ') : read(colorKeys[0])
+      const cell = row.cells[ci]
+      const skip = new Set([...colorKeys, slots.facet, slots.x])
+      const label = r.row_keys.filter((k) => !skip.has(k)).map((k) => formatKey(row.key[k], r.key_formats?.[k])).join(' · ')
       out.push({
-        x: read(slots.x), y: cellNumber(cell), err: typeof cell?.std === 'number' ? cell.std : null, n: cell?.n ?? null,
-        color: read(slots.color), facet: read(slots.facet), rank: cell?.rank, label,
+        x: read(slots.x), y: cellNumber(cell), err: typeof cell?.std === 'number' && !cell.show ? cell.std : null,
+        lo: typeof cell?.lo === 'number' ? cell.lo : null, hi: typeof cell?.hi === 'number' ? cell.hi : null,
+        n: cell?.n ?? null, color, facet: read(slots.facet), rank: cell?.rank, label, row: ri, col: ci,
       })
-    }
-  }
+    })
+  })
   return out
+}
+
+/** Whether the y values print as percentages: a pct column format, or
+ *  estimates in unit pct. */
+export function yIsPct(r: ViewResult, y: Slot): boolean {
+  const ys = slotNames(y)
+  if (ys.some((name) => isPct(column(r, name)))) return true
+  return r.rows.some((row) => (!metricRows(r) || ys.includes(String(row.key.metric))) && row.cells.some((c) => c.unit === 'pct'))
 }
 
 /** Numeric value of a named column for each non-empty row. */

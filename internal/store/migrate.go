@@ -235,6 +235,14 @@ func (s *Store) addMissingColumns(ctx context.Context) error {
 	if err := addColumnIfMissing(ctx, s.db, "jobs", "job_json_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("add jobs.job_json_hash: %w", err)
 	}
+	// Result rows from a runq.stats series name their index axes; a
+	// section's schema keeps each metric's kind, unit and better.
+	if err := addColumnIfMissing(ctx, s.db, "record_latest", "index_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return fmt.Errorf("add record_latest.index_json: %w", err)
+	}
+	if err := addColumnIfMissing(ctx, s.db, "record_schema", "kinds_json", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
+		return fmt.Errorf("add record_schema.kinds_json: %w", err)
+	}
 	return s.backfillFirstBatches(ctx)
 }
 

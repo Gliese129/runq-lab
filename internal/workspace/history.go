@@ -29,6 +29,20 @@ type ExactSeries struct {
 	Step      []float64 `json:"step"`
 	Value     []float64 `json:"value"`
 	Signature string    `json:"signature"`
+	// Lo/Hi: the band of a runq.stats estimate's shown error, per point
+	// (null where a point has none). Series: the runq.stats series this
+	// curve is one index value of (runq.log writes it).
+	Lo     []*float64   `json:"lo,omitempty"`
+	Hi     []*float64   `json:"hi,omitempty"`
+	Series *CurveSeries `json:"series,omitempty"`
+}
+
+// CurveSeries places a curve within a runq.stats series logged with
+// runq.log: key "<name>@<at>" is index value at of axis.
+type CurveSeries struct {
+	Name string `json:"name"`
+	Axis string `json:"axis"`
+	At   any    `json:"at"`
 }
 type ExactHistory struct {
 	By     string        `json:"by"`

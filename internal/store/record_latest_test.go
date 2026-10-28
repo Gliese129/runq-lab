@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -90,5 +91,50 @@ func TestRecordLatestStepOrderAndFrozenSchema(t *testing.T) {
 	}
 	if len(warnings) == 0 {
 		t.Fatal("schema drift should surface a warning")
+	}
+}
+
+// An est keeps its object and the row its index; a metric whose kind,
+// unit or better changes later warns, like a key change.
+func TestRecordLatestEstKindsAndIndex(t *testing.T) {
+	st, ctx := seedRecordJob(t)
+	est := `{"pass":{"value":0.5,"stderr":0.04,"n":125,"show":["STDERR"],"unit":"pct","better":"higher"}}`
+	r := rec(1, `{"k":4}`, est)
+	r.IndexJSON = `["k"]`
+	later := rec(2, `{"k":8}`, `{"pass":0.6}`)
+	later.IndexJSON = `["k"]`
+	if err := st.ApplyResultsIngestDelta(ctx, "t1", false, []ResultRecordRow{r, later}, 2, FileIngestMark{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ListResultRecords(ctx, "j")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].IndexJSON != `["k"]` || !strings.Contains(got[0].MetricsJSON, `"stderr":0.04`) {
+		t.Fatalf("rows = %+v", got)
+	}
+	warnings, err := st.RecordWarnings(ctx, "j")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 || warnings[0] != `t1/val: metric "pass" was est, unit pct, better higher, now number` {
+		t.Fatalf("warnings = %q", warnings)
+	}
+}
+
+func TestCurvePinsKeepOrderPerProject(t *testing.T) {
+	st, ctx := seedRecordJob(t)
+	if err := st.SetCurvePins(ctx, "p", []string{"train/reward", "eval/pass@4", "train/reward", ""}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.CurvePins(ctx, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "train/reward,eval/pass@4" {
+		t.Fatalf("pins = %v", got)
+	}
+	if other, _ := st.CurvePins(ctx, "q"); len(other) != 0 {
+		t.Fatalf("another project's pins = %v", other)
 	}
 }

@@ -42,6 +42,7 @@ type Result struct {
 //
 //	metrics.jsonl — {"type":"metric","key":"loss","value":0.42,"step":100,"ts":...}
 //	results.jsonl — {"ts":...,"axes":{"model":"a","step":2000},"metrics":{"math":24.8}}
+//	                (a metric may be an est object; "index":["k"] names series axes)
 //
 // Lifecycle events (checkpoint / preempted / loop_break, written by SDKs
 // before v0.6.0 to events.jsonl or a mixed metrics.jsonl) are no longer
@@ -143,6 +144,7 @@ type resultLine struct {
 	Section string          `json:"section"`
 	TS      int64           `json:"ts"`
 	Axes    json.RawMessage `json:"axes"`
+	Index   []string        `json:"index"` // axes from a runq.stats series
 	Metrics json.RawMessage `json:"metrics"`
 }
 
@@ -175,13 +177,16 @@ func (c *resultCollector) line(lineBytes []byte) {
 		return
 	}
 	c.parsed++
-	// Every snapshot participates in the latest-record projection.
-	{
-		c.rows = append(c.rows, store.ResultRecordRow{
-			TaskID: c.target.TaskID, JobID: c.target.JobID,
-			TS: rl.TS, AxesJSON: axes, MetricsJSON: metrics, Section: rl.Section,
-		})
+	index := ""
+	if len(rl.Index) > 0 {
+		raw, _ := json.Marshal(rl.Index)
+		index = string(raw)
 	}
+	// Every snapshot participates in the latest-record projection.
+	c.rows = append(c.rows, store.ResultRecordRow{
+		TaskID: c.target.TaskID, JobID: c.target.JobID,
+		TS: rl.TS, AxesJSON: axes, MetricsJSON: metrics, IndexJSON: index, Section: rl.Section,
+	})
 }
 
 // normalizeJSONObject validates raw as a JSON object and compacts it.

@@ -23,6 +23,7 @@ import (
 var (
 	runqInvocation = regexp.MustCompile(`(?:^|[^\w./-])runq((?:\s+[^\s|;&#` + "`" + `]+)*)`)
 	inlineCodeSpan = regexp.MustCompile("`([^`]+)`")
+	pythonImport   = regexp.MustCompile(`\bfrom\s+runq\s+import\b`)
 )
 
 type docSource struct {
@@ -162,6 +163,8 @@ func TestDocsAndSkillShowOnlyRealCommandsAndFlags(t *testing.T) {
 			if isExemptLine(line) {
 				continue
 			}
+			// `from runq import stats` is Python, not a CLI call.
+			line = pythonImport.ReplaceAllString(line, "")
 			for _, frag := range codeFragments(line, inFence) {
 				for _, m := range runqInvocation.FindAllStringSubmatch(frag, -1) {
 					checkInvocation(t, src.name+":"+strconv.Itoa(n+1), m[1])

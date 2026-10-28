@@ -795,5 +795,19 @@
   "drafts.append": "Append {n} runs",
   "drafts.append_title": "Append to this experiment?",
   "drafts.append_body": "{n} versions will be added to {id} on {target}; cells that succeeded or still run are skipped.",
-  "drafts.nothing_to_append": "Every cell is already in the experiment"
+  "drafts.nothing_to_append": "Every cell is already in the experiment",
+  "job.tab_curves": "Curves",
+  "views.default_views": "By section",
+  "views.default_hint": "Laid out from what the results record (index axes, shown error, unit, better). To change it, start from",
+  "views.metric": "metric",
+  "views.better_higher": "higher is better",
+  "views.better_lower": "lower is better",
+  "curves.none": "No curves yet — log them in the training script with",
+  "curves.pinned": "Pinned",
+  "curves.pinned_hint": "shown on top for every experiment of this project",
+  "curves.ungrouped": "(no log_group)",
+  "curves.n_curves": "{n} charts",
+  "curves.pin": "Pin on top for this project",
+  "curves.unpin": "Unpin",
+  "curves.unreadable": "Curves of {cells} could not be read (their target is not reachable from here)."
 }

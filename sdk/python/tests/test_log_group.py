@@ -46,7 +46,7 @@ def test_log_group_cm_prefixes_report(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
     with runq.log_group("train"):
-        runq.report({"loss": 0.5}, step=1)
+        runq.log({"loss": 0.5}, step=1)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert events[0]["key"] == "train/loss"
 
@@ -55,8 +55,8 @@ def test_log_group_cm_pops_prefix_on_exit(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
     with runq.log_group("train"):
-        runq.report({"loss": 0.5}, step=1)
-    runq.report({"untagged": 9.0}, step=2)
+        runq.log({"loss": 0.5}, step=1)
+    runq.log({"untagged": 9.0}, step=2)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     keys = [e["key"] for e in events]
     assert keys == ["train/loss", "untagged"]
@@ -72,7 +72,7 @@ def test_log_group_cm_pops_prefix_after_exception(clean_env, tmp_path, monkeypat
     except RuntimeError:
         pass
 
-    runq.report({"after_crash": 1.0}, step=1)
+    runq.log({"after_crash": 1.0}, step=1)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert events[0]["key"] == "after_crash"   # NOT "train/after_crash"
 
@@ -81,10 +81,10 @@ def test_log_group_cm_nesting(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
     with runq.log_group("outer"):
-        runq.report({"a": 1.0}, step=0)
+        runq.log({"a": 1.0}, step=0)
         with runq.log_group("inner"):
-            runq.report({"b": 2.0}, step=1)
-        runq.report({"c": 3.0}, step=2)
+            runq.log({"b": 2.0}, step=1)
+        runq.log({"c": 3.0}, step=2)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert [e["key"] for e in events] == ["outer/a", "outer/inner/b", "outer/c"]
 
@@ -97,7 +97,7 @@ def test_log_group_decorator_prefixes_report(clean_env, tmp_path, monkeypatch):
 
     @runq.log_group("train")
     def step():
-        runq.report({"loss": 0.5}, step=1)
+        runq.log({"loss": 0.5}, step=1)
 
     step()
     events = _read_events(tmp_path / "runq_metrics.jsonl")
@@ -110,10 +110,10 @@ def test_log_group_decorator_pops_after_return(clean_env, tmp_path, monkeypatch)
 
     @runq.log_group("train")
     def step():
-        runq.report({"loss": 0.5}, step=1)
+        runq.log({"loss": 0.5}, step=1)
 
     step()
-    runq.report({"after": 1.0}, step=2)
+    runq.log({"after": 1.0}, step=2)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert [e["key"] for e in events] == ["train/loss", "after"]
 
@@ -124,12 +124,12 @@ def test_log_group_decorator_pops_after_exception(clean_env, tmp_path, monkeypat
 
     @runq.log_group("train")
     def crash():
-        runq.report({"before_crash": 1.0}, step=1)
+        runq.log({"before_crash": 1.0}, step=1)
         raise RuntimeError("boom")
 
     with pytest.raises(RuntimeError):
         crash()
-    runq.report({"after": 2.0}, step=2)
+    runq.log({"after": 2.0}, step=2)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     keys = [e["key"] for e in events]
     assert keys == ["train/before_crash", "after"]
@@ -151,7 +151,7 @@ def test_log_group_applies_to_report(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
     with runq.log_group("train"):
-        runq.report({"loss": 0.5, "acc": 0.9}, step=1)
+        runq.log({"loss": 0.5, "acc": 0.9}, step=1)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     keys = sorted(e["key"] for e in events)
     assert keys == ["train/acc", "train/loss"]

@@ -58,8 +58,8 @@ ctx = runq.context()
 kl = ctx.params.get("kl", 0.0)          # swept value, or the default when run by hand
 seed = ctx.params.get("seed", 0)
 ...
-runq.report({"loss": loss}, step=step)               # dashboard curves
-runq.record({"acc": acc}, kl=kl, seed=seed)          # one comparable row per cell
+runq.log({"loss": loss}, step=step)               # dashboard curves
+runq.result({"acc": acc}, kl=kl, seed=seed)          # one comparable row per cell
 # outputs → ctx.output_dir, checkpoints → ctx.checkpoint_dir (kept across retries)
 ```
 
@@ -107,7 +107,7 @@ runq submit dr… --json      # {"job_id": "ex…", "total_tasks": 6}
 runq ps <job_id> --json                    # task states (cached; add --fresh to probe now)
 runq logs <task_id> --grep 'loss' -n 20    # last matching lines, grepped on the cluster
 runq show <task_id>                        # command, dirs, scheduler id, links
-runq view --experiment <job_id>                   # results from runq.record, one row per cell
+runq view --experiment <job_id>                   # results from runq.result, a view per section
 ```
 
 The dashboard shows the same experiments, logs, curves and results. `pending` means

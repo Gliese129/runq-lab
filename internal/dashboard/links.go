@@ -1,24 +1,10 @@
 package dashboard
 
-import (
-	"net"
-	"net/url"
-	"strings"
-)
+import "github.com/gliese129/runq-lab/internal/utils"
 
 // BaseURL turns the dashboard listen address into the URL a browser on
-// the same machine opens. A wildcard bind (0.0.0.0, ::, ":8077") is
-// reachable on loopback, so the link points there.
-func BaseURL(listen string) string {
-	host, port, err := net.SplitHostPort(listen)
-	if err != nil {
-		return "http://" + listen
-	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	return "http://" + net.JoinHostPort(host, port)
-}
+// the same machine opens (utils.DashboardBase).
+func BaseURL(listen string) string { return utils.DashboardBase(listen) }
 
 // Page paths mirror web/dashboard/src/plugins/router.ts.
 
@@ -55,11 +41,5 @@ func ViewURL(base, project, name string) string {
 }
 
 func pageURL(base string, segments ...string) string {
-	escaped := make([]string, len(segments))
-	for i, s := range segments {
-		escaped[i] = url.PathEscape(s)
-	}
-	// The SPA uses hash routing (createWebHashHistory): a plain path would
-	// load index.html and land on the Overview.
-	return strings.TrimRight(base, "/") + "/#/" + strings.Join(escaped, "/")
+	return utils.DashboardPage(base, segments...)
 }

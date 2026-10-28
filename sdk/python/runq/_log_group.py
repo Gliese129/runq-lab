@@ -21,18 +21,18 @@ def log_group(prefix: str):
 
         # Context manager
         with runq.log_group("train"):
-            runq.report({"loss": l})   # key → "train/loss"
+            runq.log({"loss": l})   # key → "train/loss"
 
         # Decorator
         @runq.log_group("train")
         def train_one_epoch():
-            runq.report({"loss": l})   # key → "train/loss"
+            runq.log({"loss": l})   # key → "train/loss"
 
     Nesting composes — inner prefixes append with ``/`` separator::
 
         with runq.log_group("train"):
             with runq.log_group("step1"):
-                runq.report({"loss": l})   # → "train/step1/loss"
+                runq.log({"loss": l})   # → "train/step1/loss"
 
     Validation
     ----------

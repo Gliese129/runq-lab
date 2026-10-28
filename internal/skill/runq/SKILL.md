@@ -59,7 +59,7 @@ agent) or you are about to set one up, read `references/heartbeat.md` first.
 | One experiment (cell table) / version (command, dirs, scheduler id, times, links) / project | `runq show <ex…\|ex…/<cell>[@vN]\|tk…\|pj…>` |
 | Log tail | `runq logs <ex…/<cell>[@vN] \| tk…> -n 200` (no `@vN` = the version the cell shows) |
 | Last matching log lines | `runq logs <ex…/<cell>> --grep 'loss\|step' -n 20` (ERE, runs on the target) |
-| Result rows from `runq.record` | `runq view --experiment <ex…>` (a table per scoring script and section, one row per cell; `--json`, `--format csv`) |
+| Result rows from `runq.result` | `runq view --experiment <ex…>` (a view per scoring script and section, laid out from the rows; `--spec` prints it as editable YAML; `--json`, `--format csv`) |
 | Kill | `runq kill <ex…\|ex…/<cell>[@vN]\|tk…>` |
 | Rename an experiment or project (ids never change) | `runq rename <ex…\|pj…\|project-name> "<new name>"` |
 | Sections of a project / file an experiment | `runq section ls <project>` · `runq draft job.yaml -s <section>` · `runq section move <section> <ex…>` |
@@ -237,7 +237,7 @@ multi-stage prepare→train→eval with skip-if-done, in-version sharding, GPU
 telemetry. Implement those in the training code (Python) where possible, and
 mention it in your report so the researcher knows where that logic lives.
 
-For scoring alongside an experiment, run a script yourself (login node, or your own iqrsh/tmux session) that reads it with `runq.experiment("<experiment_dir>")` and records per cell (`cell.selected.record(...)`); see `references/views.md`.
+For scoring alongside an experiment, run a script yourself (login node, or your own iqrsh/tmux session) that reads it with `runq.experiment("<experiment_dir>")` and writes results per cell (`cell.selected.result(...)`, with `runq.stats` for pass@k and errors); see `references/views.md`.
 
 A version runs once. On failure: inspect the error, fix it, then run the cell again with `runq draft job.yaml --into <ex…>` (same cell name) — it becomes the cell's next version; preview before submitting.
 
@@ -352,22 +352,28 @@ first; otherwise sync your edits to the target before submitting and say so.
 `.rsync` uses rsync include-file semantics: `/src/**` whole tree,
 `/configs/**.yaml` files, `/data/` traversal only, `!pattern` always excludes.
 
-## 10. W&B
+## 10. Curves, results and W&B
 
 ```python
 run = wandb.init(**ctx.wandb_like_cfg)   # project/entity/tags from the project's wandb: block
-runq.link("wandb", run)                   # the dashboard and `runq show <tk…>` link to the run
+runq.link("wandb", run)                   # the dashboard links the run; runq.log now forwards to it
+runq.log({"reward": stats.est(rewards)}, step=step)               # a curve, here and in W&B
+runq.result({"pass": stats.pass_at_k(correct)}, section="math")   # result rows, runq only
 ```
 
-Call `runq.link("wandb", run)` right after init so the researcher can open the run from
-the dashboard. Rank gating, offline runs, directories: `references/sdk.md`.
+Use `runq.log` for training curves and `runq.result` for the rows a table shows;
+`from runq import stats` gives values their error (std / stderr / CI95, pass@k,
+maj@k) without a loop over k. Call `runq.link("wandb", run)` right after init so
+the researcher can open the run from the dashboard; log once through `runq.log`
+rather than calling `run.log` too. Rank gating, offline runs, directories:
+`references/sdk.md`.
 
 ## 11. More
 
 - Heartbeats: priorities, setup questions, fault vs deviation, quiet ticks → `references/heartbeat.md`
 - HPC targets, templates, SSH, reservations (`qsub -ar`) → `references/hpc.md`
 - Views, paper tables, charts and scoring scripts (`runq.experiment()`) → `references/views.md`
-- SDK: params, metrics, results, directories, W&B → `references/sdk.md`
+- SDK: params, curves (`runq.log`), results (`runq.result`), `runq.stats`, directories, W&B → `references/sdk.md`
 - Error message → what to do → `references/troubleshooting.md`
 
 (`runq skill show references/hpc.md` prints any of them.)

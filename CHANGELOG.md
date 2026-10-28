@@ -4,6 +4,46 @@
 
 ### Breaking
 
+- SDK: `runq.report` → `runq.log` (training curves, `metrics.jsonl`) and
+  `runq.record` → `runq.result` (result rows, `results.jsonl`); a version's
+  `.record()` → `.result()`. The old names work with a DeprecationWarning until
+  the next release. `runq.log` forwards to a W&B run linked with
+  `runq.link("wandb", run)` (`run.log(dict, step=)`, duck-typed, wandb never
+  imported); `runq.result` is not mirrored — the run's summary gets `runq` =
+  the experiment's results page (`RUNQ_RESULTS_URL`, set at submit when runq
+  serves the dashboard) or the version reference `ex…/<cell>@vN`. If a script
+  also calls `run.log` for the same metrics, drop that call.
+  - `ctx.experiment_id`, `ctx.cell`, `ctx.version` (`ctx.job_id` deprecated);
+    `exp.cells` is the main entry with `cell.params`; `JobTask` is `Version`;
+    `exp.tasks` is deprecated (`[c.selected for c in exp.cells]`).
+- Default views (`runq view --experiment`, GET `/jobs/{id}/view`, the Results
+  tab) are laid out from the rows: a section without an index axis is now a
+  metric / value list (one row per metric and cell) instead of one row per cell
+  with a column per metric. `--spec` prints the views as editable YAML; GET
+  `/jobs/{id}/view` adds `specs`. Rows of views without `expect` sort by their
+  keys in `rows` order, numbers by value.
+
+### Added
+
+- `runq.stats` (needs numpy; `import runq` does not): `est()` (mean with std,
+  stderr, n, CI95 — normal or bootstrap), `pass_at_k()` (unbiased, per problem,
+  stderr across problems) and `maj_at_k()` (exact over k-subsets, Monte Carlo
+  with seed 0 beyond 10 000). Flags `show` (STD | STDERR | CI95 | N), `unit`
+  (PCT, COUNT), `better` (HIGHER, LOWER), `ci` (NORMAL, BOOTSTRAP). A series
+  given to `runq.result` writes one row per index value and marks the axis in
+  `"index"`; series with different index, or next to plain values, raise.
+- Results store est values and index axes; a section remembers each metric's
+  kind, unit and better and warns when they change. Views print an est by its
+  own show / unit / better (bold best per metric and column), and draw its
+  shown error as a band. Without a column `format`, an est prints rounded to
+  its error's second significant digit (`43.0% ± 2.3%`); other numbers stay in
+  full decimal. View spec: `metric_rows`, chart `y` / `color` lists.
+- Dashboard: Results → By section (default views with linked table ↔ chart
+  hover, LaTeX / Markdown / CSV per block); a Curves tab per experiment —
+  sections by `log_group` prefix, a `runq.stats` series as one chart, cells
+  overlaid; curves can be pinned per project (`PUT /jobs/{id}/curve-pins`,
+  shown on top for every experiment of the project). GET `/jobs/{id}/curves`.
+
 - Experiments, cells, submissions and versions. A job is now an experiment
   (new ids `ex…`; `jb…` ids keep working), one table the researcher compares;
   a cell is one named combination in it (job.yaml `cells:` rows named with

@@ -1,37 +1,49 @@
-"""runq.record — result-record emission to results.jsonl.
+"""runq.result — result rows, written to results.jsonl.
 
-The same writer serves ``runq.job()`` tasks: ``job.tasks[i].record(...)``
+The same writer serves ``runq.experiment()`` versions: ``version.result(...)``
 writes ``<task_dir>/results.<producer>.jsonl`` with identical validation and
 schema freezing (see :class:`_ResultsWriter`).
 
-``record(metrics, **axes)`` is the data-plane counterpart of ``report``:
-``report`` streams unbounded per-step training metrics (summarized on
-ingest), ``record`` emits evaluation results and progress snapshots.
+``result(values, section=, **axes)`` is the counterpart of ``runq.log``:
+``log`` streams per-step training curves (summarized on ingest), ``result``
+writes the rows a view shows — evaluation results and progress snapshots.
 The controller keeps the latest per source, section and axis identity;
-the raw file retains history. Step orders snapshots but is not identity. One line per call in ``results.jsonl``:
+the raw file retains history. Step orders snapshots but is not identity.
+One line per row in ``results.jsonl``::
 
-    {"ts":1700000000,"axes":{"model":"a","step":2000},"metrics":{"math":24.8}}
+    {"ts":1700000000,"section":"math","axes":{"model":"a"},"metrics":{"acc":24.8}}
 
-- ``metrics``: mapping of name → finite number. ``None`` / ``{}`` is
-  legal (an axes-only record).
+- ``values``: mapping of name → finite number, a :class:`runq.stats.Est`,
+  or a :class:`runq.stats.Series`. ``None`` / ``{}`` is legal (an axes-only
+  record). An est is written as an object::
+
+      {"value":0.5598,"stderr":0.0408,"std":0.456,"n":125,"ci95":[0.48,0.64],
+       "show":["STDERR","N"],"unit":"pct","better":"higher"}
+
+- A series writes one row per index value, with its axis (``k``) added to
+  the row's axes and named in ``"index":["k"]`` — views plot along the axes
+  listed there and nowhere else. All series in one call share one index
+  (the same axis and values), and a call with series holds series only:
+  put plain values in a call of their own. Nothing is filled or broadcast.
 - ``axes``: identity / coordinate keys (``model``, ``step``, ``data``,
   ...). Values may be str, bool, or finite numbers; numpy scalars are
   coerced via ``.item()``.
 
-Unlike ``report``, ``record`` never runs early-stop hooks and never
-touches ``ctx.current_step`` — it is pure data emission. The one
-convenience: when the caller does not pass ``step`` and the training
-loop's cursor (``ctx.current_step``) is set, it is auto-filled into
-axes.
+Unlike ``log``, ``result`` never touches ``ctx.current_step`` — it is pure
+data emission. The one convenience: when the caller does not pass ``step``
+and the training loop's cursor (``ctx.current_step``) is set, it is
+auto-filled into axes.
 
 Leniency doctrine
 -----------------
-``record`` is typically called at eval time, AFTER the expensive work
+``result`` is typically called at eval time, AFTER the expensive work
 already happened — crashing there would forfeit a finished run over a
-logging nit. So invalid keys are dropped individually with a warning
+logging nit. So invalid values are dropped individually with a warning
 and the record is still written as long as at least one provided key
 survived (a call with no keys at all is also legal). Only a call whose
-every provided key is invalid is discarded outright.
+every provided key is invalid is discarded outright. The exception is the
+shape of a call with series (mixed index, series next to scalars): that is
+a bug in the script, the same on every run, so it raises.
 """
 from __future__ import annotations
 
@@ -45,6 +57,7 @@ from pathlib import Path
 
 from ._context import get_ctx
 from ._events import _append_jsonl_line
+from ._values import Est, Series
 
 
 def _coerce_scalar(value):
@@ -75,21 +88,53 @@ def _coerce_scalar(value):
 
 
 def _coerce_metric(value):
-    """Metric values must be finite numbers; coerced to float for the wire."""
+    """A finite number (as float), or an est (as its JSON object)."""
+    if isinstance(value, Est):
+        if value.value is not None and not math.isfinite(value.value):
+            return False, None
+        return True, value.to_json()
     ok, v = _coerce_scalar(value)
     if not ok or isinstance(v, str):
         return False, None
     return True, None if v is None else float(v)
 
 
-def record(metrics: dict | None = None, *, section: str | None = None, **axes) -> None:
-    """Record one result or progress snapshot.
+def split_series(values, axes: dict, fn: str):
+    """``values`` → [(row values, row axes, index)], one per index value of
+    its series (or the call itself when it holds none)."""
+    if not isinstance(values, dict):
+        return [(values, axes, [])]
+    series = {k: v for k, v in values.items() if isinstance(v, Series)}
+    if not series:
+        return [(values, axes, [])]
+    plain = sorted(str(k) for k in values if k not in series)
+    if plain:
+        raise ValueError(
+            f"{fn}: {', '.join(map(repr, plain))} are not series but {', '.join(map(repr, sorted(series)))} "
+            f"are; a series writes one row per index value, so put the other values in a {fn}() call of their own"
+        )
+    (first, s0), *rest = series.items()
+    for name, s in rest:
+        if (s.axis, s.index) != (s0.axis, s0.index):
+            raise ValueError(
+                f"{fn}: series index differs — {first!r} has {s0.axis}={list(s0.index)}, "
+                f"{name!r} has {s.axis}={list(s.index)}; give them the same index or use separate calls"
+            )
+    if s0.axis in axes:
+        raise ValueError(f"{fn}: axis {s0.axis!r} is the series index; do not pass it as an axis too")
+    return [({k: s.values[i] for k, s in series.items()}, {**axes, s0.axis: at}, [s0.axis])
+            for i, at in enumerate(s0.index)]
+
+
+def result(values: dict | None = None, *, section: str | None = None, **axes) -> None:
+    """Write result rows for this version.
 
     Parameters
     ----------
-    metrics :
-        Mapping of metric name → finite number. ``None`` (or ``{}``) is
-        legal — the record then carries axes only.
+    values :
+        Mapping of name → finite number, :class:`runq.stats.Est` or
+        :class:`runq.stats.Series` (one row per index value). ``None``
+        (or ``{}``) is legal — the record then carries axes only.
     section :
         Explicit section name, or a hash of the axis and metric key names.
         First keys are frozen: missing keys become null, extra keys warn and
@@ -99,13 +144,22 @@ def record(metrics: dict | None = None, *, section: str | None = None, **axes) -
         ``model="baseline-8b"``, ``step=2000``, ``data="dclm"``. Values
         may be str, bool, or finite numbers (numpy scalars are coerced).
 
-    Returns nothing and never raises on bad values — see the module
-    docstring's leniency doctrine. Requires :func:`runq.context` to have
-    been called (same as every other logging helper).
+    Bad values warn and are dropped (see the module docstring); a call
+    that mixes series with scalars or series of different index raises.
+    Requires :func:`runq.context` to have been called.
     """
     ctx = get_ctx()
-    _writer(ctx.results_file).write(
-        metrics, section, axes, current_step=ctx.current_step, stacklevel=3
+    _writer(ctx.results_file).write_values(
+        values, section, axes, current_step=ctx.current_step, fn="runq.result", stacklevel=3
+    )
+
+
+def record(metrics: dict | None = None, *, section: str | None = None, **axes) -> None:
+    """Deprecated: renamed :func:`runq.result`."""
+    warnings.warn("runq.record() is renamed runq.result()", DeprecationWarning, stacklevel=2)
+    ctx = get_ctx()
+    _writer(ctx.results_file).write_values(
+        metrics, section, axes, current_step=ctx.current_step, fn="runq.result", stacklevel=3
     )
 
 
@@ -148,7 +202,11 @@ class _ResultsWriter:
                         continue
         return self.schemas
 
-    def write(self, metrics, section, axes: dict, *, current_step=None, stacklevel: int = 2) -> None:
+    def write_values(self, values, section, axes: dict, *, current_step=None, fn: str, stacklevel: int) -> None:
+        for row, row_axes, index in split_series(values, axes, fn):
+            self.write(row, section, row_axes, current_step=current_step, index=index, stacklevel=stacklevel + 1)
+
+    def write(self, metrics, section, axes: dict, *, current_step=None, index=(), stacklevel: int = 2) -> None:
         provided = 0
         kept_metrics: dict = {}
         if metrics is None:
@@ -156,7 +214,7 @@ class _ResultsWriter:
         elif not isinstance(metrics, dict):
             provided += 1
             warnings.warn(
-                f"runq.record: metrics must be a dict or None, "
+                f"runq.result: metrics must be a dict or None, "
                 f"got {type(metrics).__name__} — ignored",
                 stacklevel=stacklevel,
             )
@@ -168,8 +226,8 @@ class _ResultsWriter:
                     kept_metrics[str(key)] = v
                 else:
                     warnings.warn(
-                        f"runq.record: metric {key!r} dropped "
-                        f"(value {value!r} is not a finite number)",
+                        f"runq.result: metric {key!r} dropped "
+                        f"(value {value!r} is not a finite number or a stats.Est)",
                         stacklevel=stacklevel,
                     )
 
@@ -181,14 +239,14 @@ class _ResultsWriter:
                 kept_axes[key] = v
             else:
                 warnings.warn(
-                    f"runq.record: axis {key!r} dropped "
+                    f"runq.result: axis {key!r} dropped "
                     f"(value {value!r} is not a str/bool/finite number)",
                     stacklevel=stacklevel,
                 )
 
         if provided > 0 and not kept_metrics and not kept_axes:
             warnings.warn(
-                "runq.record: every provided key was invalid — record discarded",
+                "runq.result: every provided key was invalid — record discarded",
                 stacklevel=stacklevel,
             )
             return
@@ -207,14 +265,14 @@ class _ResultsWriter:
             raw = json.dumps(signature, separators=(",", ":"), ensure_ascii=False)
             section = "auto-" + hashlib.sha1(raw.encode()).hexdigest()[:8]
         elif not isinstance(section, str) or not section.strip():
-            warnings.warn("runq.record: section must be a non-empty string", stacklevel=stacklevel)
+            warnings.warn("runq.result: section must be a non-empty string", stacklevel=stacklevel)
             return
         schemas = self.schemas if self.schemas is not None else self._load_schemas()
         frozen = schemas.setdefault(section, signature)
         if frozen != signature:
             warning = (section, "schema")
             if warning not in self.warned:
-                warnings.warn(f"runq.record: section {section!r} keys changed; missing keys become null, new keys are ignored", stacklevel=stacklevel)
+                warnings.warn(f"runq.result: section {section!r} keys changed; missing keys become null, new keys are ignored", stacklevel=stacklevel)
                 self.warned.add(warning)
         if section.startswith("auto-"):
             for other, keys in schemas.items():
@@ -230,10 +288,13 @@ class _ResultsWriter:
         normalized_axes = {k: kept_axes.get(k) for k in frozen[0]}
         if "step" in kept_axes:
             normalized_axes["step"] = kept_axes["step"]
-        _append_jsonl_line(self.path, {"ts": int(time.time()), "section": section,
-                                       "section_keys": {"axes": frozen[0], "metrics": frozen[1]},
-                                       "axes": normalized_axes,
-                                       "metrics": {k: kept_metrics.get(k) for k in frozen[1]}}, "results")
+        line = {"ts": int(time.time()), "section": section,
+                "section_keys": {"axes": frozen[0], "metrics": frozen[1]},
+                "axes": normalized_axes}
+        if index:
+            line["index"] = [k for k in index if k in frozen[0]]
+        line["metrics"] = {k: kept_metrics.get(k) for k in frozen[1]}
+        _append_jsonl_line(self.path, line, "results")
 
 
 def _reset_for_tests() -> None:

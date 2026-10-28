@@ -13,6 +13,7 @@ pip install -e ./sdk/python
 Optional extras:
 
 ```sh
+pip install -e "./sdk/python[stats]"   # numpy, for runq.stats
 pip install -e "./sdk/python[wandb]"   # optional W&B dependency
 pip install -e "./sdk/python[dev]"     # for pytest
 ```
@@ -21,14 +22,19 @@ pip install -e "./sdk/python[dev]"     # for pytest
 
 ```python
 import runq
+from runq import stats                   # needs numpy; `import runq` does not
 
 ctx = runq.context()
 lr = ctx.params.get("lr", 1e-3)          # ablation values from the sweep
 
 with runq.log_group("train"):
-    runq.report({"loss": loss}, step=step)   # → train/loss in metrics.jsonl
-runq.record({"acc": acc}, seed=ctx.seed, split="val")  # axis-keyed result row
+    runq.log({"loss": loss}, step=step)  # → train/loss in metrics.jsonl (and a linked W&B run)
+runq.result({"acc": stats.est(per_problem)}, section="val")      # a result row: mean ± stderr
+runq.result({"pass": stats.pass_at_k(correct)}, section="val")   # one row per k
 ```
+
+`runq.log` is for training curves, `runq.result` for the rows a table shows.
+`runq.report` / `runq.record` are their older names (DeprecationWarning).
 
 Checkpoints go under `ctx.checkpoint_dir` (`<task_dir>/checkpoints`). runq does
 not retry tasks: running a cell again (`runq draft job.yaml --into ex…` with the
@@ -37,7 +43,7 @@ param (`fixed_params: { resume_from: <path> }`, `--resume_from {{resume_from}}`)
 runq does not manage checkpoint lifecycle or early stopping — those belong to
 your training script.
 
-`runq.report()` writes a NaN or Inf as `null` (one warning per key on stderr);
+`runq.log()` writes a NaN or Inf as `null` (one warning per key on stderr);
 the dashboard draws a gap there and says from which step.
 
 ## Two modes
@@ -53,15 +59,16 @@ Detected automatically at `runq.context()`:
 
 ```python
 exp = runq.experiment("/path/to/experiment_dir")   # the folder holding job.json
-for t in exp.tasks:
-    if t.status == "success":
-        t.record({"acc": score(t.output_dir)}, section="math")
+for cell in exp.cells:
+    v = cell.selected
+    if v.status == "success":
+        v.result({"acc": stats.est(score(v.output_dir))}, section="math")
 ```
 
-`t.record` is `runq.record` for that task, written to
+`v.result` is `runq.result` for that version, written to
 `<task_dir>/results.<producer>.jsonl` (producer = the script's name); runq
 ingests it like the task's own results. See
-[scoring scripts](../../docs/views.md#scoring-scripts-with-runqjob).
+[scoring scripts](../../docs/views.md#scoring-scripts-with-runqexperiment).
 
 ## Output and W&B directories
 
@@ -77,6 +84,9 @@ import wandb
 run = wandb.init(**ctx.wandb_like_cfg)
 runq.link("wandb", run)  # global rank 0; no URL (offline/disabled) = no-op
 ```
+
+Once linked, `runq.log` forwards each call to `run.log(dict, step=)`; results
+stay in runq, and the run's summary gets `runq` = where they are.
 
 The SDK still works without W&B installed. A cell's new version is a new task, so
 it gets a new directory and a new W&B run (`<cell> #N`).

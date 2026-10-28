@@ -4,8 +4,25 @@ import type {
    JobResultsResponse,  JobSummary,
   MessageResponse, RefreshReceipt,
 } from '@/types/api'
+import type { JobCurves, JobDefaultViews } from '@/types/views'
 
 export const jobsApi = {
+  /** GET /jobs/{id}/view — default views per section (runq view --experiment). */
+  defaultViews: (jobId: string) =>
+    api.get<JobDefaultViews>(`/jobs/${encodeURIComponent(jobId)}/view`, { silent: true }),
+
+  /** One default view as LaTeX / Markdown / CSV. */
+  defaultViewText: (jobId: string, name: string, format: 'latex' | 'markdown' | 'csv') =>
+    api.get<string>(`/jobs/${encodeURIComponent(jobId)}/view?format=${format}&name=${encodeURIComponent(name)}`, { silent: true, responseType: 'text' }),
+
+  /** GET /jobs/{id}/curves — runq.log curves of the cells, and the project's pins. */
+  curves: (jobId: string) =>
+    api.get<JobCurves>(`/jobs/${encodeURIComponent(jobId)}/curves`, { silent: true }),
+
+  /** Pin curves for every experiment of this job's project (a viewing preference). */
+  setCurvePins: (jobId: string, keys: string[]) =>
+    api.put<{ pins: string[] }>(`/jobs/${encodeURIComponent(jobId)}/curve-pins`, { keys }),
+
   list: (opts?: RequestOptions) => api.getList<JobSummary>('/jobs', opts),
 
   /** Project-scoped list — unlike the global list, it skips the archived-

@@ -30,6 +30,9 @@ type Identity struct {
 	WandbConfigured bool     // supplied by the plan, never inferred from the controller filesystem
 	JobName         string   // job display name at submit (for WANDB_RUN_GROUP)
 	RunName         string   // the task's run name (row name; W&B run name)
+	// ResultsURL is the experiment's results page on the runq dashboard
+	// (RUNQ_RESULTS_URL; the SDK writes it into a linked W&B run's summary).
+	ResultsURL string
 }
 
 // BaseEnv returns the shared RUNQ_* variables. It does NOT set RUNQ_SOCKET_PATH or
@@ -62,6 +65,9 @@ func BaseEnv(id Identity) map[string]string {
 	if id.RunName != "" {
 		env["RUNQ_RUN_NAME"] = id.RunName
 		env["RUNQ_CELL"] = id.RunName // RUNQ_RUN_NAME is its older name
+	}
+	if id.ResultsURL != "" {
+		env["RUNQ_RESULTS_URL"] = id.ResultsURL
 	}
 	if id.JobName != "" {
 		env["RUNQ_JOB_NAME"] = id.JobName

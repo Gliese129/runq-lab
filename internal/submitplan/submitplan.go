@@ -51,6 +51,9 @@ type Deps struct {
 	// ({{param.*}}): exempt from the command renderer's unconsumed check
 	// and excluded from {{args}} injection.
 	SchedulerParams []string
+	// DashboardBase is the dashboard's base URL when runq serves one ("" =
+	// none): each task gets RUNQ_RESULTS_URL, its experiment's results page.
+	DashboardBase string
 }
 
 type Plan struct {
@@ -415,7 +418,8 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 	}
 	for i := range tasks {
 		task := &tasks[i]
-		task.Env = workspace.TaskEnv(workspace.Identity{TaskID: task.TaskID, JobID: jobID, Project: cfg.Project, TaskDir: task.TaskDir, SweepKeys: sweepKeys, JobName: cfg.Name, RunName: task.RunName, WandbConfigured: proj.Wandb != nil}, env, task.WorkingDir)
+		task.Env = workspace.TaskEnv(workspace.Identity{TaskID: task.TaskID, JobID: jobID, Project: cfg.Project, TaskDir: task.TaskDir, SweepKeys: sweepKeys, JobName: cfg.Name, RunName: task.RunName, WandbConfigured: proj.Wandb != nil,
+			ResultsURL: resultsURL(d.DashboardBase, cfg.Project, jobID)}, env, task.WorkingDir)
 		task.CheckpointDir = task.Env["RUNQ_CHECKPOINT_DIR"]
 		task.OutputDir = task.Env["RUNQ_OUTPUT_DIR"]
 		task.WandbDir = task.Env["WANDB_DIR"]
@@ -461,4 +465,13 @@ func baselineRun(rows []job.Row, baseline string) string {
 		return ""
 	}
 	return rows[job.BaselineIndex(rows, baseline)].Run
+}
+
+// resultsURL is an experiment's Results tab ("" without a dashboard).
+func resultsURL(base, project, jobID string) string {
+	page := utils.DashboardPage(base, "projects", project, jobID)
+	if page == "" || project == "" {
+		return ""
+	}
+	return page + "?tab=results"
 }

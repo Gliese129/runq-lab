@@ -79,7 +79,7 @@ def test_low_inodes_warn_and_healthy_disk_is_quiet(clean_env, tmp_path, monkeypa
 def test_removed_public_names(clean_env):
     for name in ("Context", "ParamDict", "get_ctx", "params", "seed"):
         assert not hasattr(runq, name), name
-    assert not hasattr(runq._report, "latest_report_metrics")
+    assert not hasattr(runq._log, "latest_report_metrics")
 
 
 # ---- params loading ----
@@ -192,3 +192,21 @@ def test_seed_is_per_cell_not_per_version(clean_env, tmp_path, monkeypatch):
         rc._ctx = None
         seeds.append(runq.context().seed)
     assert seeds[0] == seeds[1]
+
+
+def test_experiment_cell_version(clean_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("RUNQ_TASK_ID", "tk1")
+    monkeypatch.setenv("RUNQ_EXPERIMENT_ID", "ex9")
+    monkeypatch.setenv("RUNQ_JOB_ID", "ex9")
+    monkeypatch.setenv("RUNQ_CELL", "A1-ja")
+    monkeypatch.setenv("RUNQ_VERSION", "3")
+    monkeypatch.setenv("RUNQ_TASK_DIR", str(tmp_path / "tk1"))
+    ctx = runq.context()
+    assert (ctx.experiment_id, ctx.cell, ctx.version) == ("ex9", "A1-ja", 3)
+    with pytest.warns(DeprecationWarning, match="experiment_id"):
+        assert ctx.job_id == "ex9"
+
+
+def test_version_defaults_to_1(clean_env, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert runq.context().version == 1

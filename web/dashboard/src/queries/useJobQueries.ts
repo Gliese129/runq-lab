@@ -114,6 +114,34 @@ export function useJobResultsQuery(
   })
 }
 
+/** The experiment's default views (one per section), polled while it runs. */
+export function useJobDefaultViewsQuery(
+  jobId: MaybeRefOrGetter<string>,
+  enabled: MaybeRefOrGetter<boolean>,
+  active: MaybeRefOrGetter<boolean>,
+) {
+  return useQuery({
+    queryKey: computed(() => qk.defaultViews(toValue(jobId))),
+    queryFn: () => jobsApi.defaultViews(toValue(jobId)),
+    enabled: computed(() => toValue(enabled)),
+    refetchInterval: computed(() => (toValue(active) ? 30_000 : false)),
+  })
+}
+
+/** runq.log curves of the cells and the project's pinned curves. */
+export function useJobCurvesQuery(
+  jobId: MaybeRefOrGetter<string>,
+  enabled: MaybeRefOrGetter<boolean>,
+  active: MaybeRefOrGetter<boolean>,
+) {
+  return useQuery({
+    queryKey: computed(() => qk.curves(toValue(jobId))),
+    queryFn: () => jobsApi.curves(toValue(jobId)),
+    enabled: computed(() => toValue(enabled)),
+    refetchInterval: computed(() => (toValue(active) ? 30_000 : false)),
+  })
+}
+
 /** Ranked rows for the leaderboard. Key change re-fetches automatically —
  *  this replaces the metric_keys watch that fired a /compare per poll. */
 export function useCompareQuery(

@@ -9,23 +9,27 @@ import (
 )
 
 type Spec struct {
-	Name      string            `json:"view" yaml:"view"`
-	Project   string            `json:"project" yaml:"project"`
-	Title     string            `json:"title,omitempty" yaml:"title,omitempty"`
-	Jobs      any               `json:"jobs,omitempty" yaml:"jobs,omitempty"`
-	Section   string            `json:"section,omitempty" yaml:"section,omitempty"`
-	Group     []string          `json:"group,omitempty" yaml:"group,omitempty"`
-	Rows      []string          `json:"rows,omitempty" yaml:"rows,omitempty"`
-	Expect    map[string][]any  `json:"expect,omitempty" yaml:"expect,omitempty"`
-	Filter    map[string][]any  `json:"filter,omitempty" yaml:"filter,omitempty"`
-	Columns   []Column          `json:"columns,omitempty" yaml:"columns,omitempty"`
-	State     []State           `json:"state,omitempty" yaml:"state,omitempty"`
-	Extra     []Extra           `json:"extra,omitempty" yaml:"extra,omitempty"`
-	Legend    string            `json:"legend,omitempty" yaml:"legend,omitempty"`
-	Charts    []map[string]any  `json:"charts,omitempty" yaml:"charts,omitempty"`
-	Aggregate *Aggregate        `json:"aggregate,omitempty" yaml:"aggregate,omitempty"`
-	Pivot     *Pivot            `json:"pivot,omitempty" yaml:"pivot,omitempty"`
-	Highlight map[string]string `json:"highlight,omitempty" yaml:"highlight,omitempty"`
+	Name      string           `json:"view" yaml:"view"`
+	Project   string           `json:"project" yaml:"project"`
+	Title     string           `json:"title,omitempty" yaml:"title,omitempty"`
+	Jobs      any              `json:"jobs,omitempty" yaml:"jobs,omitempty"`
+	Section   string           `json:"section,omitempty" yaml:"section,omitempty"`
+	Group     []string         `json:"group,omitempty" yaml:"group,omitempty"`
+	Rows      []string         `json:"rows,omitempty" yaml:"rows,omitempty"`
+	Expect    map[string][]any `json:"expect,omitempty" yaml:"expect,omitempty"`
+	Filter    map[string][]any `json:"filter,omitempty" yaml:"filter,omitempty"`
+	Columns   []Column         `json:"columns,omitempty" yaml:"columns,omitempty"`
+	State     []State          `json:"state,omitempty" yaml:"state,omitempty"`
+	Extra     []Extra          `json:"extra,omitempty" yaml:"extra,omitempty"`
+	Legend    string           `json:"legend,omitempty" yaml:"legend,omitempty"`
+	Charts    []map[string]any `json:"charts,omitempty" yaml:"charts,omitempty"`
+	Aggregate *Aggregate       `json:"aggregate,omitempty" yaml:"aggregate,omitempty"`
+	Pivot     *Pivot           `json:"pivot,omitempty" yaml:"pivot,omitempty"`
+	// MetricRows turns the table so each metric is a row group (key
+	// "metric") and the columns are the pivot values, or one "value"
+	// column without a pivot.
+	MetricRows bool              `json:"metric_rows,omitempty" yaml:"metric_rows,omitempty"`
+	Highlight  map[string]string `json:"highlight,omitempty" yaml:"highlight,omitempty"`
 	// KeyFormats formats row-key values (e.g. {"param.lr": "sci0"}); keys
 	// without one print in full.
 	KeyFormats map[string]string     `json:"key_formats,omitempty" yaml:"key_formats,omitempty"`
@@ -40,6 +44,8 @@ type Column struct {
 	When   string `json:"when,omitempty" yaml:"when,omitempty"`
 	Better string `json:"better,omitempty" yaml:"better,omitempty"`
 	Group  any    `json:"group,omitempty" yaml:"group,omitempty"`
+	// At is the pivot value of a metric_rows column (named "<axis>=<at>").
+	At any `json:"at,omitempty" yaml:"-"`
 }
 type State struct {
 	Label string `json:"label" yaml:"label"`

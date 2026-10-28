@@ -60,6 +60,9 @@ var viewCmd = &cobra.Command{Use: "view <file.yaml | name> | view --experiment <
 		}
 		return runJobView(cmd, jobs[0])
 	}
+	if spec, _ := cmd.Flags().GetBool("spec"); spec {
+		return fmt.Errorf("--spec prints an experiment's default views: runq view --experiment <ex…> --spec (a saved view's YAML is the file you saved)")
+	}
 	return withBackend(cmd, func(be backend.Backend) error {
 		p := be.(*api.Proxy)
 		name := args[0]
@@ -196,13 +199,16 @@ func runJobView(cmd *cobra.Command, ref string) error {
 		if err != nil {
 			return err
 		}
+		if spec, _ := cmd.Flags().GetBool("spec"); spec {
+			return printSpecs(cmd, res.Specs)
+		}
 		format, _ := cmd.Flags().GetString("format")
 		if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut || format == "json" {
 			printJSON(res)
 			return nil
 		}
 		if len(res.Views) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "no recorded results — emit them with runq.record(metrics, **axes) in your script")
+			fmt.Fprintln(cmd.OutOrStdout(), "no recorded results — write them with runq.result(values, section=…) in your script")
 			return nil
 		}
 		wide, _ := cmd.Flags().GetBool("wide")
@@ -221,6 +227,28 @@ func runJobView(cmd *cobra.Command, ref string) error {
 	})
 }
 
+// printSpecs prints an experiment's default views as view YAML, one
+// document per view: save one as a file, edit it, and `runq view file.yaml`.
+func printSpecs(cmd *cobra.Command, specs []views.Spec) error {
+	if len(specs) == 0 {
+		return fmt.Errorf("no recorded results, so no default view to print")
+	}
+	out := cmd.OutOrStdout()
+	fmt.Fprintln(out, "# runq's default views for this experiment. Save one document as a .yaml")
+	fmt.Fprintln(out, "# file, edit it, then `runq view <file>` saves and renders it.")
+	for i, s := range specs {
+		if i > 0 {
+			fmt.Fprintln(out, "---")
+		}
+		raw, err := yaml.Marshal(s)
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(out, string(raw))
+	}
+	return nil
+}
+
 func init() {
 	viewCmd.Flags().String("project", "", "Project containing the view")
 	viewCmd.Flags().StringArray("experiment", nil, "Use this experiment for this render only (repeatable)")
@@ -232,6 +260,7 @@ func init() {
 	viewCmd.Flags().Bool("latex-color", false, "Color baseline deltas (requires xcolor)")
 	viewCmd.Flags().Bool("open", false, "Open this view in the dashboard")
 	viewCmd.Flags().Bool("refresh", false, "Refresh on-demand script sources")
+	viewCmd.Flags().Bool("spec", false, "With --experiment alone: print its default views as editable view YAML")
 	ls := &cobra.Command{Use: "ls", Short: "List saved views", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return withBackend(cmd, func(be backend.Backend) error {
 			p := be.(*api.Proxy)

@@ -15,10 +15,12 @@ const IngestFileLinks = "links"
 
 // ResultRecordRow maps one line of results.jsonl:
 //
-//	{"ts":1700000000,"axes":{"model":"a","step":2000},"metrics":{"math":24.8}}
+//	{"ts":1700000000,"axes":{"k":4},"index":["k"],"metrics":{"pass":{"value":0.55,"stderr":0.04,…}}}
 //
 // axes/metrics stay opaque JSON here — key classification (identity/x/label)
-// is the results endpoint's assembly concern, not storage's.
+// is the results endpoint's assembly concern, not storage's. A metric is a
+// number or an est object (runq.stats); index names the axes that came
+// from a series.
 type ResultRecordRow struct {
 	Section string
 
@@ -27,6 +29,7 @@ type ResultRecordRow struct {
 	TS          int64
 	AxesJSON    string // compact JSON object
 	MetricsJSON string // compact JSON object
+	IndexJSON   string // JSON array of axis names; "" = none
 }
 
 // FileIngestMark is one (task, file) incremental-ingest state — same
@@ -155,7 +158,7 @@ const liveSourceSQL = `(CASE WHEN instr(record_latest.task_id, '@') > 0
 // assembly (RQ2-1 c3).
 func (s *Store) ListResultRecords(ctx context.Context, jobID string) ([]ResultRecordRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT task_id, job_id, ts, axes_json, metrics_json, section
+		`SELECT task_id, job_id, ts, axes_json, metrics_json, section, index_json
 		 FROM record_latest WHERE job_id = ? AND `+liveSourceSQL+`
 		 ORDER BY task_id, section, key_json`, jobID)
 	if err != nil {
@@ -165,7 +168,7 @@ func (s *Store) ListResultRecords(ctx context.Context, jobID string) ([]ResultRe
 	var out []ResultRecordRow
 	for rows.Next() {
 		var r ResultRecordRow
-		if err := rows.Scan(&r.TaskID, &r.JobID, &r.TS, &r.AxesJSON, &r.MetricsJSON, &r.Section); err != nil {
+		if err := rows.Scan(&r.TaskID, &r.JobID, &r.TS, &r.AxesJSON, &r.MetricsJSON, &r.Section, &r.IndexJSON); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

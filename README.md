@@ -92,8 +92,8 @@ import runq
 ctx = runq.context()
 kl = ctx.params.get("kl", 0.0)          # default lives in code
 ...
-runq.report({"loss": loss}, step=step)  # dashboard curves
-runq.record({"acc": acc}, kl=kl, seed=ctx.params.get("seed", 0))  # one comparable row per cell
+runq.log({"loss": loss}, step=step)  # dashboard curves
+runq.result({"acc": acc}, kl=kl, seed=ctx.params.get("seed", 0))  # one comparable row per cell
 # write outputs to ctx.output_dir, checkpoints to ctx.checkpoint_dir (kept across retries)
 ```
 
@@ -108,7 +108,7 @@ runq ps [job_id] --json [--fresh]     # jobs, or one job's tasks
 runq show <task_id>                   # command, dirs, status evidence (JSON)
 runq logs <task_id> --no-follow -n 200
 runq logs <task_id> --grep '<regex>' -n 20
-runq view --experiment <job_id> --json       # rows written by runq.record
+runq view --experiment <job_id> --json       # rows written by runq.result
 runq kill <task_id|job_id>
 runq draft job.yaml                  # after fixing a failed task, plan and submit a new one
 runq clean --experiment <job_id> --show      # preview; deletion is irreversible

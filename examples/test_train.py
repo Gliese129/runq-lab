@@ -28,7 +28,7 @@ for epoch in range(1, epochs + 1):
     floor = 0.3 + abs(math.log10(lr / 0.01)) * 0.1 + (32 / batch_size) * 0.05
     loss = max(floor, loss * 0.7 + rng.uniform(-0.02, 0.02))
     print(f"epoch {epoch}/{epochs} lr={lr} bs={batch_size} opt={optimizer} loss={loss:.4f}")
-    runq.report({"loss": loss}, step=epoch)
+    runq.log({"loss": loss}, step=epoch)
 
-runq.record({"final_loss": loss}, lr=lr, batch_size=batch_size, optimizer=optimizer)
+runq.result({"final_loss": loss}, lr=lr, batch_size=batch_size, optimizer=optimizer)
 print("done.")

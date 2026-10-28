@@ -23,6 +23,7 @@
       </v-tab>
       <v-tab value="plan" size="small">{{ t('job.tab_plan') }} ({{ cells.length }})</v-tab>
       <v-tab value="results" size="small">{{ t('job.tab_results') }}</v-tab>
+      <v-tab value="curves" size="small">{{ t('job.tab_curves') }}</v-tab>
       <v-tab value="data" size="small">{{ t('job.tab_data') }}</v-tab>
     </v-tabs>
 
@@ -116,14 +117,19 @@
     </div>
 
     <div v-else-if="tab === 'results'">
-      <div v-if="jobViews.length" class="d-flex flex-wrap align-center ga-2 mb-3">
+      <div v-if="jobViews.length || defaultViews.length" class="d-flex flex-wrap align-center ga-2 mb-3">
+        <button v-if="defaultViews.length" type="button" class="view-pick" :class="{ on: pickedView === DEFAULT }" @click="pick(DEFAULT)">{{ t('views.default_views') }}</button>
         <button
           v-for="v in jobViews" :key="v.name" type="button" class="view-pick" :class="{ on: v.name === pickedView }"
           @click="pick(v.name)"
         >{{ v.title || v.name }}</button>
         <button type="button" class="view-pick" :class="{ on: pickedView === RAW }" @click="pick(RAW)">{{ t('views.raw_records') }}</button>
       </div>
-      <template v-if="pickedView && pickedView !== RAW">
+      <template v-if="pickedView === DEFAULT">
+        <DefaultViewBlock v-for="r in defaultViews" :key="r.name" :result="r" :project="props.project" :job-id="props.jobId" />
+        <div class="text-caption text-on-surface-variant mt-4">{{ t('views.default_hint') }} <code>runq view --experiment {{ props.jobId.slice(0, 8) }} --spec</code></div>
+      </template>
+      <template v-else-if="pickedView && pickedView !== RAW">
         <ViewPanel :key="pickedView" :project="props.project" :name="pickedView" :jobs="[props.jobId]" :show-title="false">
           <template #custom="{ result }"><CustomView :project="props.project" :name="pickedView" :result="result" /></template>
           <template #charts="{ result, hidden }"><ViewCharts :project="props.project" :name="pickedView" :result="result" :jobs="[props.jobId]" :hidden="hidden" /></template>
@@ -141,6 +147,8 @@
         :project="props.project"
       />
     </div>
+
+    <JobCurves v-else-if="tab === 'curves'" :job-id="props.jobId" :active="isActiveJob" />
 
     <JobDataCard
       v-else
@@ -186,7 +194,7 @@ import { usePreferences } from '@/composables/usePreferences'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { useConfirm } from '@/composables/useConfirm'
 import { useCancelling } from '@/composables/useCancelling'
-import { useJobDetailQuery, useCompareQuery, useJobResultsQuery, useJobActions, useJobActivityQuery } from '@/queries/useJobQueries'
+import { useJobDetailQuery, useCompareQuery, useJobResultsQuery, useJobActions, useJobActivityQuery, useJobDefaultViewsQuery } from '@/queries/useJobQueries'
 import { lastOutputTs } from '@/utils/lastOutput'
 import { jobCells, versionCommand, commandVaries, type CellView } from '@/utils/jobCells'
 import { useQueryClient } from '@tanstack/vue-query'
@@ -205,6 +213,8 @@ import ViewPanel from '@/components/views/ViewPanel.vue'
 import ViewCharts from '@/components/views/ViewCharts.vue'
 import CustomView from '@/components/views/CustomView.vue'
 import ResultsEmpty from './ResultsEmpty.vue'
+import JobCurves from './JobCurves.vue'
+import DefaultViewBlock from '@/components/views/DefaultViewBlock.vue'
 import PlanTable from '@/components/PlanTable.vue'
 import type { PlanRow, TaskView } from '@/types/api'
 import { wandbProjectUrl } from '@/utils/wandbUrl'
@@ -270,7 +280,7 @@ watch(() => detail.value?.tasks, (tasks) => { if (tasks) prune(tasks) })
 
 // ── Tabs (RQ2-4 ②): ?tab= is the shareable truth; replace (not push) so
 // tab flips don't pollute back-button history. ──
-const TABS = new Set(['tasks', 'plan', 'results', 'data'])
+const TABS = new Set(['tasks', 'plan', 'results', 'curves', 'data'])
 // Cells: each shows one version (pinned, else latest); its row reads that
 // version's params and status.
 const batches = computed(() => detail.value?.batches ?? [])
@@ -327,21 +337,31 @@ async function pin(c: CellView, value: string) {
 }
 const tab = ref(TABS.has(String(route.query.tab)) ? String(route.query.tab) : 'tasks')
 
-// The job's views (see useJobViewsQuery); the first is preselected, raw
-// records stay one click away.
+const isActiveJob = computed(() => {
+  const s = detail.value?.job.status
+  return s === 'running' || s === 'submitting' || s === 'pending' || s === 'paused'
+})
+
+// Results: runq's default views (one block per section, laid out from what
+// the records say) and the project's saved views; raw records stay one
+// click away. A saved view is preselected (the researcher made it for
+// this), else the default views.
 const RAW = '__raw__'
+const DEFAULT = '__default__'
 const jobViewsQuery = useJobViewsQuery(() => props.project, () => props.jobId, () => detail.value?.metric_keys ?? [])
 const jobViews = computed(() => jobViewsQuery.data.value ?? [])
+const defaultViewsQuery = useJobDefaultViewsQuery(() => props.jobId, () => tab.value === 'results', () => isActiveJob.value)
+const defaultViews = computed(() => defaultViewsQuery.data.value?.views ?? [])
 const pickedView = ref('')
 const userPicked = ref(false)
 function pick(name: string) { pickedView.value = name; userPicked.value = true }
 // Default once the views are known (an empty list while loading must not
 // pin "raw records"); a choice the user made is kept.
-watch(() => [jobViews.value, jobViewsQuery.isFetched.value] as const, ([vs, fetched]) => {
+watch(() => [jobViews.value, defaultViews.value, jobViewsQuery.isFetched.value && defaultViewsQuery.isFetched.value] as const, ([vs, dv, fetched]) => {
   if (!fetched) return
-  if (pickedView.value === RAW && userPicked.value) return
+  if (userPicked.value && (pickedView.value === RAW || (pickedView.value === DEFAULT && dv.length))) return
   if (vs.some((v) => v.name === pickedView.value)) return
-  pickedView.value = vs[0]?.name ?? RAW
+  pickedView.value = vs[0]?.name ?? (dv.length ? DEFAULT : RAW)
 }, { immediate: true })
 
 watch(tab, (v) => {
@@ -371,10 +391,6 @@ const statusOptions = computed(() => {
   return all.length > 1 ? [{ value: '', label: t('common.all'), dot: '' }, ...all] : []
 })
 
-const isActiveJob = computed(() => {
-  const s = detail.value?.job.status
-  return s === 'running' || s === 'submitting' || s === 'pending' || s === 'paused'
-})
 
 // Results wire is fetched only while its tab shows (heavy ingest), live
 // while the job runs.

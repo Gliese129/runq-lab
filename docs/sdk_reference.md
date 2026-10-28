@@ -30,6 +30,7 @@ free inodes.
 
 ```python
 import runq
+from runq import stats
 
 ctx = runq.context()
 lr = ctx.params.get("lr", 0.001)        # the sweep value, or this explicit default
@@ -37,17 +38,20 @@ lr = ctx.params.get("lr", 0.001)        # the sweep value, or this explicit defa
 for step in range(1000):
     loss = train_step(model, cfg)
     with runq.log_group("train"):
-        runq.report({"loss": loss}, step=step)     # → train/loss
+        runq.log({"loss": loss}, step=step)        # → train/loss (and a linked W&B run)
     if step % 500 == 0:
         torch.save(model.state_dict(), ctx.checkpoint_dir / f"step{step}.pt")
 
-runq.record({"acc": evaluate(model)}, seed=ctx.seed, split="val")
+correct = evaluate(model)                          # bool (problems, samples)
+runq.result({"pass": stats.pass_at_k(correct)}, section="val")   # one row per k
 ```
 
 ## Context and parameters
 
 ```python
 ctx = runq.context()       # task_id, params, seed, mode, task/output/checkpoint dirs
+ctx.experiment_id          # ex… (ctx.job_id: the older name, deprecated)
+ctx.cell, ctx.version      # this cell's name and this version's number (1 = first)
 ctx.params                 # dict; ["kl"] = required (close-match hint), .get("kl", 0.0) = explicit default
 ctx.seed                   # deterministic per-task seed (SHA-256 of task_id, mod 2^32)
 ctx.wandb_like_cfg         # dict to splat into wandb.init(...) — SDK never imports wandb
@@ -58,7 +62,7 @@ ctx.wandb_like_cfg         # dict to splat into wandb.init(...) — SDK never im
 ```python
 import wandb
 run = wandb.init(**ctx.wandb_like_cfg)      # override any key: {**ctx.wandb_like_cfg, "id": my_id}
-runq.link("wandb", run)              # runq shows the run on the task (CLI + dashboard)
+runq.link("wandb", run)              # runq shows the run; runq.log forwards to it
 ```
 
 `wandb_like_cfg` fills: `project` / `entity` / `tags` / `mode` from the
@@ -75,16 +79,28 @@ nothing when there is no URL (offline or disabled runs). It works whatever
 run id your script chooses. `ctx.link_wandb(run)` still works but is
 deprecated (`DeprecationWarning`).
 
-## Metrics
+A W&B run object linked as `"wandb"` (anything with `.log`) is kept for the
+process: every `runq.log` call is also `run.log(dict, step=)`, flattened — a
+number as is, an est as `name` plus its shown error (`name_stderr`, `name_std`,
+or `name_ci95_lo` / `name_ci95_hi`), a series as `name@k` and `name@k_stderr`.
+`runq.result` is not mirrored; instead the run's summary gets `runq` = the
+experiment's Results page (`RUNQ_RESULTS_URL`, which runq sets at submit when
+it serves the dashboard) or, without one, the version reference `ex…/<cell>@vN`.
 
-### `runq.report(metrics, step=None)`
+## Curves
 
-Log scalars — one `metrics.jsonl` row per key. Returns `None`. An explicit
+### `runq.log(metrics, step=None)`
+
+Training curves — one `metrics.jsonl` row per key. Returns `None`. An explicit
 `step` is written back to `ctx.current_step`; without it the current ctx
-step (possibly `None`) is used.
+step (possibly `None`) is used. NaN / Inf are written as `null` (a gap).
+Values may be numbers, `stats.est(...)` (drawn with its band) or a series
+(one curve `name@k` per index value, drawn as one chart). `runq.report` is the
+older name (DeprecationWarning).
 
 ```python
-runq.report({"loss": 0.42, "lr": sched.get_last_lr()[0]}, step=step)
+runq.log({"loss": 0.42, "lr": sched.get_last_lr()[0]}, step=step)
+runq.log({"reward": stats.est(rewards)}, step=step)
 ```
 
 ### `runq.log_group(name)`
@@ -93,33 +109,75 @@ Context manager (or decorator) that prefixes metric keys; nests with `/`:
 
 ```python
 with runq.log_group("val"):
-    runq.report({"loss": 0.35})   # key → "val/loss"
+    runq.log({"loss": 0.35})   # key → "val/loss"
 ```
 
-Metrics feed the dashboard's metric charts.
+The experiment's Curves tab shows one collapsible section per prefix; any curve
+can be pinned there for the whole project (a viewing preference, no code).
 
 ## Results
 
-### `runq.record(metrics, *, section=None, **axes)`
+### `runq.result(values, *, section=None, **axes)`
 
-Write an evaluation result or progress snapshot. `report` is for per-step curves;
-`record` is for table cells. Every call remains in the task's `results.jsonl`;
+Write an evaluation result or progress snapshot. `log` is for per-step curves;
+`result` is for table cells. Every call remains in the version's `results.jsonl`;
 the controller keeps the latest snapshot per source, section and axis identity.
 There is no record-count cap. `step` orders snapshots within a source and is
-excluded from identity and the automatic section signature.
+excluded from identity and the automatic section signature. `runq.record` is
+the older name (DeprecationWarning).
 
 ```python
-runq.record({"correct": 91, "scored": 100, "total": 200},
+runq.result({"correct": 91, "scored": 100, "total": 200},
             section="eval", dataset="mmlu", split="test", step=100)
+runq.result({"准确率": stats.pass_at_k(correct, unit=stats.PCT)}, section="PolyMath high")
 ```
 
 Omitting `section` derives `auto-<8 SHA1 hex>` from sorted axis and metric key
 names. The first record freezes each source/section's keys: supply the same keys
 every time, using `None` for unknown values. Missing keys become null; new keys
 are ignored with a warning. Axis values are strings, booleans, finite numbers
-or null; metric values are finite numbers or null. Across sources, a view chooses
-the newest timestamp (then source ID), without adding snapshots together.
-See [views and scoring scripts](views.md) for the full contract and examples.
+or null; values are finite numbers, null, or `runq.stats` estimates. Across
+sources, a view chooses the newest timestamp (then source ID), without adding
+snapshots together. See [views and scoring scripts](views.md) for the full
+contract and examples.
+
+An est is stored as an object; a series writes one row per index value and
+names its axis in `index`:
+
+```json
+{"ts":1700000000,"section":"PolyMath high","axes":{"k":4},"index":["k"],
+ "metrics":{"pass":{"value":0.5598,"std":0.456,"stderr":0.0408,"n":125,
+   "ci95":[0.48,0.64],"show":["STDERR"],"unit":"pct","better":"higher"}}}
+```
+
+All series in one call share one index (axis and values), and a call with
+series holds series only — put plain values in a call of their own. A mix
+raises `ValueError` naming the keys; nothing is filled or broadcast. runq
+remembers each metric's kind (number / est), unit and better per section and
+warns when a later row changes them.
+
+## `runq.stats` (needs numpy)
+
+`import runq` works without numpy; `from runq import stats` needs it.
+
+| Call | Returns |
+|---|---|
+| `stats.est(x, *, show=None, unit=None, better=None, ci=stats.NORMAL)` | `Est`: mean of a 1-D array (one number per unit — problem, seed; NaN skipped, `n` = used) with `std` (ddof 1), `stderr`, `n`, `ci95` (lo, hi) |
+| `stats.est(0.437, stderr=0.038, n=125)` | an estimate computed elsewhere (`std=` and `n=` give stderr) |
+| `stats.pass_at_k(correct, k=None)` | `correct`: bool `(problems, samples)`; per problem `1 - C(n-c, k)/C(n, k)`, mean over problems, stderr across them. `k=None` → 1, 2, 4, …, plus n; a list → `Series` over k; an int → one `Est` |
+| `stats.maj_at_k(answers, gold, k=None)` | majority-vote accuracy averaged over every k-subset of samples (exact up to 10 000 subsets, else 10 000 random ones with seed 0); a tie counts as the share of tied answers that are gold; `None` is an answer that is never correct |
+
+Flags — four categories, and only `show` combines with `|`:
+
+| Argument | Values | Meaning |
+|---|---|---|
+| `show` | `STD`, `STDERR`, `CI95`, `N` | what prints next to the value (default `STDERR`); one of STD / STDERR / CI95, since a cell has one ± and a chart one band |
+| `unit` | `PCT`, `COUNT` | PCT: a fraction, shown ×100 with % |
+| `better` | `HIGHER`, `LOWER` | the best cell is bold (pass@k / maj@k default to HIGHER) |
+| `ci` | `NORMAL`, `BOOTSTRAP` | CI95 as value ± 1.96·stderr, or a percentile bootstrap of the mean (2000 resamples, seed 0) |
+
+A `Series` reads like a dict: `s[4]`, `s.items()`, `list(s)` (the index values),
+`s.axis`.
 
 ## Checkpoints
 
@@ -130,28 +188,28 @@ experiment's command or parameters. A failed task is never restarted in place.
 ## Reading an experiment: `runq.experiment(ref=None, *, producer=None)`
 
 ```python
-exp = runq.experiment("/gs/work/kl/ex7817")    # the job directory (or its job.json)
+exp = runq.experiment("/gs/work/kl/ex7817")    # the experiment directory (or its job.json)
 exp.id, exp.name, exp.project, exp.status, exp.observed_at
-for t in exp.tasks:                       # the version each cell shows
-    t.id, t.run_name, t.status, t.params, t.task_dir, t.output_dir, t.checkpoint_dir
-    t.started_at, t.finished_at, t.last_output_at, t.batch_seq, t.version, t.selected
-    t.record({"acc": 0.81}, section="math", split="test")
-for cell in exp.cells:                    # cell.name, cell.selected, cell.versions (oldest first)
-    ...
+for cell in exp.cells:                    # cell.name, cell.params, cell.selected, cell.versions (oldest first)
+    v = cell.selected                     # the version the cell shows
+    v.id, v.run_name, v.status, v.params, v.task_dir, v.output_dir, v.checkpoint_dir
+    v.started_at, v.finished_at, v.last_output_at, v.batch_seq, v.version, v.selected
+    v.result({"acc": stats.est(per_problem)}, section="math")
 exp.versions                              # every version, shown or not
 ```
 
-`runq.job()` is the older name. `ref` is the experiment directory, which runq fills with `job.json` at submit and
+`runq.job()`, `exp.tasks` (= `[c.selected for c in exp.cells]`), the class name
+`JobTask` (now `Version`) and `.record()` (now `.result()`) are older names. `ref` is the experiment directory, which runq fills with `job.json` at submit and
 whenever it sees the experiment change. With no `ref` inside a runq task it is the
 task's own experiment; a `ex…` id works when the runq service socket is reachable
 (`RUNQ_SOCKET` or the local one). A missing or unreadable job.json raises.
 
-`t.record` is `runq.record` for that task — same validation, same frozen
+`v.result` is `runq.result` for that version — same validation, same frozen
 section keys — appended to `<task_dir>/results.<producer>.jsonl`. `producer`
 defaults to the running script's file name without `.py` (letters, digits,
 `_ . -`). No `runq.context()` is needed. runq ingests the file as the source
 `<task_id>@<producer>`, also after the task finished. See
-[scoring scripts](views.md#scoring-scripts-with-runqjob).
+[scoring scripts](views.md#scoring-scripts-with-runqexperiment).
 
 ## Utilities
 
@@ -166,9 +224,9 @@ with runq.utils.atomic_write("output.json") as f:
 | File | Written by | Read by |
 |---|---|---|
 | `params.json` | runq (at submit) | SDK `context()` |
-| `metrics.jsonl` | SDK `report` | dashboard |
-| `results.jsonl` | SDK `record` | `runq view --experiment`, dashboard |
-| `results.<producer>.jsonl` | a scoring script's `exp.tasks[i].record` | `runq view --experiment`, dashboard |
+| `metrics.jsonl` | SDK `log` | dashboard Curves tab |
+| `results.jsonl` | SDK `result` | `runq view --experiment`, dashboard |
+| `results.<producer>.jsonl` | a scoring script's `cell.selected.result` | `runq view --experiment`, dashboard |
 | `links.json` | SDK `link` | `runq show <tk…>`, dashboard |
 | `../job.json` (the experiment dir) | runq (submit, refresh) | SDK `runq.experiment()` |
 | `checkpoints/` | your training script | your resume code |

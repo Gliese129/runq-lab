@@ -70,7 +70,7 @@ class Context:
 
     Populated from `RUNQ_*` env vars (set by runq for the task) plus a
     local `params.json`. Lazy users mostly interact via module-level helpers
-    (`runq.report`, `runq.record`, ...) which pull state from the
+    (`runq.log`, `runq.result`, ...) which pull state from the
     singleton; this struct is the canonical home of all SDK state.
 
     Fields are kept descriptive on purpose — debugging from `print(ctx)`
@@ -79,7 +79,9 @@ class Context:
 
     mode: str                                 # "task" / "manual"
     task_id: str
-    job_id: str = ""
+    experiment_id: str = ""                   # ex… (RUNQ_EXPERIMENT_ID)
+    cell: str = ""                            # the cell's name (RUNQ_CELL)
+    version: int = 1                          # this version's number in its cell
     project: str = ""
 
     # Filesystem paths (None when the relevant env var wasn't set).
@@ -88,7 +90,7 @@ class Context:
     output_dir: Path | None = None
     wandb_dir: Path | None = None
     metrics_file: Path | None = None
-    # results.jsonl (runq.record data plane) lives NEXT TO metrics.jsonl;
+    # results.jsonl (runq.result data plane) lives NEXT TO metrics.jsonl;
     # derived from metrics_file rather than env-injected, so an older
     # runq that only sets RUNQ_METRICS_FILE still yields the right path.
     results_file: Path | None = None
@@ -101,9 +103,9 @@ class Context:
     # ---- step bookkeeping (step 6) ----
     #
     # Single source of truth for "what step is this?". Maintained by:
-    # - ``report(metrics, step=N)`` — an explicit step writes back here.
+    # - ``log(metrics, step=N)`` — an explicit step writes back here.
     #
-    # When None, report writes step=None to jsonl. There is
+    # When None, log writes step=None to jsonl. There is
     # NO auto-increment counter: pass step explicitly when you want one.
     current_step: int | None = None
 
@@ -112,6 +114,12 @@ class Context:
     seed: int = 0
 
     # ---- convenience accessors ----
+
+    @property
+    def job_id(self) -> str:
+        """Deprecated: renamed ``ctx.experiment_id``."""
+        warnings.warn("ctx.job_id is renamed ctx.experiment_id", DeprecationWarning, stacklevel=2)
+        return self.experiment_id
 
     # ---- wandb-like shape helpers (F9) ----
     #
@@ -134,8 +142,8 @@ class Context:
                 "tags":    <project wandb.tags> + sweep keys
                 "mode":    <project wandb.mode>; "disabled" on RANK > 0
                 "id":      task_id,  "resume": "allow",    # retries continue one run
-                "name":    run name ("R1 lr", "kl=0.1, seed=2") or f"{job_id}/{task_id}",
-                "group":   job name or job_id,
+                "name":    run name ("R1 lr", "kl=0.1, seed=2") or f"{experiment_id}/{task_id}",
+                "group":   experiment name or experiment_id,
                 "config":  dict(params),
             }
 
@@ -159,11 +167,11 @@ class Context:
             name = f"{run_name} #{version}" if version not in ("", "1") else run_name
         elif sweep_keys and self.params:
             parts = [f"{k}={self.params[k]}" for k in sweep_keys if k in self.params]
-            name = "_".join(parts) if parts else (f"{self.job_id}/{self.task_id}" if self.job_id else self.task_id)
+            name = "_".join(parts) if parts else (f"{self.experiment_id}/{self.task_id}" if self.experiment_id else self.task_id)
         else:
-            name = f"{self.job_id}/{self.task_id}" if self.job_id else self.task_id
+            name = f"{self.experiment_id}/{self.task_id}" if self.experiment_id else self.task_id
 
-        group = job_name if job_name else (self.job_id or None)
+        group = job_name if job_name else (self.experiment_id or None)
         project_cfg = _load_wandb_project_cfg()
 
         cfg: dict[str, Any] = {
@@ -255,8 +263,8 @@ def context() -> Context:
     modules to consume.
 
     Returns the :class:`Context`. Lazy users usually do not need to keep
-    the return value because module-level helpers (``runq.report``,
-    ``runq.record``) read the singleton themselves.
+    the return value because module-level helpers (``runq.log``,
+    ``runq.result``) read the singleton themselves.
 
     Modes:
 
@@ -311,7 +319,9 @@ def context() -> Context:
     _ctx = Context(
         mode=mode,
         task_id=task_id,
-        job_id=env.get("RUNQ_JOB_ID", ""),
+        experiment_id=env.get("RUNQ_EXPERIMENT_ID") or env.get("RUNQ_JOB_ID", ""),
+        cell=env.get("RUNQ_CELL") or env.get("RUNQ_RUN_NAME", ""),
+        version=_int_or_zero(env.get("RUNQ_VERSION")) or 1,
         project=env.get("RUNQ_PROJECT_NAME", ""),
         task_dir=task_dir,
         checkpoint_dir=checkpoint_dir,

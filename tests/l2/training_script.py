@@ -69,7 +69,7 @@ def main() -> int:
         with open(started_marker, "w") as f:
             f.write(f"task_id={ctx.task_id}\n")
 
-    runq.report({"loss": 1.0}, step=0)
+    runq.log({"loss": 1.0}, step=0)
     runq.safe_save(
         "ckpt.pt",
         {"step": 0, "loss": 1.0},
@@ -77,7 +77,7 @@ def main() -> int:
         size_hint=100,
         step=0,
     )
-    runq.report({"loss": 0.5}, step=1)
+    runq.log({"loss": 0.5}, step=1)
 
     finished_marker = os.environ.get("RUNQ_E2E_FINISHED_MARKER")
     if finished_marker:

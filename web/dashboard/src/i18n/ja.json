@@ -795,5 +795,19 @@
   "drafts.append": "{n} 件を追加",
   "drafts.append_title": "この実験に追加しますか？",
   "drafts.append_body": "{id}（{target}）に {n} バージョンを追加します。成功済み・実行中のセルはスキップされます。",
-  "drafts.nothing_to_append": "すべてのセルが実験に存在します"
+  "drafts.nothing_to_append": "すべてのセルが実験に存在します",
+  "job.tab_curves": "曲線",
+  "views.default_views": "セクション別",
+  "views.default_hint": "結果に記録された情報（index 軸・表示する誤差・単位・向き）からレイアウトしています。変更するにはここから：",
+  "views.metric": "指標",
+  "views.better_higher": "大きいほど良い",
+  "views.better_lower": "小さいほど良い",
+  "curves.none": "まだ曲線がありません。学習スクリプトで次のように記録します：",
+  "curves.pinned": "ピン留め",
+  "curves.pinned_hint": "このプロジェクトのすべての実験で上に表示",
+  "curves.ungrouped": "（log_group なし）",
+  "curves.n_curves": "{n} 個のグラフ",
+  "curves.pin": "このプロジェクトでピン留め",
+  "curves.unpin": "ピン留めを外す",
+  "curves.unreadable": "{cells} の曲線を読み込めません（その target にここから接続できません）。"
 }

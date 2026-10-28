@@ -14,7 +14,7 @@ def _read_events(path):
 def test_report_single_metric_writes_one_event(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
-    runq.report({"loss": 0.42}, step=5)
+    runq.log({"loss": 0.42}, step=5)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert len(events) == 1
     assert events[0]["type"] == "metric"
@@ -26,7 +26,7 @@ def test_report_single_metric_writes_one_event(clean_env, tmp_path, monkeypatch)
 def test_report_multiple_metrics_writes_one_event_each(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
-    runq.report({"loss": 0.5, "acc": 0.9, "lr": 1e-4}, step=3)
+    runq.log({"loss": 0.5, "acc": 0.9, "lr": 1e-4}, step=3)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert len(events) == 3
     keys = sorted(e["key"] for e in events)
@@ -40,7 +40,7 @@ def test_report_empty_metrics_writes_no_events(clean_env, tmp_path, monkeypatch)
     """report({}) is valid and emits nothing."""
     monkeypatch.chdir(tmp_path)
     runq.context()
-    runq.report({})
+    runq.log({})
     metrics_file = tmp_path / "runq_metrics.jsonl"
     # Either no file or zero events.
     if metrics_file.exists():
@@ -51,7 +51,7 @@ def test_report_non_dict_raises(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
     with pytest.raises(TypeError, match="must be a dict"):
-        runq.report(["loss", 0.5])  # type: ignore[arg-type]
+        runq.log(["loss", 0.5])  # type: ignore[arg-type]
 
 
 # ---- step semantics: writeback + fallback ------------------------
@@ -59,15 +59,15 @@ def test_report_non_dict_raises(clean_env, tmp_path, monkeypatch):
 def test_report_explicit_step_writes_back_to_ctx(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     ctx = runq.context()
-    runq.report({"loss": 0.5}, step=7)
+    runq.log({"loss": 0.5}, step=7)
     assert ctx.current_step == 7
 
 
 def test_report_step_none_uses_ctx_fallback(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
-    runq.report({"a": 1.0}, step=4)
-    runq.report({"a": 2.0})  # no step → falls back to ctx (4)
+    runq.log({"a": 1.0}, step=4)
+    runq.log({"a": 2.0})  # no step → falls back to ctx (4)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert [e["step"] for e in events] == [4, 4]
 
@@ -77,7 +77,7 @@ def test_report_step_zero_preserved(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     ctx = runq.context()
     ctx.current_step = 99  # noise that fallback would pick up if step=0 misread
-    runq.report({"loss": 0.5}, step=0)
+    runq.log({"loss": 0.5}, step=0)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert events[0]["step"] == 0
     assert ctx.current_step == 0  # writeback also went through
@@ -86,7 +86,7 @@ def test_report_step_zero_preserved(clean_env, tmp_path, monkeypatch):
 def test_report_step_none_with_unset_ctx_writes_null(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
-    runq.report({"loss": 0.5})
+    runq.log({"loss": 0.5})
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert events[0]["step"] is None
 
@@ -96,7 +96,7 @@ def test_report_step_none_with_unset_ctx_writes_null(clean_env, tmp_path, monkey
 def test_report_returns_none(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
-    assert runq.report({"loss": 0.5}, step=1) is None
+    assert runq.log({"loss": 0.5}, step=1) is None
 
 
 # ---- value coercion ----------------------------------------------
@@ -104,7 +104,7 @@ def test_report_returns_none(clean_env, tmp_path, monkeypatch):
 def test_report_coerces_int_value_to_float(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()
-    runq.report({"count": 42}, step=1)
+    runq.log({"count": 42}, step=1)
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert events[0]["value"] == 42.0
     assert isinstance(events[0]["value"], float)
@@ -114,11 +114,21 @@ def test_report_nonfinite_writes_null_and_warns_once(clean_env, tmp_path, monkey
     """NaN/Inf become JSON null (Go cannot parse a bare NaN); training goes on."""
     monkeypatch.chdir(tmp_path)
     runq.context()
-    runq.report({"loss": float("nan"), "acc": 0.5}, step=1)
-    runq.report({"loss": float("inf")}, step=2)
+    runq.log({"loss": float("nan"), "acc": 0.5}, step=1)
+    runq.log({"loss": float("inf")}, step=2)
     text = (tmp_path / "runq_metrics.jsonl").read_text()
     assert "NaN" not in text and "Infinity" not in text
     events = _read_events(tmp_path / "runq_metrics.jsonl")
     assert [(e["key"], e["value"]) for e in events] == [("loss", None), ("acc", 0.5), ("loss", None)]
     err = capsys.readouterr().err
     assert err.count("'loss'") == 1 and "null" in err
+
+
+def test_older_names_warn(clean_env, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runq.context()
+    with pytest.warns(DeprecationWarning, match=r"runq\.log\(\)"):
+        runq.report({"loss": 1.0})
+    with pytest.warns(DeprecationWarning, match=r"runq\.result\(\)"):
+        runq.record({"acc": 1.0})
+    assert _read_events(tmp_path / "runq_metrics.jsonl")[0]["key"] == "loss"

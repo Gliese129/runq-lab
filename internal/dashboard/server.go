@@ -229,6 +229,7 @@ func (s *Server) registerRoutes() {
 
 	// ── §5.5 Tasks ───────────────────────────────────────────────────
 	s.registerViews()
+	s.registerCurves()
 	s.mux.HandleFunc("GET /api/v1/tasks", s.handleListTasks) // ?job=&status=&target=&limit=&offset=
 	s.mux.HandleFunc("GET /api/v1/tasks/{id}", s.handleGetTask)
 	s.mux.HandleFunc("GET /api/v1/tasks/{id}/log", s.handleTaskLog)

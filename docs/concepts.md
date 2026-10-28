@@ -109,8 +109,8 @@ Each version gets a workspace under `<data>/<project_id>/<experiment_id>/<task_i
 
 ```
 params.json       — exact parameters for this version
-metrics.jsonl     — metric stream (runq.report)
-results.jsonl     — result records (runq.record)
+metrics.jsonl     — metric stream (runq.log)
+results.jsonl     — result records (runq.result)
 links.json        — external pages (runq.link)
 outputs/          — RUNQ_OUTPUT_DIR / ctx.output_dir
 checkpoints/      — RUNQ_CHECKPOINT_DIR / ctx.checkpoint_dir (this version's own)

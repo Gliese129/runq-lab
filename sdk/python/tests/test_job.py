@@ -49,7 +49,7 @@ def test_job_reads_snapshot(clean_env, job_dir):
     job = runq.experiment(job_dir, producer="score")
     assert (job.id, job.name, job.project, job.status, job.observed_at) == ("jb1", "kl sweep", "kl", "done", 40)
     assert job.dir == job_dir
-    t1, t2 = job.tasks
+    t1, t2 = [c.selected for c in job.cells]
     assert (t1.id, t1.run_name, t1.status, t1.params) == ("tk1", "R1", "success", {"kl": 0.1})
     assert t1.task_dir == job_dir / "tk1"
     assert t1.output_dir == job_dir / "tk1" / "outputs"
@@ -66,7 +66,7 @@ def test_job_rebases_recorded_paths_on_the_dir_read(clean_env, tmp_path):
     (d / "tk1").mkdir(parents=True)
     (d / "tk2").mkdir()
     (d / "job.json").write_text(json.dumps(_snapshot(d, recorded_root="/gs/work/kl/jb1")))
-    t1 = runq.experiment(d, producer="score").tasks[0]
+    t1 = runq.experiment(d, producer="score").cells[0].selected
     assert t1.task_dir == d / "tk1"
     assert t1.output_dir == d / "tk1" / "outputs"
 
@@ -89,7 +89,7 @@ def test_job_missing_snapshot_explains(clean_env, tmp_path):
 def test_producer_defaults_to_the_script_name(clean_env, job_dir, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["/home/me/eval/score_math.py", str(job_dir)])
     job = runq.experiment(job_dir)
-    job.tasks[0].record({"acc": 0.5})
+    [c.selected for c in job.cells][0].result({"acc": 0.5})
     assert (job_dir / "tk1" / "results.score_math.jsonl").exists()
 
 
@@ -114,9 +114,9 @@ def test_task_record_matches_runq_record(clean_env, job_dir, tmp_path, monkeypat
     monkeypatch.setenv("RUNQ_METRICS_FILE", str(task / "metrics.jsonl"))
     runq.context()
     with pytest.warns(UserWarning, match="dropped"):
-        runq.record({"acc": 0.5, "bad": float("nan")}, section="math", split="test", step=100)
+        runq.result({"acc": 0.5, "bad": float("nan")}, section="math", split="test", step=100)
     with pytest.warns(UserWarning, match="dropped"):
-        runq.experiment(job_dir, producer="score").tasks[0].record(
+        runq.experiment(job_dir, producer="score").cells[0].selected.result(
             {"acc": 0.5, "bad": float("nan")}, section="math", split="test", step=100)
     own, scored = _lines(task / "results.jsonl"), _lines(job_dir / "tk1" / "results.score.jsonl")
     for rec in own + scored:
@@ -126,26 +126,26 @@ def test_task_record_matches_runq_record(clean_env, job_dir, tmp_path, monkeypat
 
 
 def test_task_record_freezes_schema_across_handles_and_restarts(clean_env, job_dir):
-    t = runq.experiment(job_dir, producer="score").tasks[0]
-    t.record({"acc": 0.5}, section="math", split="test")
+    t = runq.experiment(job_dir, producer="score").cells[0].selected
+    t.result({"acc": 0.5}, section="math", split="test")
     # A second handle in the same process shares the frozen keys.
     with pytest.warns(UserWarning, match="keys changed"):
-        runq.experiment(job_dir, producer="score").tasks[0].record({"acc": 0.6, "f1": 0.1}, section="math", split="test")
+        runq.experiment(job_dir, producer="score").cells[0].selected.result({"acc": 0.6, "f1": 0.1}, section="math", split="test")
     # A restarted script recovers them from the file.
-    from runq import _record
+    from runq import _result as _record
     _record._reset_for_tests()
     with pytest.warns(UserWarning, match="keys changed"):
-        runq.experiment(job_dir, producer="score").tasks[0].record({"f1": 0.2}, section="math", split="test")
+        runq.experiment(job_dir, producer="score").cells[0].selected.result({"f1": 0.2}, section="math", split="test")
     recs = _lines(job_dir / "tk1" / "results.score.jsonl")
     assert [r["metrics"] for r in recs] == [{"acc": 0.5}, {"acc": 0.6}, {"acc": None}]
     # Producers are separate sources: another producer starts fresh.
-    runq.experiment(job_dir, producer="judge").tasks[0].record({"f1": 0.3}, section="math", split="test")
+    runq.experiment(job_dir, producer="judge").cells[0].selected.result({"f1": 0.3}, section="math", split="test")
     assert _lines(job_dir / "tk1" / "results.judge.jsonl")[0]["metrics"] == {"f1": 0.3}
 
 
 def test_task_record_without_context(clean_env, job_dir):
     """A scoring script is not a task: no runq.context() needed."""
-    runq.experiment(job_dir, producer="score").tasks[1].record({"acc": 0.1})
+    runq.experiment(job_dir, producer="score").cells[1].selected.result({"acc": 0.1})
     assert _lines(job_dir / "tk2" / "results.score.jsonl")[0]["metrics"] == {"acc": 0.1}
 
 
@@ -205,7 +205,7 @@ def test_cells_and_versions(clean_env, tmp_path):
         (d / t).mkdir(parents=True)
     (d / "job.json").write_text(json.dumps(snap))
     exp = runq.experiment(d, producer="score")
-    assert [t.id for t in exp.tasks] == ["tk1", "tk3"]
+    assert [t.id for t in [c.selected for c in exp.cells]] == ["tk1", "tk3"]
     assert [t.id for t in exp.versions] == ["tk1", "tk2", "tk3"]
     assert [(c.name, c.selected.id, [v.version for v in c.versions]) for c in exp.cells] == [("R1", "tk1", [1]), ("R2", "tk3", [1, 2])]
 
@@ -213,3 +213,16 @@ def test_cells_and_versions(clean_env, tmp_path):
 def test_job_is_the_older_name(clean_env, job_dir):
     with pytest.warns(DeprecationWarning, match="runq.experiment"):
         assert runq.job(job_dir, producer="score").id == "jb1"
+
+
+def test_cell_params_and_older_names(clean_env, job_dir):
+    exp = runq.experiment(job_dir, producer="score")
+    cell = exp.cells[0]
+    assert cell.params == cell.selected.params
+    with pytest.warns(DeprecationWarning, match="exp.cells"):
+        assert [t.id for t in exp.tasks] == [c.selected.id for c in exp.cells]
+    with pytest.warns(DeprecationWarning, match=r"\.result\(\)"):
+        cell.selected.record({"acc": 0.5}, section="math")
+    from runq import _job
+    with pytest.warns(DeprecationWarning, match="Version"):
+        assert _job.JobTask is _job.Version

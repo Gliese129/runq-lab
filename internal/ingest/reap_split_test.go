@@ -57,6 +57,25 @@ func TestReapResultsNormal(t *testing.T) {
 	}
 }
 
+// A runq.stats series row keeps its est object and names its index axis.
+func TestReapResultsEstAndIndex(t *testing.T) {
+	taskDir := t.TempDir()
+	writeTaskFile(t, workspace.ResultsPath(taskDir), []string{
+		`{"ts":1,"section":"s","axes":{"k":4},"index":["k"],"metrics":{"pass":{"value":0.5,"stderr":0.04,"n":125,"show":["STDERR"]}}}`,
+	})
+	st := openMemoryStoreAndSeed(t, "t1", "j1", taskDir)
+	if _, err := ReapIncremental(context.Background(), st, Target{TaskID: "t1", JobID: "j1", Dir: taskDir}, false); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.ListResultRecords(context.Background(), "j1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].IndexJSON != `["k"]` || !strings.Contains(rows[0].MetricsJSON, `"stderr":0.04`) {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
 func TestReapResultsIncrementalAndIdempotent(t *testing.T) {
 	taskDir := t.TempDir()
 	path := workspace.ResultsPath(taskDir)

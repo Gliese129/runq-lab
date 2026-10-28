@@ -170,12 +170,31 @@ func (s *Server) handleJobView(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal([]byte(t.ParamsJSON), &p)
 		rows = append(rows, job.Row{Params: p})
 	}
-	results, err := views.JobViews(j.ProjectName, input, job.VaryingKeys(rows), time.Now().Unix())
+	results, specs, err := views.JobViews(j.ProjectName, input, job.VaryingKeys(rows), time.Now().Unix())
 	if err != nil {
 		viewError(w, err)
 		return
 	}
-	writeJSON(w, 200, views.JobView{JobID: j.ID, Views: results})
+	// ?format=latex|markdown|csv&name=<view>: one default view as text, as a
+	// saved view's render exports it.
+	if format := r.URL.Query().Get("format"); format != "" && format != "json" {
+		name := r.URL.Query().Get("name")
+		for _, res := range results {
+			if res.Name == name {
+				text, err := views.Export(res, format, r.URL.Query().Get("wide") == "true", r.URL.Query().Get("latex_color") == "true")
+				if err != nil {
+					writeErr(w, 400, "invalid_view", err.Error())
+					return
+				}
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				fmt.Fprint(w, text)
+				return
+			}
+		}
+		writeErr(w, 404, "not_found", "no default view "+name)
+		return
+	}
+	writeJSON(w, 200, views.JobView{JobID: j.ID, Views: results, Specs: specs})
 }
 
 func (s *Server) handleRenderView(w http.ResponseWriter, r *http.Request) {

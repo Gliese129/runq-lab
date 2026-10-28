@@ -10,13 +10,18 @@ license = "MIT"
 authors = [{name = "runq contributors"}]
 
 # No runtime dependencies: every write is a file in the task directory, and
-# runq.job("jb…") talks to the local service with the standard library.
+# runq.experiment("ex…") talks to the local service with the standard library.
+# runq.stats needs numpy (the "stats" extra); `import runq` does not.
 dependencies = []
 
 [project.optional-dependencies]
+stats = [
+    "numpy>=1.22",
+]
 dev = [
     "pytest>=7.0",
     "ruff>=0.6",
+    "numpy>=1.22",
 ]
 # Convenience: pip install -e ".[wandb]" pulls wandb for users who want
 # the L3 mirror integration. Core SDK still works without it.

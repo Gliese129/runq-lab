@@ -191,13 +191,20 @@ CREATE TABLE IF NOT EXISTS record_latest (
  task_id TEXT NOT NULL, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
  section TEXT NOT NULL, key_json TEXT NOT NULL, step REAL, ts INTEGER NOT NULL,
  axes_json TEXT NOT NULL, metrics_json TEXT NOT NULL,
+ index_json TEXT NOT NULL DEFAULT '[]',
  PRIMARY KEY(task_id, section, key_json)
 );
 CREATE INDEX IF NOT EXISTS record_latest_job ON record_latest(job_id);
 CREATE TABLE IF NOT EXISTS record_schema (
  source_id TEXT NOT NULL, job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
  section TEXT NOT NULL, axes_json TEXT NOT NULL, metrics_json TEXT NOT NULL,
- warning TEXT NOT NULL DEFAULT '', PRIMARY KEY(source_id, section)
+ warning TEXT NOT NULL DEFAULT '', kinds_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(source_id, section)
+);
+-- Curves pinned on top of every experiment's curves page of a project
+-- (a viewing preference set in the web UI).
+CREATE TABLE IF NOT EXISTS curve_pins (
+ project_name TEXT NOT NULL, key TEXT NOT NULL, position INTEGER NOT NULL,
+ PRIMARY KEY(project_name, key)
 );
 CREATE TABLE IF NOT EXISTS views (
  project_name TEXT NOT NULL, name TEXT NOT NULL, spec_json TEXT NOT NULL,

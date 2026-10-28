@@ -1,31 +1,34 @@
 """``runq.experiment()`` — read an experiment, write results for its cells.
 
 A scoring script (or any script that is not the task itself) reads an
-experiment's cells and records results for each of them::
+experiment's cells and writes results for each of them::
 
     import runq
+    from runq import stats
 
     exp = runq.experiment("/work/kl/ex7817…")   # the experiment directory
     for cell in exp.cells:
-        t = cell.selected                      # the version the cell shows
-        if t.status != "success":
+        v = cell.selected                      # the version the cell shows
+        if v.status != "success":
             continue
-        acc = score(t.output_dir / "preds.jsonl")
-        t.record({"acc": acc}, section="math", split="test")
+        correct = score(v.output_dir / "preds.jsonl")   # bool (problems, samples)
+        v.result({"acc": stats.pass_at_k(correct)}, section="math")
 
-``exp.tasks`` is the selected version of every cell; ``cell.versions`` (and
+``cell.params`` are the selected version's params; ``cell.versions`` (and
 ``exp.versions``) also hold the versions a cell no longer shows. Reads
 ``<experiment_dir>/job.json``, which runq writes at submit and whenever a
-refresh sees the experiment change. ``t.record`` is ``runq.record`` for that task:
-same validation, same schema freezing, written to
+refresh sees the experiment change. ``v.result`` is ``runq.result`` for that
+version: same validation, same schema freezing, written to
 ``<task_dir>/results.<producer>.jsonl`` (producer: the script's file name
-unless given). runq ingests those files like the task's own results.jsonl;
+unless given). runq ingests those files like the version's own results.jsonl;
 views tell producers apart.
 
 Run the script where the job directory is readable (the cluster's login
 node for an HPC target). No runq service is needed, except to resolve an
 ``ex…`` (or older ``jb…``) id instead of a path. ``runq.job()`` is the
-older name of ``runq.experiment()``.
+older name of ``runq.experiment()``; ``JobTask``, ``exp.tasks`` and
+``.record()`` are the older names of ``Version``, the cells' selected
+versions and ``.result()``.
 """
 from __future__ import annotations
 
@@ -39,15 +42,15 @@ import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ._record import _writer
+from ._result import _writer
 
 _PRODUCER = re.compile(r"^[A-Za-z0-9_.-]+$")
 _JOB_ID = re.compile(r"^(ex|jb)[0-9a-zA-Z]+$")
 
 
 @dataclass(frozen=True)
-class JobTask:
-    """One version of a cell (a task), as of the job.json snapshot."""
+class Version:
+    """One version of a cell (one execution), as of the job.json snapshot."""
 
     id: str
     run_name: str
@@ -68,9 +71,21 @@ class JobTask:
     def results_file(self) -> Path:
         return self.task_dir / f"results.{self.producer}.jsonl"
 
+    def result(self, values: dict | None = None, *, section: str | None = None, **axes) -> None:
+        """``runq.result`` for this version, written as this script's results."""
+        _writer(self.results_file).write_values(values, section, axes, fn=".result", stacklevel=3)
+
     def record(self, metrics: dict | None = None, *, section: str | None = None, **axes) -> None:
-        """``runq.record`` for this task, written as this script's results."""
-        _writer(self.results_file).write(metrics, section, axes, stacklevel=3)
+        """Deprecated: renamed :meth:`result`."""
+        warnings.warn(".record() is renamed .result()", DeprecationWarning, stacklevel=2)
+        _writer(self.results_file).write_values(metrics, section, axes, fn=".result", stacklevel=3)
+
+
+def __getattr__(name: str):
+    if name == "JobTask":  # the older name of Version
+        warnings.warn("JobTask is renamed Version", DeprecationWarning, stacklevel=2)
+        return Version
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 @dataclass(frozen=True)
@@ -78,8 +93,13 @@ class Cell:
     """One cell: its versions (oldest first) and the one it shows."""
 
     name: str
-    selected: JobTask
-    versions: list[JobTask]
+    selected: Version
+    versions: list[Version]
+
+    @property
+    def params(self) -> dict:
+        """The selected version's params."""
+        return self.selected.params
 
 
 @dataclass(frozen=True)
@@ -93,20 +113,22 @@ class Experiment:
     target: str
     created_at: int | None
     dir: Path
-    versions: list[JobTask]  # every version of every cell
+    versions: list[Version]  # every version of every cell
     updated_at: int | None
     observed_at: int | None
     observation_state: str
 
     @property
-    def tasks(self) -> list[JobTask]:
-        """The selected version of every cell."""
-        return [t for t in self.versions if t.selected]
+    def tasks(self) -> list[Version]:
+        """Deprecated: ``[c.selected for c in exp.cells]``."""
+        warnings.warn("exp.tasks is deprecated; use [c.selected for c in exp.cells]",
+                      DeprecationWarning, stacklevel=2)
+        return [c.selected for c in self.cells]
 
     @property
     def cells(self) -> list[Cell]:
         """The cells in order of first appearance."""
-        by_name: dict[str, list[JobTask]] = {}
+        by_name: dict[str, list[Version]] = {}
         for t in self.versions:
             by_name.setdefault(t.run_name or t.id, []).append(t)
         out = []
@@ -167,7 +189,7 @@ def job(ref: str | os.PathLike | None = None, *, producer: str | None = None) ->
     return experiment(ref, producer=producer)
 
 
-def _task(job_dir: Path, t: dict, producer: str) -> JobTask:
+def _task(job_dir: Path, t: dict, producer: str) -> Version:
     # job.json records target paths. Rebase them on the directory actually
     # read, so a job read through another mount point still writes in place.
     recorded = t.get("task_dir") or t["id"]
@@ -182,7 +204,7 @@ def _task(job_dir: Path, t: dict, producer: str) -> JobTask:
                 return Path(raw)
         return task_dir / default
 
-    return JobTask(
+    return Version(
         id=t["id"],
         run_name=t.get("run_name", ""),
         status=t.get("status", ""),

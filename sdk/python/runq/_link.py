@@ -11,14 +11,31 @@ without one (offline, disabled, a non-zero rank) records nothing.
 Sink: ``links.json`` next to ``metrics.jsonl`` — one small JSON object,
 rewritten atomically on every call so runq's reap never reads a partial
 file. Last write per name wins.
+
+A W&B run object (anything with ``.log``) linked as ``"wandb"`` is also
+kept for this process: ``runq.log`` forwards each call to its
+``.log(dict, step=)``. ``runq.result`` is not mirrored; instead the run's
+summary gets ``summary["runq"]`` = where the results are — the dashboard
+page runq passes in ``RUNQ_RESULTS_URL`` when it serves one, else the
+version reference ``ex…/<cell>@vN`` (``runq show`` takes it).
 """
 from __future__ import annotations
 
 import json
 import sys
 
+import os
+
 from ._context import get_ctx
 from .utils import atomic_write
+
+# name → run object linked in this process (only objects with .log).
+_runs: dict = {}
+
+
+def linked_run(name: str):
+    """The run object linked under ``name`` in this process, or None."""
+    return _runs.get(name)
 
 
 def link(name: str, value) -> None:
@@ -30,6 +47,9 @@ def link(name: str, value) -> None:
     """
     if not isinstance(name, str) or not name:
         raise ValueError("runq.link: name must be a non-empty string")
+    if name == "wandb" and value is not None and callable(getattr(value, "log", None)):
+        _runs[name] = value
+        _write_summary(value)
     if value is None or isinstance(value, str):
         url = value
     elif hasattr(value, "url"):
@@ -63,3 +83,24 @@ def link(name: str, value) -> None:
     except OSError as e:
         # Observability must never kill a training run.
         print(f"runq: failed to write {path}: {e}", file=sys.stderr)
+
+
+def _write_summary(run) -> None:
+    """``run.summary["runq"]`` = this version's results page (or its reference)."""
+    summary = getattr(run, "summary", None)
+    if summary is None:
+        return
+    ctx = get_ctx()
+    where = os.environ.get("RUNQ_RESULTS_URL")
+    if not where and ctx.experiment_id:
+        where = f"{ctx.experiment_id}/{ctx.cell}@v{ctx.version}" if ctx.cell else ctx.experiment_id
+    if not where:
+        return
+    try:
+        summary["runq"] = where
+    except Exception as e:  # never fail a run over a summary key
+        print(f"runq: failed to set the W&B run summary: {e!r}", file=sys.stderr)
+
+
+def _reset_for_tests() -> None:
+    _runs.clear()

@@ -109,7 +109,21 @@ func (b *Backend) planDeps() submitplan.Deps {
 		PreflightFS:           b.FS,
 		PreflightEnvSetup:     b.Cfg.EnvSetup,
 		SchedulerParams:       config.HPCTemplateParamRefs(b.Cfg.SubmitTemplate),
+		DashboardBase:         dashboardBase(b.StorageCfg),
 	}
+}
+
+// dashboardBase is the dashboard URL runq serves, or "" when it serves none.
+func dashboardBase(cfg *config.GlobalConfig) string {
+	// Same rule as the service: no dashboard block = on, at 127.0.0.1:8077.
+	if cfg == nil || cfg.Dashboard != nil && !cfg.Dashboard.Enabled {
+		return ""
+	}
+	listen := "127.0.0.1:8077"
+	if cfg.Dashboard != nil && cfg.Dashboard.Listen != "" {
+		listen = cfg.Dashboard.Listen
+	}
+	return utils.DashboardBase(listen)
 }
 
 // WorkspaceRoot is THE single decision point for where this target puts a

@@ -15,6 +15,8 @@ export interface ViewColumn {
   better?: 'higher' | 'lower'
   /** pivot value this column belongs to */
   group?: unknown
+  /** metric_rows: the pivot value this column shows (named "<axis>=<at>") */
+  at?: unknown
 }
 
 export interface Contributor {
@@ -41,6 +43,13 @@ export interface ViewCell {
   rank?: number
   delta?: number
   delta_text?: string
+  /** a runq.stats estimate's own presentation: what it shows (STD, STDERR,
+   *  CI95, N), its unit and better, and the band its shown error spans */
+  show?: string[]
+  unit?: string
+  better?: 'higher' | 'lower'
+  lo?: number
+  hi?: number
   contributors?: Contributor[]
 }
 
@@ -102,6 +111,8 @@ export interface ViewResult {
   charts?: ChartSpec[]
   data?: Record<string, ViewData>
   row_keys: string[]
+  /** the axis pivoted into column groups (metric_rows: the columns' axis) */
+  pivot_axis?: string
   highlight?: Record<string, string>
   /** row-key display formats, e.g. { 'param.lr': 'sci0' } */
   key_formats?: Record<string, string>
@@ -133,4 +144,34 @@ export interface SeriesResult {
 export interface FramesResult {
   by: 'step' | 'time'
   frames: { at: number; rows: ViewRow[] }[]
+}
+
+/** GET /jobs/{id}/view: the experiment's default views and their specs. */
+export interface JobDefaultViews {
+  job_id: string
+  views: ViewResult[]
+  specs: Record<string, unknown>[]
+}
+
+/** GET /jobs/{id}/curves: every runq.log curve of the cells' selected
+ *  versions, plus the project's pinned keys. */
+export interface CurveLine {
+  task_id: string
+  cell: string
+  step: number[]
+  value: number[]
+  lo?: (number | null)[]
+  hi?: (number | null)[]
+  series?: { name: string; axis: string; at: unknown }
+}
+export interface JobCurve {
+  key: string
+  lines: CurveLine[]
+}
+export interface JobCurves {
+  job_id: string
+  pins: string[]
+  curves: JobCurve[]
+  /** cells whose metrics.jsonl could not be read (e.g. target gone) */
+  unreadable: { task_id: string; cell: string; error: string }[]
 }

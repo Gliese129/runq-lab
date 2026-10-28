@@ -7,7 +7,7 @@ counter before every test.
 """
 import pytest
 
-from runq import _context, _events, _prefix, _record, _report
+from runq import _context, _events, _link, _log, _prefix, _result
 
 
 @pytest.fixture(autouse=True)
@@ -15,8 +15,9 @@ def _reset_sdk():
     """Reset all SDK module-level state before each test."""
     _context._reset_for_tests()
     _events._reset_for_tests()
-    _report._reset_for_tests()
-    _record._reset_for_tests()
+    _log._reset_for_tests()
+    _link._reset_for_tests()
+    _result._reset_for_tests()
     # Reset the log_group prefix stack — otherwise a test that
     # crashes inside `with log_group():` would leak its prefix into
     # the next test's metric keys.
@@ -24,8 +25,9 @@ def _reset_sdk():
     yield
     _context._reset_for_tests()
     _events._reset_for_tests()
-    _report._reset_for_tests()
-    _record._reset_for_tests()
+    _log._reset_for_tests()
+    _link._reset_for_tests()
+    _result._reset_for_tests()
     _prefix._prefix_stack.set(())
 
 
