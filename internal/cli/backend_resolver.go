@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gliese129/runq-lab/internal/api"
@@ -89,4 +90,14 @@ func resolveTaskRef(ctx context.Context, be backend.Backend, ref string) (string
 		return "", err
 	}
 	return v.ID, nil
+}
+
+// isExperimentRef: an experiment id (ex…, or an older job's jb…) or prefix.
+func isExperimentRef(ref string) bool {
+	return !strings.Contains(ref, "/") && (strings.HasPrefix(ref, "ex") || strings.HasPrefix(ref, "jb"))
+}
+
+// isVersionRef: a task id (tk…) or <experiment>/<cell>[@vN].
+func isVersionRef(ref string) bool {
+	return strings.HasPrefix(ref, "tk") || strings.Contains(ref, "/")
 }

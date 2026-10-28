@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
-	"reflect"
+	"strconv"
 	"sync"
 
 	"github.com/gliese129/runq-lab/internal/job"
@@ -15,11 +15,13 @@ import (
 
 // appendTarget is the existing job an append (`--into jb…`) adds to.
 type appendTarget struct {
-	job   *store.JobRow
-	root  string // the job directory: new tasks live next to the old ones
-	tasks []store.TaskRow
-	first store.JobBatch // its name is the W&B group of every batch
-	seq   int            // the batch number this append gets
+	job     *store.JobRow
+	root    string // the experiment's directory on this lane's target ("" = none yet)
+	tasks   []store.TaskRow
+	picks   map[string]string // pinned versions: cell → task id
+	batches []store.JobBatch
+	first   store.JobBatch // its name is the W&B group of every submission
+	seq     int            // the submission number this append gets
 }
 
 var appendLocks sync.Map // job id → *sync.Mutex: one append per job at a time
@@ -42,9 +44,6 @@ func (b *Backend) loadAppendTarget(ctx context.Context, jobID, project string) (
 	if j.ProjectName != project {
 		return nil, fmt.Errorf("--into %s: the job belongs to project %q, not %q", j.ID, j.ProjectName, project)
 	}
-	if j.Target != b.Cfg.Name {
-		return nil, fmt.Errorf("--into %s: the job runs on target %s, not %s; an append uses the job's target", j.ID, j.Target, b.Cfg.Name)
-	}
 	if j.ArchivedAt != nil {
 		return nil, fmt.Errorf("--into %s: the job is archived; unarchive it before appending", j.ID)
 	}
@@ -55,53 +54,71 @@ func (b *Backend) loadAppendTarget(ctx context.Context, jobID, project string) (
 	if err != nil {
 		return nil, err
 	}
+	// New versions live next to the experiment's earlier ones on this
+	// target; a submission to a target it has not run on gets a fresh
+	// directory there (named by the experiment id, like the first).
 	t := &appendTarget{job: j, tasks: tasks}
 	for _, task := range tasks {
-		if task.TaskDir != "" {
+		onLane := task.Target == b.Cfg.Name || task.Target == "" && j.Target == b.Cfg.Name
+		if task.TaskDir != "" && onLane {
 			t.root = path.Dir(task.TaskDir)
 			break
 		}
 	}
-	if t.root == "" {
-		return nil, fmt.Errorf("--into %s: the job has no task directory to append to", j.ID)
-	}
-	batches, err := b.Store.ListJobBatches(ctx, j.ID)
-	if err != nil {
+	if t.picks, err = b.Store.CellPicks(ctx, j.ID); err != nil {
 		return nil, err
 	}
-	if len(batches) > 0 {
-		t.first = batches[0]
-		t.seq = batches[len(batches)-1].Seq + 1
+	if t.batches, err = b.Store.ListJobBatches(ctx, j.ID); err != nil {
+		return nil, err
+	}
+	if len(t.batches) > 0 {
+		t.first = t.batches[0]
+		t.seq = t.batches[len(t.batches)-1].Seq + 1
 	} else {
 		t.first, t.seq = store.JobBatch{Name: j.Name}, 2
 	}
 	return t, nil
 }
 
-// AppendSummaryFor sorts rows against a job's tasks (live ones count;
-// every run name is taken). exclude holds the scheduler-only params.
-func AppendSummaryFor(tasks []store.TaskRow, rows []job.Row, exclude map[string]bool, rerunFailed bool, jobID string, seq int) job.AppendSummary {
-	existing := make([]job.ExistingCell, 0, len(tasks))
-	taken := make(map[string]bool, len(tasks))
-	for _, task := range tasks {
-		if task.RunName != "" {
-			taken[task.RunName] = true
+// ExistingCells describes a job's cells by their selected versions.
+// projectCmd stands in for a submission that ran the project's command.
+func ExistingCells(tasks []store.TaskRow, picks map[string]string, batches []store.JobBatch, projectCmd string) []job.ExistingCell {
+	commands := make(map[int]string, len(batches))
+	for _, b := range batches {
+		cmd := b.Command
+		if cmd == "" {
+			var cfg job.JobConfig
+			_ = json.Unmarshal([]byte(b.ConfigJSON), &cfg)
+			if cmd = cfg.Command; cmd == "" {
+				cmd = projectCmd
+			}
 		}
-		if task.SupersededBy != "" {
-			continue
-		}
-		var p job.TaskParams
-		_ = json.Unmarshal([]byte(task.ParamsJSON), &p)
-		existing = append(existing, job.ExistingCell{TaskID: task.ID, RunName: task.RunName, Status: task.Status, Params: p})
+		commands[b.Seq] = cmd
 	}
-	cells := job.ClassifyCells(rows, existing, exclude, rerunFailed)
-	return job.SummarizeCells(jobID, seq, cells, taken)
+	cells := store.GroupCells(tasks, picks)
+	out := make([]job.ExistingCell, 0, len(cells))
+	for _, c := range cells {
+		if c.Name == "" {
+			continue // a pre-rc6 task without a name: no row can name it
+		}
+		e := job.ExistingCell{Name: c.Name, Versions: len(c.Versions)}
+		for _, v := range c.Versions {
+			if !store.IsTerminalTaskStatus(v.Status) {
+				e.InFlight = true
+			}
+			if v.ID == c.Selected {
+				e.TaskID, e.Status, e.Command = v.ID, v.Status, commands[v.BatchSeq]
+				_ = json.Unmarshal([]byte(v.ParamsJSON), &e.Params)
+			}
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
-// classifyAppend sorts the plan's rows against the job's live tasks, keeps
-// only the tasks to submit (renaming new cells whose run name is taken) and
-// returns the summary plus the failed tasks the reruns supersede.
-func classifyAppend(plan *submitplan.Plan, t *appendTarget, rerunFailed bool) (job.AppendSummary, map[string]string) {
+// classifyAppend sorts the plan's rows against the job's cells and keeps only
+// the rows to submit: new cells and new versions of existing ones.
+func classifyAppend(plan *submitplan.Plan, t *appendTarget, rerun []string, projectCmd string) (job.AppendSummary, error) {
 	exclude := make(map[string]bool, len(plan.SchedulerParams))
 	for _, name := range plan.SchedulerParams {
 		exclude[name] = true
@@ -110,61 +127,25 @@ func classifyAppend(plan *submitplan.Plan, t *appendTarget, rerunFailed bool) (j
 	for i, task := range plan.Tasks {
 		rows[i] = job.Row{Run: task.RunName, Params: task.Params}
 	}
-	summary := AppendSummaryFor(t.tasks, rows, exclude, rerunFailed, t.job.ID, t.seq)
-	cells := summary.Cells
-
-	supersede := map[string]string{}
+	existing := ExistingCells(t.tasks, t.picks, t.batches, projectCmd)
+	cells, err := job.ClassifyCells(rows, existing, exclude, rerun, plan.CommandTemplate)
+	if err != nil {
+		return job.AppendSummary{}, fmt.Errorf("--into %s: %w", t.job.ID, err)
+	}
+	versions := make(map[string]int, len(existing))
+	for _, e := range existing {
+		versions[e.Name] = e.Versions
+	}
 	kept := plan.Tasks[:0]
 	for i, task := range plan.Tasks {
-		c := cells[i]
-		if c.Class != job.CellNew && c.Class != job.CellRerunFailed {
+		if cells[i].Class == job.CellSkipped {
 			continue
 		}
-		if c.Run != task.RunName {
-			task.RunName = c.Run
-			if task.Env != nil {
-				task.Env["RUNQ_RUN_NAME"] = c.Run
-			}
-		}
-		if c.Class == job.CellRerunFailed {
-			supersede[c.TaskID] = task.TaskID
+		if n := versions[task.RunName]; n > 0 && task.Env != nil {
+			task.Env["RUNQ_VERSION"] = strconv.Itoa(n + 1) // W&B names it "<cell> #N"
 		}
 		kept = append(kept, task)
 	}
 	plan.Tasks = kept
-	return summary, supersede
-}
-
-// checkSameRun refuses an append whose command or overrides differ from
-// the job's first batch: a job keeps one way of running, so one job.yaml
-// (runq export) still describes all of it. command is this batch's
-// effective template; the first batch's comes from its job.yaml command:,
-// else the project's template (projectCmd).
-func checkSameRun(jobID, command, projectCmd string, overrides *job.Overrides, first store.JobBatch) error {
-	var cfg job.JobConfig
-	_ = json.Unmarshal([]byte(first.ConfigJSON), &cfg)
-	firstCommand := cfg.Command
-	if firstCommand == "" {
-		firstCommand = projectCmd
-	}
-	if command != firstCommand {
-		return fmt.Errorf("--into %s: the command differs from the job's (job: %q, this batch: %q); a job keeps one command, so start a new job for this", jobID, firstCommand, command)
-	}
-	if !reflect.DeepEqual(normalizeOverrides(overrides), normalizeOverrides(cfg.Overrides)) {
-		return fmt.Errorf("--into %s: the overrides differ from the job's; a job keeps one set of overrides, so match them (runq export %s) or start a new job", jobID, jobID)
-	}
-	return nil
-}
-
-func normalizeOverrides(o *job.Overrides) any {
-	if o == nil {
-		return nil
-	}
-	raw, _ := json.Marshal(o)
-	if string(raw) == "{}" || string(raw) == "null" {
-		return nil
-	}
-	var v any
-	_ = json.Unmarshal(raw, &v)
-	return v
+	return job.SummarizeCells(t.job.ID, t.seq, cells), nil
 }

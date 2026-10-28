@@ -302,15 +302,8 @@ func (b *Backend) refreshJobStatus(ctx context.Context, jobID string) error {
 	// Deliberately UNscoped (review round 3): the job aggregate must see
 	// ALL generations' tasks — a lane judging terminality from only its
 	// own subset would close a job whose other-generation tasks still run.
-	tasks, err := b.Store.ListTasks(ctx, store.TaskFilter{JobID: jobID})
+	status, tasks, err := b.Store.RefreshJob(ctx, jobID, false)
 	if err != nil {
-		return err
-	}
-	status, err := store.ProjectJobStatus(tasks)
-	if err != nil {
-		return err
-	}
-	if err := b.Store.UpdateJobStatus(ctx, jobID, status); err != nil {
 		return err
 	}
 	if store.IsTerminalJobStatus(status) {

@@ -5,11 +5,12 @@ import (
 	"fmt"
 )
 
-// GenerateJobID / GenerateTaskID return typed ids ("jb"/"tk" + 8 hex):
+// GenerateJobID / GenerateTaskID return typed ids ("ex"/"tk" + 8 hex; an
+// experiment was a job, and older ones keep their "jb" ids):
 // the prefix makes a job and a task distinguishable at a glance — in paths,
 // qstat output and CLI arguments. The hex body keeps collision probability
 // negligible at lab scale.
-func GenerateJobID() string { return "jb" + GenerateID() }
+func GenerateJobID() string { return "ex" + GenerateID() }
 
 func GenerateTaskID() string { return "tk" + GenerateID() }
 

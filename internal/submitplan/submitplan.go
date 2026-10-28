@@ -337,14 +337,6 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 		}
 	}
 
-	runs := make([]string, len(rows))
-	for i, r := range rows {
-		runs[i] = r.Run
-	}
-	if err := job.DistinctCells(runs, taskParams, schedParams); err != nil {
-		return Plan{}, err
-	}
-
 	pf := preflight.DefaultPreflight()
 	pf.DisableLocal = d.PreflightDisableLocal
 	pf.Scope = d.PreflightScope

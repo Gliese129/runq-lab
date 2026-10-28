@@ -80,7 +80,7 @@ sweep:
 ```bash
 runq project project.yaml
 runq draft job.yaml                    # the plan: tasks, target, rendered command → dr… (nothing submitted)
-runq submit dr… --json                 # {"job_id": "jb…", "total_tasks": 6}
+runq submit dr… --json                 # {"job_id": "ex…", "total_tasks": 6}
 runq ps <job_id> --json --fresh        # task states
 runq logs <task_id> --grep 'loss' -n 20
 runq kill <job_id>
@@ -108,14 +108,14 @@ runq ps [job_id] --json [--fresh]     # jobs, or one job's tasks
 runq show <task_id>                   # command, dirs, status evidence (JSON)
 runq logs <task_id> --no-follow -n 200
 runq logs <task_id> --grep '<regex>' -n 20
-runq view --job <job_id> --json       # rows written by runq.record
+runq view --experiment <job_id> --json       # rows written by runq.record
 runq kill <task_id|job_id>
 runq draft job.yaml                  # after fixing a failed task, plan and submit a new one
-runq clean --job <job_id> --show      # preview; deletion is irreversible
+runq clean --experiment <job_id> --show      # preview; deletion is irreversible
 ```
 
-Structured commands provide JSON output. Job IDs look like `jb…`, tasks `tk…`.
-Reusable progress/paper tables and scoring scripts: [views and runq.job()](docs/views.md).
+Structured commands provide JSON output. Job IDs look like `ex…`, tasks `tk…`.
+Reusable progress/paper tables and scoring scripts: [views and runq.experiment()](docs/views.md).
 Full reference: [docs/cli.md](./docs/cli.md)
 
 ## For agents

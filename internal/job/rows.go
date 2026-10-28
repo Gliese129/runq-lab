@@ -9,34 +9,48 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TaskRow is one `tasks:` entry: a named run. `run` and `needs_code` are
-// row metadata; every other key is a param overriding fixed_params. Both
-// YAML and JSON keep the flat shape `{run: R1, lr: 2e-6, needs_code: [std]}`.
+// TaskRow is one `cells:` entry: a named cell. `cell` (formerly `run`) and
+// `needs_code` are row metadata; every other key is a param overriding
+// fixed_params. Both YAML and JSON keep the flat shape
+// `{cell: R1, lr: 2e-6, needs_code: [std]}`.
 type TaskRow struct {
 	Run       string
 	NeedsCode []string
 	Params    TaskParams
+
+	legacyRunKey bool // named with run: instead of cell:
 }
 
 // Row is one planned task: its run name, code-change note and full params.
+// Command is export-only: the template the row's selected version ran.
 type Row struct {
 	Run       string     `json:"run"`
 	NeedsCode []string   `json:"needs_code,omitempty"`
 	Params    TaskParams `json:"params"`
+	Command   string     `json:"-"`
 }
 
-// ReservedRowKeys never become params.
-var ReservedRowKeys = []string{"run", "needs_code"}
+// ReservedRowKeys never become params. cell names the row; run is its
+// older spelling.
+var ReservedRowKeys = []string{"cell", "run", "needs_code"}
 
 func (r *TaskRow) fromMap(m map[string]any) error {
 	r.Params = TaskParams{}
+	if c, ok := m["cell"]; ok && c != nil {
+		if run, ok := m["run"]; ok && run != nil && fmt.Sprint(run) != fmt.Sprint(c) {
+			return fmt.Errorf("a row names its cell twice (cell: %v, run: %v); keep cell:", c, run)
+		}
+	}
 	for k, v := range m {
 		switch k {
-		case "run":
+		case "cell", "run":
 			if v == nil {
 				continue
 			}
 			r.Run = strings.TrimSpace(fmt.Sprint(v))
+			if k == "run" {
+				r.legacyRunKey = true
+			}
 		case "needs_code":
 			switch vv := v.(type) {
 			case nil:
@@ -61,7 +75,7 @@ func (r TaskRow) toMap() map[string]any {
 	for k, v := range r.Params {
 		m[k] = v
 	}
-	m["run"] = r.Run
+	m["cell"] = r.Run
 	if len(r.NeedsCode) > 0 {
 		m["needs_code"] = r.NeedsCode
 	}
@@ -71,7 +85,7 @@ func (r TaskRow) toMap() map[string]any {
 func (r *TaskRow) UnmarshalYAML(value *yaml.Node) error {
 	var m map[string]any
 	if err := value.Decode(&m); err != nil {
-		return fmt.Errorf("tasks: each row is a mapping like {run: R1, lr: 2e-6}: %w", err)
+		return fmt.Errorf("cells: each row is a mapping like {cell: R1, lr: 2e-6}: %w", err)
 	}
 	return r.fromMap(m)
 }
@@ -88,13 +102,13 @@ func (r *TaskRow) UnmarshalJSON(b []byte) error {
 
 func (r TaskRow) MarshalJSON() ([]byte, error) { return json.Marshal(r.toMap()) }
 
-// Rows plans a job's tasks in order with run names. tasks: rows keep their
+// Rows plans a job's tasks in order with run names. cells: rows keep their
 // names; sweep rows are named by what differs from the baseline row
 // ("kl=0.1, seed=2"; the baseline itself is "base"). Validation errors say
 // which row is wrong.
 func Rows(cfg *JobConfig) ([]Row, error) {
 	if len(cfg.Tasks) > 0 && len(cfg.Sweep) > 0 {
-		return nil, fmt.Errorf("job has both sweep: and tasks: — use one (sweep generates rows, tasks lists them)")
+		return nil, fmt.Errorf("job has both sweep: and cells: — use one (sweep generates rows, cells lists them)")
 	}
 	var rows []Row
 	if len(cfg.Tasks) > 0 {

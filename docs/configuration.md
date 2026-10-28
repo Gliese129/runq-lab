@@ -164,11 +164,11 @@ overrides:                      # optional per-job overrides of project defaults
     WANDB_RUN_GROUP: sweep-v2
 ```
 
-### Named runs: `tasks:` instead of `sweep:`
+### Named cells: `cells:` instead of `sweep:`
 
-An ablation table is usually a handful of named runs, each changing one or
-two things from a baseline. List them as rows instead of a sweep (a job has
-one or the other):
+An experiment is the table the researcher will compare: a handful of named
+cells, each changing one or two things from a baseline. List them as rows
+instead of a sweep (an experiment has one or the other):
 
 ```yaml
 project: tij-guru-a1
@@ -176,22 +176,26 @@ name: A1 batch 1
 description: no code change, ~380 node_f h   # shown under the plan table
 baseline: B0                                 # optional; default = first row
 fixed_params: { lr: 0.000001, beta: 0.01, seed: s1, std: on }
-tasks:
-  - { run: B0 }                              # every row = fixed_params + its own keys
-  - { run: "B0'", seed: s2 }
-  - { run: R1 lr, lr: 0.000002 }
-  - { run: R5 Dr.GRPO, std: off, needs_code: [std] }
+cells:
+  - { cell: B0 }                             # every row = fixed_params + its own keys
+  - { cell: "B0'", seed: s2 }
+  - { cell: R1 lr, lr: 0.000002 }
+  - { cell: R5 Dr.GRPO, std: off, needs_code: [std] }
 ```
 
-- `run` (required, unique in the job) names the row: it is the RUN column of
-  `runq ps <job>` and the W&B run name. `needs_code` (optional, param names)
-  notes that the row needs a code change first; the preview lists such rows,
-  and submitting does not wait for them. Neither key becomes a param.
+- `cell` (required, unique in the file) names the row: it is the CELL column of
+  `runq ps <ex…>`, the W&B run name, and the cell's identity — the same name in
+  a later `--into` draft is the same cell again (a new version), and must keep
+  its params apart from scheduler-only ones. `needs_code` (optional, param
+  names) notes that the row needs a code change first; the preview lists such
+  rows, and submitting does not wait for them. Neither key becomes a param.
+  The older spelling `tasks:` / `run:` still parses, with a warning.
 - Sweep rows get names too: what differs from the baseline row
   (`kl=0.1, seed=2`), and `base` for the baseline itself.
-- `runq export <jb…> [-o file]` writes any submitted job back in this form —
-  fixed_params from the baseline, each row only what differs. Submitting the
-  file again reproduces the same rows, names and params.
+- `runq export <ex…> [-o file]` writes an experiment back in this form —
+  fixed_params from the baseline, each row only what differs, one row per cell
+  from the version it shows. It is a snapshot: runq's ledger keeps the full
+  record (every version, each submission's command).
 
 ### Choosing grid vs list
 
@@ -226,9 +230,9 @@ top-level `data_path` still applies to local targets, as a fallback.
 |---|---|
 | `params.json` | the exact sweep-expanded parameters |
 | `metrics.jsonl` | per-step metric stream (SDK `report`) — dashboard curves |
-| `results.jsonl` | result records (SDK `record(metrics, **axes)`) — `runq view --job` and the dashboard results view |
+| `results.jsonl` | result records (SDK `record(metrics, **axes)`) — `runq view --experiment` and the dashboard results view |
 | `links.json` | external pages reported by SDK `runq.link` (e.g. the W&B run) |
-| `results.<producer>.jsonl` | results a scoring script recorded for the task (`runq.job()`) |
+| `results.<producer>.jsonl` | results a scoring script recorded for the task (`runq.experiment()`) |
 | `outputs/` | `RUNQ_OUTPUT_DIR` / `ctx.output_dir` — write training outputs here |
 | `checkpoints/` | `RUNQ_CHECKPOINT_DIR` / `ctx.checkpoint_dir` — stable across retries |
 | (task root) | `WANDB_DIR` / `ctx.wandb_dir` — W&B creates its own `wandb/` under it |
@@ -276,5 +280,5 @@ preflight:
 
 Views are project-scoped YAML files saved with `runq view <file.yaml>`. A job's
 `consumers:` key is ignored with a warning: scoring scripts run on their own and
-read the job with `runq.job()`. See [views.md](views.md). Each task ID executes
+read the job with `runq.experiment()`. See [views.md](views.md). Each task ID executes
 once; reruns are new submissions.

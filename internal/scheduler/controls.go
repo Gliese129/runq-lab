@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	"github.com/gliese129/runq-lab/internal/store"
 )
 
 // ── Job pause/resume ──────────────────────────────────────────────────────
@@ -153,12 +151,6 @@ func (s *Scheduler) ClearKillRequest(taskID string) {
 //     store.TerminalJobStatus: done / killed / failed / partial
 //   - otherwise (some pending, none running) → keep current status
 func (s *Scheduler) RefreshJobStatus(jobID string) {
-	tasks, err := s.store.ListTasks(s.ctx, store.TaskFilter{JobID: jobID})
-	if err != nil {
-		s.logger.Error("refresh job status: list tasks failed", "job", jobID, "error", err)
-		return
-	}
-
 	// Preserve the "paused" control state — UNCONDITIONALLY. Pause is a human
 	// intent (same grammar as the kill flag, RQ-69): it outlives mechanical
 	// task terminality and is released only by another human action. Even when
@@ -166,18 +158,8 @@ func (s *Scheduler) RefreshJobStatus(jobID string) {
 	// (ResumeJob clears the set and re-runs this aggregation, which then lands
 	// the terminal split) or kills (killJob clears the pause via ClearPause).
 	// Rewriting paused → done here would silently discard the control state a
-	// user is still holding.
-	if s.isJobPaused(jobID) {
-		return
-	}
-
-	newStatus, err := store.ProjectJobStatus(tasks)
-	if err != nil {
-		s.logger.Error("refresh job status: invalid task state", "job", jobID, "error", err)
-		return
-	}
-
-	if err := s.store.UpdateJobStatus(s.ctx, jobID, newStatus); err != nil {
-		s.logger.Error("refresh job status: update failed", "job", jobID, "status", newStatus, "error", err)
+	// user is still holding. The selected versions are refreshed either way.
+	if _, _, err := s.store.RefreshJob(s.ctx, jobID, s.isJobPaused(jobID)); err != nil {
+		s.logger.Error("refresh job status failed", "job", jobID, "error", err)
 	}
 }

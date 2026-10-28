@@ -88,13 +88,13 @@ func TestJobFilesPublishJobJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	snap := readSnapshot(t, f.jobDir)
-	if snap.Version != 1 || snap.Job.ID != "job" || snap.Job.Name != "sweep" || snap.Job.Project != "project" || snap.Job.Target != "local" || snap.Job.Status != "done" {
+	if snap.Version != 2 || snap.Job.ID != "job" || snap.Job.Name != "sweep" || snap.Job.Project != "project" || snap.Job.Target != "local" || snap.Job.Status != "done" {
 		t.Fatalf("job header: %+v", snap.Job)
 	}
-	if len(snap.Tasks) != 1 {
-		t.Fatalf("superseded task must be left out: %+v", snap.Tasks)
+	if len(snap.Tasks) != 2 || snap.Tasks[0].ID != "old" || snap.Tasks[0].Selected || snap.Tasks[0].Version != 1 || !snap.Tasks[1].Selected || snap.Tasks[1].Version != 2 {
+		t.Fatalf("every version, numbered, the selected one marked: %+v", snap.Tasks)
 	}
-	got := snap.Tasks[0]
+	got := snap.Tasks[1]
 	if got.ID != "task" || got.RunName != "R1" || got.Status != "success" || got.Params["lr"] != 0.1 ||
 		got.TaskDir != f.taskDir || got.OutputDir != filepath.Join(f.taskDir, "outputs") ||
 		got.CheckpointDir != filepath.Join(f.taskDir, "checkpoints") || got.BatchSeq != 1 ||
@@ -174,7 +174,7 @@ func TestJobFilesIngestProducerResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(records) != 1 || records[0].TaskID != "task@score_math" || records[0].Section != "math" {
-		t.Fatalf("records = %+v (want one task@score_math record; superseded and invalid names skipped)", records)
+		t.Fatalf("records = %+v (want one task@score_math record; a replaced version's and invalid names left out)", records)
 	}
 
 	// The file grows (an unterminated tail waits); the latest per identity wins.

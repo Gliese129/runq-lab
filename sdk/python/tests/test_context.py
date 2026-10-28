@@ -178,3 +178,17 @@ def test_params_get_requires_an_explicit_default():
         p["lrr"]
 
 
+
+
+def test_seed_is_per_cell_not_per_version(clean_env, tmp_path, monkeypatch):
+    import runq._context as rc
+
+    seeds = []
+    for task in ("t1", "t2"):
+        monkeypatch.setenv("RUNQ_TASK_ID", task)
+        monkeypatch.setenv("RUNQ_TASK_DIR", str(tmp_path / task))
+        monkeypatch.setenv("RUNQ_EXPERIMENT_ID", "ex1")
+        monkeypatch.setenv("RUNQ_CELL", "base")
+        rc._ctx = None
+        seeds.append(runq.context().seed)
+    assert seeds[0] == seeds[1]

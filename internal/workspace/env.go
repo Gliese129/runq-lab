@@ -38,6 +38,7 @@ func BaseEnv(id Identity) map[string]string {
 	env := make(map[string]string, 10)
 	env["RUNQ_TASK_ID"] = id.TaskID
 	env["RUNQ_JOB_ID"] = id.JobID
+	env["RUNQ_EXPERIMENT_ID"] = id.JobID // RUNQ_JOB_ID is its older name
 	env["RUNQ_PROJECT_NAME"] = id.Project
 
 	if id.TaskDir != "" {
@@ -60,6 +61,7 @@ func BaseEnv(id Identity) map[string]string {
 	}
 	if id.RunName != "" {
 		env["RUNQ_RUN_NAME"] = id.RunName
+		env["RUNQ_CELL"] = id.RunName // RUNQ_RUN_NAME is its older name
 	}
 	if id.JobName != "" {
 		env["RUNQ_JOB_NAME"] = id.JobName

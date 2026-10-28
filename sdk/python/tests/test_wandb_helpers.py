@@ -243,3 +243,13 @@ def test_wandb_like_cfg_uses_run_and_job_names(clean_env, tmp_path, monkeypatch)
     cfg = runq.context().wandb_like_cfg
     assert cfg["name"] == "R1 lr"
     assert cfg["group"] == "A1 第一批消融"
+
+
+def test_wandb_name_numbers_later_versions(clean_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("RUNQ_TASK_ID", "t2")
+    monkeypatch.setenv("RUNQ_TASK_DIR", str(tmp_path))
+    monkeypatch.setenv("RUNQ_JOB_ID", "ex1")
+    monkeypatch.setenv("RUNQ_CELL", "base")
+    monkeypatch.setenv("RUNQ_VERSION", "3")
+    cfg = runq.context().wandb_like_cfg
+    assert cfg["name"] == "base #3" and cfg["id"] == "t2"

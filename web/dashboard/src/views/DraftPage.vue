@@ -32,7 +32,7 @@
       <div v-if="res.draft.description" class="text-body-2 mb-3">{{ res.draft.description }}</div>
 
       <div v-if="res.append" class="append mb-2">
-        <div>{{ t('drafts.append_summary', { batch: res.append.batch, new: res.append.new, existing: res.append.skipped_existing, failed: res.append.skipped_failed, rerun: res.append.rerun_failed }) }}</div>
+        <div>{{ t('drafts.append_summary', { batch: res.append.batch, new: res.append.new, version: res.append.new_version, skipped: res.append.skipped, rerun: res.append.rerun }) }}</div>
       </div>
       <PlanTable :rows="res.rows" :baseline="res.baseline" :tags="cellTags" :accent="cellAccent" :dim="cellDim" />
 
@@ -144,12 +144,13 @@ async function reloadAfterConflict() {
 // An append (into): each row's verdict — new cells stand out, skipped
 // ones fade.
 const cells = computed(() => res.value?.append?.cells ?? [])
-const cellTags = computed(() => cells.value.map((c) => t(`drafts.cell_${c.class}`)))
-const cellAccent = computed(() => cells.value.map((c) => c.class === 'new' || c.class === 'rerun_failed'))
-const cellDim = computed(() => cells.value.map((c) => c.class === 'skipped_existing' || c.class === 'skipped_failed'))
+const cellTags = computed(() => cells.value.map((c) =>
+  t(`drafts.cell_${c.class}`) + (c.command_changed ? ' · ' + t('drafts.command_changed') : '')))
+const cellAccent = computed(() => cells.value.map((c) => c.class !== 'skipped'))
+const cellDim = computed(() => cells.value.map((c) => c.class === 'skipped'))
 const appendCount = computed(() => {
   const a = res.value?.append
-  return a ? a.new + a.rerun_failed : undefined
+  return a ? a.new + a.new_version + a.rerun : undefined
 })
 
 async function submit() {

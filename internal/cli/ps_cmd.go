@@ -19,7 +19,7 @@ import (
 var psCmd = &cobra.Command{
 	Use:     "ps [job_id]",
 	Aliases: []string{"ls"},
-	Short:   "List jobs, or the tasks of one job",
+	Short:   "List experiments, or the versions of one experiment's cells",
 	Example: `  runq ps               # job table
   runq ps 8f2a           # task table for job 8f2a
   runq ps --json

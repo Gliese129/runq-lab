@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -23,10 +22,6 @@ type JobBatch struct {
 	ConfigJSON  string    `json:"-"`
 	DraftID     string    `json:"draft_id,omitempty"`
 }
-
-// ErrAppendRaced means a cell changed between planning and the append
-// (e.g. a failed task was retried meanwhile); planning again fixes it.
-var ErrAppendRaced = errors.New("the job changed while appending; preview again")
 
 func batchSeqOrFirst(seq int) int {
 	if seq <= 0 {
@@ -115,10 +110,10 @@ func (s *Store) NextBatchSeq(ctx context.Context, jobID string) (int, error) {
 }
 
 // AppendTasks adds a batch of tasks to an existing job in one transaction:
-// the batch record, the task rows (stamped with the batch), the failed
-// tasks they rerun (supersede: old task id → new task id), then the job's
-// total_tasks and status from its live tasks. It returns the batch seq.
-func (s *Store) AppendTasks(ctx context.Context, b JobBatch, tasks []TaskRow, supersede map[string]string) (int, error) {
+// the batch record, the task rows (stamped with the batch; a task whose run
+// name the job already has is a new version of that cell), then the job is
+// refreshed (selected versions, status, total_tasks). It returns the seq.
+func (s *Store) AppendTasks(ctx context.Context, b JobBatch, tasks []TaskRow) (int, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin tx: %w", err)
@@ -152,50 +147,11 @@ func (s *Store) AppendTasks(ctx context.Context, b JobBatch, tasks []TaskRow, su
 			return 0, fmt.Errorf("insert task %s: %w", tasks[i].ID, err)
 		}
 	}
-	for old, repl := range supersede {
-		res, err := tx.ExecContext(ctx, `UPDATE tasks SET superseded_by = ? WHERE id = ? AND job_id = ? AND status IN ('failed', 'killed') AND superseded_by IS NULL`, repl, old, b.JobID)
-		if err != nil {
-			return 0, err
-		}
-		if n, _ := res.RowsAffected(); n != 1 {
-			return 0, fmt.Errorf("task %s: %w", old, ErrAppendRaced)
-		}
-	}
-
-	live, err := liveJobTasksTx(ctx, tx, b.JobID)
-	if err != nil {
-		return 0, err
-	}
-	next, err := ProjectJobStatus(live)
-	if err != nil {
-		return 0, err
-	}
-	var finished any // live work again: the job is no longer finished
-	if IsTerminalJobStatus(next) {
-		finished = time.Now().Unix()
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET total_tasks = ?, status = ?, finished_at = ? WHERE id = ?`, len(live), next, finished, b.JobID); err != nil {
+	if _, _, err := refreshJobTx(ctx, tx, b.JobID, false); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit tx: %w", err)
 	}
 	return b.Seq, nil
-}
-
-func liveJobTasksTx(ctx context.Context, tx *sql.Tx, jobID string) ([]TaskRow, error) {
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT %s FROM tasks WHERE job_id = ? AND superseded_by IS NULL`, allTaskColumns), jobID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []TaskRow
-	for rows.Next() {
-		t, err := scanTask(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *t)
-	}
-	return out, rows.Err()
 }

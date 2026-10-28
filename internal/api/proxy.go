@@ -225,6 +225,14 @@ func (p *Proxy) ListTasks(ctx context.Context, opts backend.TaskListOptions) ([]
 	return env.Items, total, nil
 }
 
+func (p *Proxy) PinVersion(ctx context.Context, jobRef, cell, taskID string) (string, error) {
+	var out struct {
+		Status string `json:"status"`
+	}
+	err := p.do(ctx, "PUT", "/api/v1/jobs/"+url.PathEscape(jobRef)+"/cells/"+url.PathEscape(cell)+"/pin", map[string]string{"task_id": taskID}, &out)
+	return out.Status, err
+}
+
 func (p *Proxy) RenameJob(ctx context.Context, ref, newName string) (string, error) {
 	var out struct {
 		ID string `json:"id"`
@@ -750,8 +758,9 @@ func (p *Proxy) DiscardDraft(ctx context.Context, ref string) error {
 }
 
 var (
-	_ backend.Drafter     = (*Proxy)(nil)
-	_ backend.JobExporter = (*Proxy)(nil)
-	_ backend.Sectioner   = (*Proxy)(nil)
-	_ backend.JobRenamer  = (*Proxy)(nil)
+	_ backend.Drafter       = (*Proxy)(nil)
+	_ backend.JobExporter   = (*Proxy)(nil)
+	_ backend.Sectioner     = (*Proxy)(nil)
+	_ backend.JobRenamer    = (*Proxy)(nil)
+	_ backend.VersionPinner = (*Proxy)(nil)
 )

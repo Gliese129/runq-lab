@@ -31,8 +31,8 @@ runq.record({"acc": acc}, seed=ctx.seed, split="val")  # axis-keyed result row
 ```
 
 Checkpoints go under `ctx.checkpoint_dir` (`<task_dir>/checkpoints`). runq does
-not retry tasks: a rerun (`runq draft job.yaml --into jb… --rerun-failed`) is a
-new task with its own directory, so to resume, pass the old checkpoint as a
+not retry tasks: running a cell again (`runq draft job.yaml --into ex…` with the
+same run name) makes a new version of it with its own directory, so to resume, pass the old checkpoint as a
 param (`fixed_params: { resume_from: <path> }`, `--resume_from {{resume_from}}`).
 runq does not manage checkpoint lifecycle or early stopping — those belong to
 your training script.
@@ -49,11 +49,11 @@ Detected automatically at `runq.context()`:
 
 `ctx.mode` exposes which mode is active.
 
-## Scoring scripts: read a job
+## Scoring scripts: read an experiment
 
 ```python
-job = runq.job("/path/to/job_dir")          # the folder holding job.json
-for t in job.tasks:
+exp = runq.experiment("/path/to/experiment_dir")   # the folder holding job.json
+for t in exp.tasks:
     if t.status == "success":
         t.record({"acc": score(t.output_dir)}, section="math")
 ```

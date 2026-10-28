@@ -29,6 +29,7 @@
             <td v-for="(cell, ci) in row.cells" :key="ci" class="vt-num" :title="cellTitle(cell)">
               <span :class="rankClass(cell)">{{ cell.text }}</span>
               <span v-if="cell.delta_text" class="vt-delta" :class="deltaClass(cell, result.columns[ci])">({{ deltaMark(cell, result.columns[ci]) }}{{ cell.delta_text }})</span>
+              <div v-if="cellMeta(cell)" class="vt-meta" :class="{ bad: cellMeta(cell)!.bad }">{{ cellMeta(cell)!.text }}</div>
             </td>
             <td v-if="hasState" class="vt-state">{{ row.state ?? '' }}</td>
           </template>
@@ -100,6 +101,19 @@ function deltaMark(cell: ViewCell, col?: ViewColumn): string {
   return v === 'better' ? '▲ ' : v === 'worse' ? '▼ ' : ''
 }
 
+// Where a value came from: "status: success; version: latest" (or the
+// pinned version's number). Aggregates over several versions say "mixed"
+// when they differ.
+function cellMeta(cell: ViewCell): { text: string; bad: boolean } | null {
+  const cs = (cell.contributors ?? []).filter((c) => c.status)
+  if (!cs.length) return null
+  const statuses = new Set(cs.map((c) => c.status))
+  const versions = new Set(cs.map((c) => (c.pinned ? String(c.version) : 'latest')))
+  const status = statuses.size === 1 ? cs[0].status! : 'mixed'
+  const version = versions.size === 1 ? [...versions][0] : 'mixed'
+  return { text: `status: ${status}; version: ${version}`, bad: status !== 'success' }
+}
+
 function cellTitle(cell: ViewCell): string {
   const parts: string[] = []
   if (cell.n !== undefined) parts.push(`n = ${cell.n}`)
@@ -121,6 +135,8 @@ function cellTitle(cell: ViewCell): string {
 .vt th { font-weight: 500; }
 .vt-key { text-align: left; }
 .vt-num { text-align: right; }
+.vt-meta { font-family: var(--font-mono); font-size: 10.5px; color: rgb(var(--v-theme-on-surface-variant)); line-height: 1.3; }
+.vt-meta.bad { color: rgb(var(--v-theme-error)); }
 .vt-top th { border-top: 1.5px solid rgb(var(--v-theme-on-surface)); }
 .vt-mid th { border-bottom: 0.75px solid rgb(var(--v-theme-on-surface)); }
 .vt-bottom { border-bottom: 0.75px solid rgb(var(--v-theme-on-surface)); }

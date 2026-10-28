@@ -46,9 +46,10 @@ func setStatus(t *testing.T, st *store.Store, id, status string) {
 	}
 }
 
-// Acceptance: a finished 6-cell job (one failed) grows to 9 cells in the
-// same job; --rerun-failed reruns the failure as a new task; once every cell
-// exists there is nothing to append and no batch is recorded.
+// Acceptance: a finished 6-cell job (one failed, one running) grows to 9
+// cells in the same job; the failed cell gets a new version by default; a
+// succeeded cell runs again only on request; once every cell succeeded or
+// runs there is nothing to append and no submission is recorded.
 func TestAppendIntoJob(t *testing.T) {
 	ctx := context.Background()
 	b, proj := appendFixture(t)
@@ -70,7 +71,7 @@ func TestAppendIntoJob(t *testing.T) {
 		}
 		setStatus(t, b.Store, r.ID, status)
 	}
-	failedID := rows[0].ID
+	failed := rows[0]
 
 	more := gridCfg([]any{0, 1, 2}, map[string]any{"h_rt": "4:00:00"})
 	more.Name, more.Into = "more seeds", jobID
@@ -79,10 +80,10 @@ func TestAppendIntoJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Append == nil || plan.Append.New != 3 || plan.Append.SkippedExisting != 5 || plan.Append.SkippedFailed != 1 || plan.Append.RerunFailed != 0 {
+	if plan.Append == nil || plan.Append.New != 3 || plan.Append.NewVersion != 1 || plan.Append.Skipped != 5 {
 		t.Fatalf("preview append = %+v\n%s", plan.Append, text)
 	}
-	if !strings.Contains(text, "new 3, skipped_existing 5, skipped_failed 1") || !strings.Contains(text, "(the job's directory)") {
+	if !strings.Contains(text, "new 3, new_version 1, skipped 5") || !strings.Contains(text, "(the job's directory)") {
 		t.Errorf("preview text:\n%s", text)
 	}
 
@@ -91,12 +92,12 @@ func TestAppendIntoJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotID != jobID || len(added) != 3 || summary.Batch != 2 || summary.New != 3 {
+	if gotID != jobID || len(added) != 4 || summary.Batch != 2 || summary.New != 3 || summary.NewVersion != 1 {
 		t.Fatalf("append: job %s, %d tasks, summary %+v", gotID, len(added), summary)
 	}
 	j, _ := b.Store.GetJob(ctx, jobID)
 	if j.TotalTasks != 9 || j.Status != "running" || j.FinishedAt != nil {
-		t.Fatalf("job after append: total %d, status %s, finished %v", j.TotalTasks, j.Status, j.FinishedAt)
+		t.Fatalf("job after append: total %d cells, status %s, finished %v", j.TotalTasks, j.Status, j.FinishedAt)
 	}
 	jobDir := filepath.Dir(rows[0].TaskDir)
 	for _, r := range added {
@@ -108,44 +109,53 @@ func TestAppendIntoJob(t *testing.T) {
 			t.Errorf("appended task %s does not keep the job's W&B group", r.ID)
 		}
 	}
+	old, _ := b.Store.GetTask(ctx, failed.ID)
+	var version store.TaskRow
+	for _, r := range added {
+		if r.RunName == failed.RunName {
+			version = r
+		}
+	}
+	if version.ID == "" || old.SupersededBy != version.ID {
+		t.Fatalf("the failed cell's new version: %q, old superseded_by %q", version.ID, old.SupersededBy)
+	}
 	batches, _ := b.Store.ListJobBatches(ctx, jobID)
-	if len(batches) != 2 || batches[1].Name != "more seeds" || batches[1].TaskCount != 3 {
+	if len(batches) != 2 || batches[1].Name != "more seeds" || batches[1].TaskCount != 4 {
 		t.Fatalf("batches = %+v", batches)
 	}
 
-	// --rerun-failed: only the failed cell runs again, as a new task.
-	more.RerunFailed = true
+	// --rerun: a succeeded cell runs again; the others are skipped.
+	ran := rows[2].RunName
+	more.Rerun = []string{ran}
 	summary = job.AppendSummary{}
-	_, rerun, err := b.Prepare(ctx, more, proj, SubmitOpts{Append: &summary})
+	_, again, err := b.Prepare(ctx, more, proj, SubmitOpts{Append: &summary})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rerun) != 1 || summary.New != 0 || summary.RerunFailed != 1 || summary.Batch != 3 {
-		t.Fatalf("rerun: %d tasks, %+v", len(rerun), summary)
+	if len(again) != 1 || again[0].RunName != ran || summary.Rerun != 1 || summary.Batch != 3 {
+		t.Fatalf("rerun: %d tasks, %+v", len(again), summary)
 	}
-	old, _ := b.Store.GetTask(ctx, failedID)
-	if old.SupersededBy != rerun[0].ID || rerun[0].RunName != old.RunName {
-		t.Fatalf("old failed task: superseded_by %q (want %s), names %q / %q", old.SupersededBy, rerun[0].ID, old.RunName, rerun[0].RunName)
-	}
-	j, _ = b.Store.GetJob(ctx, jobID)
-	if j.TotalTasks != 9 {
-		t.Errorf("total after rerun = %d, want 9 (the superseded task is history)", j.TotalTasks)
+	if j, _ = b.Store.GetJob(ctx, jobID); j.TotalTasks != 9 {
+		t.Errorf("total after rerun = %d cells, want 9", j.TotalTasks)
 	}
 
-	// Everything exists now: nothing to append, no batch.
+	// Every cell succeeded or runs now: nothing to append, no submission.
+	more.Rerun = nil
 	_, _, err = b.Prepare(ctx, more, proj, SubmitOpts{})
-	if !errors.Is(err, job.ErrNothingToAppend) || !strings.Contains(err.Error(), "all 9 cells already exist") {
+	if !errors.Is(err, job.ErrNothingToAppend) || !strings.Contains(err.Error(), "all 9 cells") {
 		t.Fatalf("err = %v", err)
 	}
 	if batches, _ := b.Store.ListJobBatches(ctx, jobID); len(batches) != 3 {
-		t.Errorf("a failed append recorded a batch: %d", len(batches))
+		t.Errorf("a failed append recorded a submission: %d", len(batches))
 	}
 }
 
-func TestAppendRefusesOtherProjectAndTarget(t *testing.T) {
+// An append stays in its project, but a submission may run on another
+// target: its versions get the experiment's directory there.
+func TestAppendOtherProjectAndTarget(t *testing.T) {
 	ctx := context.Background()
 	b, proj := appendFixture(t)
-	jobID, _, err := b.Prepare(ctx, gridCfg([]any{0}, nil), proj, SubmitOpts{})
+	jobID, rows, err := b.Prepare(ctx, gridCfg([]any{0}, nil), proj, SubmitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,53 +166,89 @@ func TestAppendRefusesOtherProjectAndTarget(t *testing.T) {
 	if _, _, err := b.Prepare(ctx, cfg, &other, SubmitOpts{}); err == nil || !strings.Contains(err.Error(), "belongs to project") {
 		t.Errorf("other project: %v", err)
 	}
-	b2 := &Backend{Cfg: &config.TargetConfig{Name: "elsewhere", SubmitTemplate: "echo 1", SubmitIDRegex: "([0-9]+)", KillTemplate: "true"}, Store: b.Store, FS: b.FS}
-	cfg = gridCfg([]any{1}, nil)
+	for _, r := range rows {
+		setStatus(t, b.Store, r.ID, "failed")
+	}
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	b2 := &Backend{Cfg: &config.TargetConfig{Name: "elsewhere", Scheduler: "sge", DataPath: elsewhere, SubmitTemplate: "echo 1", SubmitIDRegex: "([0-9]+)", KillTemplate: "true"}, Store: b.Store, FS: b.FS}
+	cfg = gridCfg([]any{0}, nil)
 	cfg.Into = jobID
-	if _, _, err := b2.Prepare(ctx, cfg, proj, SubmitOpts{}); err == nil || !strings.Contains(err.Error(), "runs on target fixture") {
-		t.Errorf("other target: %v", err)
+	_, added, err := b2.Prepare(ctx, cfg, proj, SubmitOpts{})
+	if err != nil || len(added) != 3 {
+		t.Fatalf("other target: %d versions, %v", len(added), err)
+	}
+	for _, r := range added {
+		if r.Target != "elsewhere" || !strings.HasPrefix(r.TaskDir, elsewhere) || filepath.Base(filepath.Dir(r.TaskDir)) != jobID {
+			t.Errorf("version on the other target: target %s, dir %s", r.Target, r.TaskDir)
+		}
+	}
+	if jobs, _ := b.Store.ListJobs(ctx, "", "elsewhere"); len(jobs) != 1 || jobs[0].ID != jobID {
+		t.Errorf("the experiment is listed on the other target too: %+v", jobs)
 	}
 }
 
-// A job keeps one command and one set of overrides: an append that changes
-// either is refused (approach/append-cell-rules), in preview and submit.
-func TestAppendRefusesDifferentCommandOrOverrides(t *testing.T) {
+// The command is a soft constraint: a new version may run another command
+// (flagged in the summary), and so may a new cell.
+func TestAppendAllowsAnotherCommand(t *testing.T) {
 	ctx := context.Background()
 	b, proj := appendFixture(t)
-	jobID, _, err := b.Prepare(ctx, gridCfg([]any{0}, nil), proj, SubmitOpts{})
+	jobID, rows, err := b.Prepare(ctx, gridCfg([]any{0}, nil), proj, SubmitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := gridCfg([]any{1}, nil)
-	cfg.Into, cfg.Command = jobID, "python second.py --lr {{lr}} --seed {{seed}}"
-	if _, _, err := b.Prepare(ctx, cfg, proj, SubmitOpts{}); err == nil || !strings.Contains(err.Error(), "command differs") {
-		t.Errorf("submit with another command: %v", err)
+	for i, r := range rows {
+		status := "success"
+		if i == 0 {
+			status = "failed"
+		}
+		setStatus(t, b.Store, r.ID, status)
 	}
-	if _, _, err := b.CompilePreview(ctx, cfg, proj); err == nil || !strings.Contains(err.Error(), "command differs") {
-		t.Errorf("preview with another command: %v", err)
-	}
-	cfg.Command = proj.CmdTemplate // spelled out, but the same command
+	cfg := gridCfg([]any{0, 1}, nil)
+	cfg.Into, cfg.Command = jobID, "venv/bin/python t.py --lr {{lr}} --seed {{seed}}"
 	gpus := 2
 	cfg.Overrides = &job.Overrides{GPUsPerTask: &gpus}
-	if _, _, err := b.Prepare(ctx, cfg, proj, SubmitOpts{}); err == nil || !strings.Contains(err.Error(), "overrides differ") {
-		t.Errorf("submit with other overrides: %v", err)
+	var summary job.AppendSummary
+	if _, added, err := b.Prepare(ctx, cfg, proj, SubmitOpts{Append: &summary}); err != nil || len(added) != 4 {
+		t.Fatalf("append with another command: %d tasks, %v", len(added), err)
 	}
-	cfg.Overrides = nil
-	if _, _, err := b.Prepare(ctx, cfg, proj, SubmitOpts{}); err != nil {
-		t.Errorf("same command spelled out: %v", err)
+	for _, c := range summary.Cells {
+		if c.CommandChanged != (c.Class == job.CellNewVersion) {
+			t.Errorf("cell %s (%s): command_changed %v", c.Run, c.Class, c.CommandChanged)
+		}
 	}
 }
 
-// Two rows that differ only in a scheduler param are one cell: the plan is
-// refused before anything is submitted, so one failure is never rerun twice.
-func TestPlanRefusesDuplicateCells(t *testing.T) {
+// A row that names an existing cell must keep its params (scheduler-only
+// ones aside): two drafts whose baselines differ name different cells alike.
+func TestAppendRefusesSameNameOtherParams(t *testing.T) {
+	ctx := context.Background()
+	b, proj := appendFixture(t)
+	cfg := job.JobConfig{Project: "kl", Tasks: []job.TaskRow{{Run: "base", Params: job.TaskParams{"lr": 1e-4, "seed": 0}}}}
+	jobID, rows, err := b.Prepare(ctx, cfg, proj, SubmitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setStatus(t, b.Store, rows[0].ID, "failed")
+	cfg.Into = jobID
+	cfg.Tasks[0].Params = job.TaskParams{"lr": 1e-4, "seed": 1, "h_rt": "2:00:00"}
+	if _, _, err := b.Prepare(ctx, cfg, proj, SubmitOpts{}); err == nil || !strings.Contains(err.Error(), "seed=1 (the cell has 0)") {
+		t.Fatalf("same name, other seed: %v", err)
+	}
+	cfg.Tasks[0].Params = job.TaskParams{"lr": 1e-4, "seed": 0, "h_rt": "2:00:00"}
+	if _, added, err := b.Prepare(ctx, cfg, proj, SubmitOpts{}); err != nil || len(added) != 1 {
+		t.Fatalf("same cell, new walltime: %d, %v", len(added), err)
+	}
+}
+
+// Two rows with the same params under different names are two cells.
+func TestPlanAllowsSameParamsUnderTwoNames(t *testing.T) {
 	ctx := context.Background()
 	b, proj := appendFixture(t)
 	cfg := job.JobConfig{Project: "kl", Tasks: []job.TaskRow{
 		{Run: "A", Params: job.TaskParams{"lr": 1e-4, "seed": 0, "h_rt": "1:00:00"}},
 		{Run: "B", Params: job.TaskParams{"lr": 1e-4, "seed": 0, "h_rt": "2:00:00"}},
 	}}
-	if _, _, err := b.Prepare(ctx, cfg, proj, SubmitOpts{}); err == nil || !strings.Contains(err.Error(), "same cell") {
-		t.Fatalf("duplicate cells: %v", err)
+	if _, rows, err := b.Prepare(ctx, cfg, proj, SubmitOpts{}); err != nil || len(rows) != 2 {
+		t.Fatalf("two names: %d, %v", len(rows), err)
 	}
 }

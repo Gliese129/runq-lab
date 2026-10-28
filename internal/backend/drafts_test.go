@@ -118,7 +118,7 @@ func TestDraftEditIsRevChecked(t *testing.T) {
 		t.Fatal(err)
 	}
 	text, _ := m.DraftYAML(ctx, res.Draft.ID)
-	edited := strings.Replace(string(text), "{run: base}", "{run: B0, lr: 0.000003}", 1)
+	edited := strings.Replace(string(text), "{cell: base}", "{cell: B0, lr: 0.000003}", 1)
 
 	ok, err := m.EditDraft(ctx, res.Draft.ID, edited)
 	if err != nil {
@@ -131,7 +131,7 @@ func TestDraftEditIsRevChecked(t *testing.T) {
 		t.Fatalf("stale rev must be refused, got %v", err)
 	}
 	bad := strings.Replace(edited, "rev: 1", "rev: 2", 1)
-	if _, err := m.EditDraft(ctx, res.Draft.ID, strings.Replace(bad, "{run: seed=2", "{run: B0", 1)); err == nil || !strings.Contains(err.Error(), "twice") {
+	if _, err := m.EditDraft(ctx, res.Draft.ID, strings.Replace(bad, "{cell: seed=2", "{cell: B0", 1)); err == nil || !strings.Contains(err.Error(), "twice") {
 		t.Fatalf("invalid plan must be refused, got %v", err)
 	}
 	if _, err := m.EditDraft(ctx, res.Draft.ID, strings.Replace(bad, "project: kl", "project: other", 1)); err == nil {

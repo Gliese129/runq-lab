@@ -19,7 +19,7 @@ import (
 
 var showCmd = &cobra.Command{
 	Use:   "show <jb… | tk… | dr… | pj… | project-name>",
-	Short: "Show one job, task, draft or project",
+	Short: "Show one experiment, version, draft or project",
 	Long: `Show anything by its id (a unique prefix is enough): a job (jb…: name,
 status counts, target, section, draft, and its run table), a task (tk…), a
 draft (dr…), or a project (pj… or its name).`,
@@ -32,11 +32,11 @@ draft (dr…), or a project (pj… or its name).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ref := args[0]
 		jsonOut, _ := cmd.Flags().GetBool("json")
-		if max, _ := waitMax(cmd); max > 0 && !strings.HasPrefix(ref, "jb") && !strings.HasPrefix(ref, "tk") {
+		if max, _ := waitMax(cmd); max > 0 && !isExperimentRef(ref) && !isVersionRef(ref) {
 			return errWaitUnsupported
 		}
 		switch {
-		case strings.HasPrefix(ref, "tk"):
+		case isVersionRef(ref):
 			return runTaskShow(cmd, args)
 		case strings.HasPrefix(ref, "dr"):
 			return showDraft(cmd, args)
@@ -46,7 +46,7 @@ draft (dr…), or a project (pj… or its name).`,
 		return withBackend(cmd, func(be backend.Backend) error {
 			ctx := cmd.Context()
 			switch {
-			case strings.HasPrefix(ref, "jb"):
+			case isExperimentRef(ref):
 				return showJob(cmd, be, ref, jsonOut)
 			}
 			cfg, err := be.GetProject(ctx, ref)
@@ -139,7 +139,7 @@ func showJob(cmd *cobra.Command, be backend.Backend, ref string, jsonOut bool) e
 // resolveJobRef expands a unique job-id prefix (archived jobs included).
 var archiveCmd = &cobra.Command{
 	Use:   "archive <jb… | pj… | project-name>",
-	Short: "Hide a job or a project from default lists (--restore brings it back)",
+	Short: "Hide an experiment or a project from default lists (--restore brings it back)",
 	Long: `Archive hides a job, or a project with all its jobs, from default lists.
 Nothing is deleted or moved; --restore undoes it. Projects with running or
 pending jobs cannot be archived.`,
@@ -150,7 +150,7 @@ pending jobs cannot be archived.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		restore, _ := cmd.Flags().GetBool("restore")
 		ref := args[0]
-		if strings.HasPrefix(ref, "jb") {
+		if isExperimentRef(ref) {
 			return withBackend(cmd, func(be backend.Backend) error {
 				id, err := resolveJobRef(cmd.Context(), be, ref)
 				if err != nil {
@@ -207,7 +207,7 @@ func runJobArchive(cmd *cobra.Command, jobID string, archive bool) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("job %s %s\n", utils.IDColor(jobID), verb)
+		fmt.Printf("experiment %s %s\n", utils.IDColor(jobID), verb)
 		return nil
 	})
 }

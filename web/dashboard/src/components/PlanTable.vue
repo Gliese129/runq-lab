@@ -7,6 +7,7 @@
             <th class="run">{{ t('plan.run') }}</th>
             <th v-for="c in model.columns" :key="c" class="mono">{{ c }}</th>
             <th v-if="statuses" class="status-col">{{ t('plan.status') }}</th>
+            <th v-if="$slots.extra">{{ extraHeader }}</th>
             <th v-if="hasNotes">{{ t('plan.note') }}</th>
           </tr>
         </thead>
@@ -27,6 +28,7 @@
             <td v-if="statuses" class="status-col">
               <StatusDot v-if="statuses[i]" :status="statuses[i]" kind="task" :size="7" />
             </td>
+            <td v-if="$slots.extra" class="extra" @click.stop><slot name="extra" :index="i" /></td>
             <td v-if="hasNotes" class="note">
               <span v-if="r.needsCode.length">{{ t('plan.needs_code', { params: r.needsCode.join(', ') }) }}</span>
             </td>
@@ -63,6 +65,8 @@ const props = defineProps<{
   accent?: boolean[]
   /** per-row: shown faded (e.g. a cell an append skips) */
   dim?: boolean[]
+  /** header of the #extra column (a per-row control, e.g. the version picker) */
+  extraHeader?: string
 }>()
 const emit = defineEmits<{ open: [index: number] }>()
 const { t } = useI18n()
@@ -93,6 +97,7 @@ const hasNotes = computed(() => model.value.rows.some((r) => r.needsCode.length 
 .plan-table tr.dim td { color: rgb(var(--v-theme-on-surface-variant)); }
 .missing { color: rgb(var(--v-theme-on-surface-variant)); }
 .status-col { width: 1%; }
+.extra { width: 1%; padding-top: 2px; padding-bottom: 2px; }
 .note { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
 .fixed { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
 .fixed-label { font-weight: 500; }

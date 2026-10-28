@@ -11,11 +11,11 @@ import (
 
 func printDashboardJobs(jobs []backend.JobSummary) error {
 	if len(jobs) == 0 {
-		fmt.Println("no jobs")
+		fmt.Println("no experiments")
 		return nil
 	}
 	w := newTable()
-	fmt.Fprintf(w, "NAME\tJOB_ID\tPROJECT\tSECTION\tSTATUS\tRUN\tPEND\tFAIL\tOK\n")
+	fmt.Fprintf(w, "NAME\tEXPERIMENT\tPROJECT\tSECTION\tSTATUS\tRUN\tPEND\tFAIL\tOK\n")
 	for _, job := range jobs {
 		name := job.Name
 		if name == "" {
@@ -44,9 +44,9 @@ func printDashboardTasks(tasks []backend.TaskView) error {
 	}
 	w := newTable()
 	if hasHPC {
-		fmt.Fprintf(w, "RUN\tTASK_ID\tEXT_ID\tSTATUS\tSCHED_STATE\tQUEUE\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
+		fmt.Fprintf(w, "CELL\tV\tID\tEXT_ID\tSTATUS\tSCHED_STATE\tQUEUE\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
 	} else {
-		fmt.Fprintf(w, "RUN\tTASK_ID\tSTATUS\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
+		fmt.Fprintf(w, "CELL\tV\tID\tSTATUS\tSTEP\tWAIT\tRESOURCE\tSCRIPT\tPARAMS\n")
 	}
 	for _, task := range tasks {
 		step := "-"
@@ -59,20 +59,20 @@ func printDashboardTasks(tasks []backend.TaskView) error {
 		}
 		status := utils.StatusColor(task.Status)
 		if task.SupersededBy != "" {
-			status += " (rerun " + task.SupersededBy + ")"
+			status += " (replaced)"
 		}
 		run := task.RunName
 		if run == "" {
 			run = "-"
 		}
 		if hasHPC {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				run, utils.IDColor(task.ID), task.ExternalID, status,
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				run, versionLabel(task.Version), utils.IDColor(task.ID), task.ExternalID, status,
 				task.NativeState, task.Queue,
 				step, formatTaskDuration(task.QueueSec, task.QueueEstimated), formatTaskDuration(task.SchedulerSec, false), elapsed, compactJSON(task.Params))
 		} else {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				run, utils.IDColor(task.ID), status,
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				run, versionLabel(task.Version), utils.IDColor(task.ID), status,
 				step, formatTaskDuration(task.QueueSec, task.QueueEstimated), formatTaskDuration(task.SchedulerSec, false), elapsed, compactJSON(task.Params))
 		}
 	}
@@ -139,4 +139,12 @@ func formatTaskDuration(seconds *float64, estimated bool) string {
 		prefix = "≈"
 	}
 	return fmt.Sprintf("%s%.0fs", prefix, *seconds)
+}
+
+// versionLabel is a version's number within its cell ("v2"), or "-".
+func versionLabel(n int) string {
+	if n == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("v%d", n)
 }

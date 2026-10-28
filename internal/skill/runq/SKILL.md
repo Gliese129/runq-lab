@@ -50,23 +50,23 @@ agent) or you are about to set one up, read `references/heartbeat.md` first.
 | Goal | Command |
 |---|---|
 | Plan (the preview; submits nothing) | `runq draft job.yaml` → draft `dr…` (`--json` for the full plan) |
-| Submit the draft | `runq submit dr… --json` → `{job_id,total_tasks,draft_id}` (repeat-safe: same job). A job file passed to `submit` outside a terminal is refused — that interactive form is for the researcher |
+| Submit the draft | `runq submit dr… --json` → `{job_id,total_tasks,draft_id}` (repeat-safe: same experiment; `job_id` is the experiment id). A job file passed to `submit` outside a terminal is refused — that interactive form is for the researcher |
 | Change a draft | `runq show dr… --yaml > plan.yaml`, edit, `runq draft edit dr… -f plan.yaml` · `runq draft ps` |
-| Add cells to an existing job (more seeds, a missing row, a failed cell) | `runq draft job.yaml --into <jb…> [--rerun-failed]` → read new / skipped, then `runq submit dr…` |
-| Jobs / one job's tasks | `runq ps --json` · `runq ps <job_id> --json` (add `--fresh` to probe the scheduler first) |
-| Wait for a state change (in place of sleep loops) | `runq ps <jb…> --wait --json` — returns when a task changes state or all finish, at most 30m (`--wait=2h` for longer); a timeout adds `no change in 30m (last refresh …)` on stderr and exits 0 |
-| A submitted job back as job.yaml (`tasks:` rows) | `runq export <jb…> [-o file]` |
-| One job (run table) / task (command, dirs, scheduler id, times, links) / project | `runq show <jb…\|tk…\|pj…>` |
-| Log tail | `runq logs <task_id> -n 200` |
-| Last matching log lines | `runq logs <task_id> --grep 'loss\|step' -n 20` (ERE, runs on the target) |
-| Result rows from `runq.record` | `runq view --job <job_id>` (a table per scoring script and section, one row per cell; `--json`, `--format csv`) |
-| Kill | `runq kill <task_id\|job_id>` |
-| Rename a job or project (ids never change) | `runq rename <jb…\|pj…\|project-name> "<new name>"` |
-| Sections of a project / file a job | `runq section ls <project>` · `runq submit job.yaml -s <section>` · `runq section move <section> <jb…>` |
+| Add cells to an experiment, or run a cell again (more seeds, a missing row, a failed cell, a re-eval) | `runq draft job.yaml --into <ex…> [--rerun <cell>]` → read new / new_version / skipped, then `runq submit dr…` |
+| Experiments / one experiment's versions | `runq ps --json` · `runq ps <ex…> --json` (add `--fresh` to probe the scheduler first) |
+| Wait for a state change (in place of sleep loops) | `runq ps <ex…> --wait --json` — returns when a version changes state or all finish, at most 30m (`--wait=2h` for longer); a timeout adds `no change in 30m (last refresh …)` on stderr and exits 0 |
+| An experiment back as job.yaml (`cells:` rows, a snapshot) | `runq export <ex…> [-o file]` |
+| One experiment (cell table) / version (command, dirs, scheduler id, times, links) / project | `runq show <ex…\|ex…/<cell>[@vN]\|tk…\|pj…>` |
+| Log tail | `runq logs <ex…/<cell>[@vN] \| tk…> -n 200` (no `@vN` = the version the cell shows) |
+| Last matching log lines | `runq logs <ex…/<cell>> --grep 'loss\|step' -n 20` (ERE, runs on the target) |
+| Result rows from `runq.record` | `runq view --experiment <ex…>` (a table per scoring script and section, one row per cell; `--json`, `--format csv`) |
+| Kill | `runq kill <ex…\|ex…/<cell>[@vN]\|tk…>` |
+| Rename an experiment or project (ids never change) | `runq rename <ex…\|pj…\|project-name> "<new name>"` |
+| Sections of a project / file an experiment | `runq section ls <project>` · `runq draft job.yaml -s <section>` · `runq section move <section> <ex…>` |
 | Register a project / update it | `runq project project.yaml` (re-run after editing the file) |
 | Targets | `runq target show [name]` · `runq target check <name>` · `runq target connect <name>` |
 | Service | `runq serve -d` · `runq serve status` · `runq serve restart` |
-| Delete finished tasks | `runq clean --job <job_id> --show`, then `-y` |
+| Delete finished versions | `runq clean --experiment <ex…> --show`, then `-y` |
 
 Older names you may remember, and what replaced them in v0.6:
 
@@ -74,11 +74,12 @@ Older names you may remember, and what replaced them in v0.6:
 |---|---|
 | `daemon start/stop/restart` | `runq serve -d` / `runq serve stop` / `runq serve restart` |
 | `sweep`, `run` | a job.yaml + `runq submit` (only `fixed_params:` = one task) |
-| `status <job>`, `job ls`, `job show` | `runq ps <job_id> --fresh --json` |
-| `job kill` | `runq kill <job_id>` |
-| `best`, `collect`, `results` | `runq view --job <job_id> --json` |
+| `status <job>`, `job ls`, `job show` | `runq ps <ex…> --fresh --json` |
+| `job kill` | `runq kill <ex…>` |
+| `best`, `collect`, `results` | `runq view --experiment <ex…> --json` |
 | `task show`, `project show` | `runq show <id>` |
-| `consumer add/ls/show`, `ctx.job_tasks()` | a scoring script you run: `runq.job("<job_dir>")` |
+| `consumer add/ls/show`, `ctx.job_tasks()`, `runq.job()` | a scoring script you run: `runq.experiment("<experiment_dir>")` |
+| job (`jb…`), task, `tasks:`/`run:`, `--rerun-failed`, `view --job` | experiment (`ex…`; `jb…` ids still work), version, `cells:`/`cell:`, failed cells get a new version by default (`--rerun <cell>` for succeeded ones), `view --experiment` |
 | `project add -f`, `submit --project-file` | `runq project <file>` |
 | `job archive`, `project archive` | `runq archive <id> [--restore]` |
 | `submit --dry` | `runq draft <job.yaml>` |
@@ -99,19 +100,30 @@ For reusable progress and paper tables: `runq view <file.yaml|name>` — see `re
   `project_name`, `target` (where the code lives), optional `targets` (where it may
   run), `working_dir`, default `command`, `environment`, `defaults{gpus_per_task,
   timeout}`, `preflight`, `python_env`, `wandb`, param annotations.
-- **job** = one experiment (`job.yaml`), also id (`jb…`) + renamable `name`:
-  `project`, `name`, optional `command`,
-  `target`, `overrides{gpus_per_task,timeout,env}`,
-  `fixed_params` (same in every task) and `sweep` (`grid` = cross product,
-  `list` = zip rows; blocks multiply).
-- **section** = how a project's jobs are grouped (an ablation, an experiment, smoke
-  tests); organization only, no config. Every project has `unsorted` and `smoke`.
-  A job lands in the section given by `runq submit -s <section>` or job.yaml
-  `section:` (it must exist), else the first matching rule, else `unsorted`.
-- **task** = one cell, with its own workspace
-  `<data>/<project_id>/<job_id>/<task_id>/`: log, `params.json`, `outputs/`,
+- **experiment** = one comparison table the researcher will draw (`job.yaml`), id
+  `ex…` (older ones `jb…`) + renamable `name`: `project`, `name`, optional `command`,
+  `target`, `overrides{gpus_per_task,timeout,env}`, `fixed_params` (same in every
+  cell) and either `cells:` rows or `sweep` (`grid` = cross product, `list` = zip
+  rows; blocks multiply).
+- **cell** = one combination in that table — one row of `cells:` (its `cell:` name)
+  or of the sweep. The name is the cell's identity: the same name in a later
+  `--into` draft is the same cell again.
+- **version** = one execution of a cell (a task, `tk…`), with its own workspace
+  `<data>/<project_id>/<experiment_id>/<task_id>/`: log, `params.json`, `outputs/`,
   `checkpoints/`, metrics, results. `<data>` is the target's `data_path`, or
-  `<working_dir>/.runq` when unset; the preview's `data:` line shows it.
+  `<working_dir>/.runq` when unset; the preview's `data:` line shows it. Each cell
+  shows one version — the researcher's pick, else the latest success, else the
+  latest — and status, counts, results and views follow that one. Address it as
+  `ex…/<cell>` (or `ex…/<cell>@v2`).
+- **submission** = one `runq submit dr…`: the first creates the experiment, each
+  `--into` adds versions. It carries its own target (`-t`, default: where the
+  experiment started), command, overrides and scheduler params, so moving to
+  another cluster or a fix that changes the command still lands in the same
+  experiment (a command change is flagged for the researcher).
+- **section** = a part of the researcher's report (a study, an ablation family, smoke
+  tests); organization only, no config. Every project has `unsorted` and `smoke`.
+  An experiment lands in the section given by `runq draft -s <section>` or job.yaml
+  `section:` (it must exist), else the first matching rule, else `unsorted`.
 - **storage** belongs to runq and the researcher: the researcher sets `data_path` on
   the target once (e.g. a bulk-storage disk), and runq creates, links and cleans the
   directories. Your code takes its paths from runq — `ctx.output_dir` /
@@ -122,14 +134,31 @@ For reusable progress and paper tables: `runq view <file.yaml|name>` — see `re
   (submit rejects them).
 - **target** = where tasks run (`~/.runq/config.yaml`): templates, `env_setup`, `max_inflight`.
 
-Express variations of an experiment — a smoke test, a resume, another script, a
-reservation — as job files under the existing project; a job can carry its own
-`command`, `target` and `overrides`. Group them with sections rather than new
-projects (`-tmp`, `-smoke`, `-a1` projects scatter one study): file smoke runs with
-`-s smoke` (a name containing "smoke" lands there anyway), and ask the researcher
-before creating a new section — they usually have one in mind. Create a separate
-project when the code base or its Python environment genuinely differs. `runq project <file>`
-registers a new project or updates the one the file names; keep the name.
+Plan the table first. Before writing a job file, picture the table the researcher
+will compare — e.g. [A1, base] × [Hard, Mid bench] — and make every combination a
+cell of one experiment, even when cells need different scripts or commands. Then
+each later step goes `--into` that experiment:
+
+1. **The same cell again** (a fix, a retry, more time budget, a resume): keep its
+   cell name and its params, `--into` the experiment. A failed or killed cell gets
+   a new version by default; `--rerun <cell>` runs a succeeded one again. Only
+   scheduler params (walltime, reservation id) and the command may change — mark
+   time-budget params such as `runtime_seconds` `scope: scheduler` in project.yaml
+   so recomputing them keeps the cell the same.
+2. **A new row of the same table** (another seed, a missing baseline, a second
+   benchmark, a 补评 or 续评): a new cell name, `--into` the experiment.
+3. **A different table** (another question, metric or protocol): a new experiment,
+   in the section of its study.
+4. **A study the researcher reports on its own**: a new section. You may create one
+   yourself and say so in your report; keep them few — with five sections of your
+   own in a project, ask the researcher before adding another. Smoke runs go in
+   `smoke` (`-s smoke`; a name containing "smoke" lands there anyway).
+
+A smoke test, a resume or a reservation is a cell or version of the experiment it
+belongs to, not a new project (`-tmp`, `-smoke`, `-a1` projects scatter one study).
+Create a separate project when the code base or its Python environment genuinely
+differs. `runq project <file>` registers a new project or updates the one the file
+names; keep the name.
 
 One directory can hold several projects — e.g. training and evaluation with
 different `python_env`, `defaults` or `wandb` — all with the same `working_dir`.
@@ -174,7 +203,7 @@ table, generated run.sh / submit line, how each param reaches the code (flag or
 (`kl(3) × seed(2) = 6`). Give the researcher the draft id when they should look before
 it runs; they may edit it. Submit with `runq submit dr…` (add `--rev N` to refuse if
 someone edited it since you read rev N). After the researcher edits a plan you
-submitted, `runq export jb… -o <job.yaml>` brings it back into the repo.
+submitted, `runq export ex… -o <job.yaml>` brings it back into the repo.
 
 Preflight runs on every draft and submit and only warns about deterministic
 problems: a missing entry script or interpreter, an env that does not activate in
@@ -208,7 +237,7 @@ multi-stage prepare→train→eval with skip-if-done, in-task sharding, GPU
 telemetry. Implement those in the training code (Python) where possible, and
 mention it in your report so the researcher knows where that logic lives.
 
-For scoring alongside a job, run a script yourself (login node, or your own iqrsh/tmux session) that reads the job with `runq.job("<job_dir>")` and records per task; see `references/views.md`.
+For scoring alongside an experiment, run a script yourself (login node, or your own iqrsh/tmux session) that reads it with `runq.experiment("<experiment_dir>")` and records per cell (`cell.selected.record(...)`); see `references/views.md`.
 
 A task ID executes once. On failure: inspect the error, fix it, preview, then submit a new task.
 
@@ -265,26 +294,27 @@ Each file you add is one more thing the researcher reads or cleans up later. Goo
   (for example `configs/runq/` or `runq/jobs/`), one job file per experiment.
 - Prefer editing or parametrizing an existing job or script (`fixed_params` plus a
   flag, or `ctx.params` for a one-off test) over copying it into a `-v2` / `-fixed` variant; git keeps the history.
-- Write an ablation as named rows: `tasks:` with one `{run: R1 lr, lr: 2e-6}` per
-  cell, each listing only what differs from `fixed_params`; mark the baseline with
-  `baseline:` when it is not the first row, and flag rows that need a code change
-  with `needs_code: [param]`. The run names then label `runq ps <job>`, W&B and the
-  researcher's plan table. Use `sweep:` when the cells really are a grid.
+- Write an experiment as named cells: `cells:` with one `{cell: R1 lr, lr: 2e-6}`
+  per row, each listing only what differs from `fixed_params`; mark the baseline
+  with `baseline:` when it is not the first row, and flag rows that need a code
+  change with `needs_code: [param]`. The cell names then label `runq ps <ex…>`, W&B
+  and the researcher's table, and they are how later drafts find the cell again.
+  Use `sweep:` when the cells really are a grid.
 - To bring a submitted plan back into the repo (e.g. after the researcher changed
-  it), `runq export <jb…> -o <job.yaml>` and commit that file.
-- Make a smoke test a job: the same command with small `fixed_params`
-  (`max_steps: 2`) and `name: smoke`.
-- Give each job a `name` that says what it is compared with the baseline, in a few
-  words (`A1 原始基线`, `kl=0.1 无 std`, `c0 dev eval`). Free text is fine. It is the
-  first column of `runq ps` and the dashboard, the W&B group, and the marker in the
-  job directory, and the researcher scans a list of them. Leave out what runq
-  already records — target or reservation, date, shard number, attempt count. A
-  retry or extra cells belong in the existing job, not a same-named new one: draft
-  them with `--into <jb…>`, which skips cells the job already has (done, running,
-  queued; failed ones too unless `--rerun-failed`), so the job stays one table for
-  the researcher. Scheduler-only params (walltime, reservation id) do not make a cell
-  new. The preview warns when a name is taken. Put the full sentence (what it tests, which
-  checkpoint) in `description:`. Rename later with `runq rename <jb…> "<name>"`.
+  it), `runq export <ex…> -o <job.yaml>` and commit that file; it is a snapshot of
+  each cell's shown version, and runq keeps the full record.
+- Make a smoke test an experiment in `smoke`: the same command with small
+  `fixed_params` (`max_steps: 2`) and `name: smoke`.
+- Give each experiment a `name` that says what it compares, in a few words
+  (`A1 最终点 vs 原模型`, `kl=0.1 无 std`, `c0 dev eval`). Free text is fine. It is
+  the first column of `runq ps` and the dashboard, the W&B group, and the marker in
+  the experiment directory, and the researcher scans a list of them. Leave out what
+  runq already records — target or reservation, date, shard number, attempt count,
+  the bug a retry fixed. A retry or extra cells go `--into <ex…>` (see §2), so the
+  experiment stays one table; the preview warns when a name is taken. Put the full
+  sentence (what it tests, which checkpoint) in `description:` — written for the
+  researcher, not as your pre-submit checklist. Rename later with
+  `runq rename <ex…> "<name>"`.
 - Let runq be the run record — name, params, logs, results, links, plus the git
   commit. Write a separate handoff or status document when the researcher asks for one.
 - Write outputs to `ctx.output_dir` and scratch files inside the task directory, so
@@ -335,7 +365,7 @@ the dashboard. Rank gating, offline runs, directories: `references/sdk.md`.
 
 - Heartbeats: priorities, setup questions, fault vs deviation, quiet ticks → `references/heartbeat.md`
 - HPC targets, templates, SSH, reservations (`qsub -ar`) → `references/hpc.md`
-- Views, paper tables, charts and scoring scripts (`runq.job()`) → `references/views.md`
+- Views, paper tables, charts and scoring scripts (`runq.experiment()`) → `references/views.md`
 - SDK: params, metrics, results, directories, W&B → `references/sdk.md`
 - Error message → what to do → `references/troubleshooting.md`
 

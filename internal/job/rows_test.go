@@ -52,7 +52,7 @@ func TestTasksRowsErrors(t *testing.T) {
 		"tasks: [{run: a}, {run: a}]":                                       "used twice",
 		"tasks: [{run: a, needs_code: [std]}]":                              "not a param",
 		"baseline: z\ntasks: [{run: a}]":                                    "baseline \"z\"",
-		"tasks: [{run: a}]\nsweep: [{method: grid, parameters: {lr: [1]}}]": "both sweep: and tasks:",
+		"tasks: [{run: a}]\nsweep: [{method: grid, parameters: {lr: [1]}}]": "both sweep: and cells:",
 	} {
 		c := parseJob(t, src)
 		if _, err := Rows(&c); err == nil || !strings.Contains(err.Error(), want) {
@@ -103,7 +103,7 @@ func TestExportNamesLegacyRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), "{run: base}") || !strings.Contains(string(out), "{run: lr=0.2, lr: 0.2}") {
+	if !strings.Contains(string(out), "{cell: base}") || !strings.Contains(string(out), "{cell: lr=0.2, lr: 0.2}") {
 		t.Fatalf("pre-rc6 rows need derived names:\n%s", out)
 	}
 }

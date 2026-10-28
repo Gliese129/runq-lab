@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -543,10 +542,45 @@ func (m *MultiBackend) jobOwningLanes(ctx context.Context, jobID string) (primar
 		return nil, nil, fmt.Errorf("list job %s generations: %w", jobID, err)
 	}
 
+	// An experiment's submissions may run on different targets: every
+	// target its tasks name owns them (the job's first target always).
+	targets := []string{j.Target}
+	seen := map[string]bool{j.Target: true}
+	for _, t := range tasks {
+		if t.Target != "" && !seen[t.Target] {
+			seen[t.Target] = true
+			targets = append(targets, t.Target)
+		}
+	}
+	for _, target := range targets {
+		var mine []store.TaskRow
+		for _, t := range tasks {
+			if t.Target == target || t.Target == "" && target == j.Target {
+				mine = append(mine, t)
+			}
+		}
+		lanePrimary, laneOwners := m.targetOwners(target, mine)
+		if primary == nil {
+			primary = lanePrimary
+		}
+		owners = append(owners, laneOwners...)
+	}
+	if primary == nil && len(owners) > 0 {
+		primary = owners[0]
+	}
+	if primary == nil {
+		return nil, nil, fmt.Errorf("unknown target %q", j.Target)
+	}
+	return primary, owners, nil
+}
+
+// targetOwners: the lanes of one target that own some of tasks — the active
+// lane, and any retiring generation still tracking one.
+func (m *MultiBackend) targetOwners(target string, tasks []store.TaskRow) (primary Backend, owners []Backend) {
 	m.mu.RLock()
-	active := m.targets[j.Target]
-	retiring := make(map[string]Backend, len(m.retiring[j.Target]))
-	for generation, be := range m.retiring[j.Target] {
+	active := m.targets[target]
+	retiring := make(map[string]Backend, len(m.retiring[target]))
+	for generation, be := range m.retiring[target] {
 		retiring[generation] = be
 	}
 	m.mu.RUnlock()
@@ -585,10 +619,7 @@ func (m *MultiBackend) jobOwningLanes(ctx context.Context, jobID string) (primar
 	if primary == nil && len(owners) > 0 {
 		primary = owners[0]
 	}
-	if primary == nil {
-		return nil, nil, fmt.Errorf("unknown target %q", j.Target)
-	}
-	return primary, owners, nil
+	return primary, owners
 }
 
 // refreshJobGenerations reconciles every live lane generation that owns at
@@ -795,9 +826,12 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 		return nil, err
 	}
 	keys, _ := m.store.MetricKeys(ctx, jobID)
-	detail := BuildJobDetail(*j, tasks, keys)
+	picks, _ := m.store.CellPicks(ctx, jobID)
+	detail := BuildJobDetail(*j, tasks, keys, picks)
 	for i, row := range tasks {
+		version := detail.Tasks[i].Version
 		detail.Tasks[i] = m.storedTaskView(ctx, row)
+		detail.Tasks[i].Version = version
 	}
 	fillLegacyRunNames(j.ConfigJSON, detail.Tasks)
 	attachLastOutput(ctx, m.store, detail.Tasks)
@@ -880,10 +914,10 @@ func (m *MultiBackend) GetTask(ctx context.Context, taskID string) (*TaskView, e
 	m.routingMu.RLock()
 	defer m.routingMu.RUnlock()
 	if id, err := m.store.ResolveTaskRef(ctx, taskID); err == nil {
-		taskID = id // id or unique prefix
+		taskID = id // id, unique prefix or <experiment>/<cell>[@vN]
 	} else {
 		var ambiguous *store.AmbiguousRefError
-		if errors.As(err, &ambiguous) {
+		if errors.As(err, &ambiguous) || strings.Contains(taskID, "/") {
 			return nil, err
 		}
 	}
@@ -1296,6 +1330,15 @@ func (m *MultiBackend) KillJob(ctx context.Context, jobID string) error {
 		return fmt.Errorf("job %q: %w", jobID, ErrNotFound)
 	}
 	owners := m.liveLanes(j.Target)
+	if tasks, err := m.store.ListTasks(ctx, store.TaskFilter{JobID: j.ID}); err == nil {
+		seen := map[string]bool{j.Target: true}
+		for _, t := range tasks { // later submissions may run on other targets
+			if t.Target != "" && !seen[t.Target] {
+				seen[t.Target] = true
+				owners = append(owners, m.liveLanes(t.Target)...)
+			}
+		}
+	}
 	if len(owners) == 0 {
 		return fmt.Errorf("unknown target %q", j.Target)
 	}
@@ -1508,10 +1551,10 @@ func (m *MultiBackend) submissionTarget(ctx context.Context, cfg job.JobConfig, 
 // routing, kill and refresh go by it), and defaults its project from the
 // job.
 func (m *MultiBackend) resolveInto(ctx context.Context, cfg *job.JobConfig, explicit string) (string, error) {
+	if err := cfg.CheckAppendFields(); err != nil {
+		return "", err
+	}
 	if cfg.Into == "" {
-		if cfg.RerunFailed {
-			return "", fmt.Errorf("--rerun-failed needs --into <job>")
-		}
 		return explicit, nil
 	}
 	j, err := m.store.ResolveJobRef(ctx, cfg.Into)
@@ -1527,9 +1570,11 @@ func (m *MultiBackend) resolveInto(ctx context.Context, cfg *job.JobConfig, expl
 	} else if name, err := m.registry.Resolve(ctx, cfg.Project); err == nil && name != j.ProjectName {
 		return "", fmt.Errorf("--into %s: the job belongs to project %q, not %q", j.ID, j.ProjectName, name)
 	}
+	// A submission picks its own target (-t, else job.yaml target:); the
+	// default is where the experiment started.
 	for _, t := range []string{explicit, cfg.Target} {
-		if t != "" && t != j.Target {
-			return "", fmt.Errorf("--into %s: the job runs on target %s, not %s; an append uses the job's target (submit a new job for another target)", j.ID, j.Target, t)
+		if t != "" {
+			return t, nil
 		}
 	}
 	return j.Target, nil
@@ -1713,6 +1758,14 @@ func (m *MultiBackend) RenameProject(ctx context.Context, oldName, newName strin
 	return nil
 }
 
+func (m *MultiBackend) PinVersion(ctx context.Context, jobRef, cell, taskID string) (string, error) {
+	j, err := m.store.ResolveJobRef(ctx, jobRef)
+	if err != nil {
+		return "", err
+	}
+	return m.store.PinVersion(ctx, j.ID, cell, taskID)
+}
+
 func (m *MultiBackend) RenameJob(ctx context.Context, ref, newName string) (string, error) {
 	id, err := m.store.RenameJob(ctx, ref, newName)
 	if err != nil {
@@ -1784,14 +1837,21 @@ func (m *MultiBackend) MoveJob(ctx context.Context, jobRef, section string) (str
 	return ids[0], nil
 }
 
-// ExportJob freezes a job back into job.yaml form (`tasks:` rows). Jobs
-// from before rc6 get run names derived from their first row.
+// ExportJob writes a job back in job.yaml form (`tasks:` rows): one row per
+// cell, from its selected version. A snapshot, not the job's record (the
+// ledger is): command, target and overrides are the latest submission's, and
+// a row whose version ran another command says so in a comment. Jobs from
+// before rc6 get run names derived from their first row.
 func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error) {
 	j, err := m.store.ResolveJobRef(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
 	tasks, err := m.store.JobTasksInOrder(ctx, j.ID)
+	if err != nil {
+		return nil, err
+	}
+	picks, err := m.store.CellPicks(ctx, j.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1811,28 +1871,33 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 		}
 		return c
 	}
+	commands := map[int]string{1: effective(cfg.Command)}
+	latest := cfg
 	if batches, err := m.store.ListJobBatches(ctx, j.ID); err == nil {
-		for _, b := range batches[min(1, len(batches)):] {
+		for _, b := range batches {
 			var bc job.JobConfig
 			_ = json.Unmarshal([]byte(b.ConfigJSON), &bc)
-			// Appends now keep the job's command and overrides; older jobs
-			// may not have, and one job.yaml cannot say so.
-			if effective(bc.Command) != effective(cfg.Command) || !reflect.DeepEqual(bc.Overrides, cfg.Overrides) {
-				return nil, fmt.Errorf("job %s: batch %d ran a different command or overrides than batch 1, which one job.yaml cannot describe; export is only for jobs that run one way", j.ID, b.Seq)
-			}
+			commands[b.Seq] = effective(bc.Command)
 			for _, tr := range bc.Tasks {
 				needs[tr.Run] = tr.NeedsCode
 			}
+			if b.Seq > 1 {
+				latest = bc
+			}
 		}
 	}
-	tasks = liveInCellOrder(tasks)
 	rows := make([]job.Row, 0, len(tasks))
-	for _, t := range tasks {
-		var params job.TaskParams
-		if err := json.Unmarshal([]byte(t.ParamsJSON), &params); err != nil {
-			return nil, fmt.Errorf("task %s params: %w", t.ID, err)
+	for _, c := range store.GroupCells(tasks, picks) {
+		for _, t := range c.Versions {
+			if t.ID != c.Selected {
+				continue
+			}
+			var params job.TaskParams
+			if err := json.Unmarshal([]byte(t.ParamsJSON), &params); err != nil {
+				return nil, fmt.Errorf("task %s params: %w", t.ID, err)
+			}
+			rows = append(rows, job.Row{Run: t.RunName, NeedsCode: needs[t.RunName], Params: params, Command: commands[t.BatchSeq]})
 		}
-		rows = append(rows, job.Row{Run: t.RunName, NeedsCode: needs[t.RunName], Params: params})
 	}
 	// Pre-rc6 tasks have no run names: re-plan the stored config for its
 	// names when it still yields the same rows, else derive them.
@@ -1847,7 +1912,8 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 	in := job.ExportInput{
 		JobID: j.ID, ExportedAt: time.Now(), Project: j.ProjectName,
 		Name: j.Name, Description: j.Description, Section: j.Section,
-		Overrides: cfg.Overrides, Baseline: cfg.Baseline, Rows: rows,
+		Overrides: latest.Overrides, Baseline: cfg.Baseline, Rows: rows,
+		Command: effective(latest.Command),
 	}
 	if proj, err := m.registry.GetCached(ctx, j.ProjectName); err == nil {
 		for _, d := range proj.Params {
@@ -1856,11 +1922,9 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 		if j.Target != proj.Target {
 			in.Target = j.Target
 		}
-		if cfg.Command != "" && cfg.Command != proj.CmdTemplate {
-			in.Command = cfg.Command
-		}
+		in.DefaultCommand = proj.CmdTemplate
 	} else {
-		in.Target, in.Command = j.Target, cfg.Command
+		in.Target = j.Target
 	}
 	return job.ExportYAML(in)
 }
@@ -1910,10 +1974,11 @@ func (m *MultiBackend) rewriteMarkers(ctx context.Context, refs []store.TaskDirR
 
 // compile-time interface check
 var (
-	_ Backend     = (*MultiBackend)(nil)
-	_ Sectioner   = (*MultiBackend)(nil)
-	_ JobExporter = (*MultiBackend)(nil)
-	_ JobRenamer  = (*MultiBackend)(nil)
+	_ Backend       = (*MultiBackend)(nil)
+	_ Sectioner     = (*MultiBackend)(nil)
+	_ JobExporter   = (*MultiBackend)(nil)
+	_ JobRenamer    = (*MultiBackend)(nil)
+	_ VersionPinner = (*MultiBackend)(nil)
 )
 
 func sameParams(a, b []job.Row) bool {
@@ -1932,30 +1997,4 @@ func sameParams(a, b []job.Row) bool {
 		}
 	}
 	return true
-}
-
-// liveInCellOrder drops superseded tasks, putting each rerun where the
-// failed task it replaced was.
-func liveInCellOrder(tasks []store.TaskRow) []store.TaskRow {
-	byID := make(map[string]store.TaskRow, len(tasks))
-	for _, t := range tasks {
-		byID[t.ID] = t
-	}
-	placed := map[string]bool{}
-	out := make([]store.TaskRow, 0, len(tasks))
-	for _, t := range tasks {
-		for t.SupersededBy != "" { // follow the chain to the live rerun
-			next, ok := byID[t.SupersededBy]
-			if !ok {
-				break
-			}
-			t = next
-		}
-		if t.SupersededBy != "" || placed[t.ID] {
-			continue
-		}
-		placed[t.ID] = true
-		out = append(out, t)
-	}
-	return out
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -450,6 +451,9 @@ func (s *Store) ResolveJobRef(ctx context.Context, ref string) (*JobRow, error) 
 
 // ResolveTaskRef resolves a task by exact id or unique id prefix.
 func (s *Store) ResolveTaskRef(ctx context.Context, ref string) (string, error) {
+	if exp, cell, ok := strings.Cut(ref, "/"); ok {
+		return s.resolveVersionRef(ctx, exp, cell)
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM tasks WHERE id = ? OR id LIKE ? ORDER BY id = ? DESC, id LIMIT 6`, ref, ref+"%", ref)
 	if err != nil {
 		return "", err
@@ -483,4 +487,40 @@ type AmbiguousRefError struct {
 
 func (e *AmbiguousRefError) Error() string {
 	return fmt.Sprintf("%s %q is ambiguous: %s", e.Kind, e.Ref, strings.Join(e.IDs, ", "))
+}
+
+// resolveVersionRef resolves <experiment>/<cell>[@vN]: version N of the cell
+// (1 = its first), or its selected version without @vN.
+func (s *Store) resolveVersionRef(ctx context.Context, expRef, cellRef string) (string, error) {
+	j, err := s.ResolveJobRef(ctx, expRef)
+	if err != nil {
+		return "", err
+	}
+	name, n := cellRef, 0
+	if at := strings.LastIndex(cellRef, "@v"); at >= 0 {
+		if k, err := strconv.Atoi(cellRef[at+2:]); err == nil && k > 0 {
+			name, n = cellRef[:at], k
+		}
+	}
+	tasks, err := s.JobTasksInOrder(ctx, j.ID)
+	if err != nil {
+		return "", err
+	}
+	picks, err := s.CellPicks(ctx, j.ID)
+	if err != nil {
+		return "", err
+	}
+	for _, c := range GroupCells(tasks, picks) {
+		if c.Name != name {
+			continue
+		}
+		if n == 0 {
+			return c.Selected, nil
+		}
+		if n > len(c.Versions) {
+			return "", fmt.Errorf("cell %q of %s has %d version(s), not %d", name, j.ID, len(c.Versions), n)
+		}
+		return c.Versions[n-1].ID, nil
+	}
+	return "", fmt.Errorf("%s has no cell %q", j.ID, name)
 }

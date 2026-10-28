@@ -87,6 +87,9 @@ type JobDetail struct {
 	Config       json.RawMessage `json:"config,omitempty"` // raw JobConfig (re-run as template)
 	// Batches are the job's submissions: seq 1 first, then each --into.
 	Batches []JobBatchView `json:"batches,omitempty"`
+	// Pinned maps a cell to the version the researcher chose; cells not
+	// listed show their latest (latest success, else latest).
+	Pinned map[string]string `json:"pinned,omitempty"`
 	// DataDir is the job's workspace directory (RQ2-1 §F: the Data tab's
 	// fs/list root). ABSOLUTE path with TARGET semantics — it only means
 	// something on the filesystem of job.target; pair it with that target
@@ -108,8 +111,10 @@ type TaskView struct {
 	RunName  string `json:"run_name,omitempty"`
 	JobID    string `json:"job_id,omitempty"`
 	BatchSeq int    `json:"batch_seq,omitempty"`
-	// SupersededBy is the task that reran this failed cell: this one is
-	// history and no longer counts toward the job.
+	// Version numbers the task within its cell (run name): 1 = the cell's
+	// first. SupersededBy is set on every version but the cell's selected
+	// one and names it: such a version is history and no longer counts.
+	Version      int    `json:"version,omitempty"`
 	SupersededBy string `json:"superseded_by,omitempty"`
 	// LastOutputAt is when the task's log last grew (unix seconds), as
 	// last observed; absent before the first observation.

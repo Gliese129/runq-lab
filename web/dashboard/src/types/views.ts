@@ -22,6 +22,11 @@ export interface Contributor {
   job_id: string
   section: string
   updated_at: number
+  /** the version the record came from: its status, number within its cell,
+   *  and whether it was pinned (else it is the cell's latest) */
+  status?: string
+  version?: number
+  pinned?: boolean
 }
 
 export interface ViewCell {

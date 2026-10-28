@@ -44,7 +44,10 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	}
 	jobRoot := path.Join(root, deps.JobID)
 	if into != nil {
-		deps.JobID, jobRoot = into.job.ID, into.root
+		deps.JobID, jobRoot = into.job.ID, path.Join(root, into.job.ID)
+		if into.root != "" {
+			jobRoot = into.root
+		}
 	}
 	deps.Paths = submitplan.Paths{WorkspaceRoot: jobRoot, LogRoot: jobRoot}
 	plan, err := submitplan.Build(ctx, jobCfg, proj, deps)
@@ -55,10 +58,10 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 
 	var s strings.Builder
 	if into != nil {
-		if err := checkSameRun(into.job.ID, plan.CommandTemplate, proj.CmdTemplate, jobCfg.Overrides, into.first); err != nil {
+		summary, err := classifyAppend(&plan, into, jobCfg.Rerun, proj.CmdTemplate)
+		if err != nil {
 			return "", submitplan.Plan{}, err
 		}
-		summary, _ := classifyAppend(&plan, into, jobCfg.RerunFailed)
 		plan.Append = &summary
 		s.WriteString(summary.Report())
 		if summary.Submits() == 0 {

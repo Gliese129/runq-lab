@@ -11,10 +11,10 @@ import (
 
 var sectionCmd = &cobra.Command{
 	Use:   "section",
-	Short: "Organize a project's jobs into sections (ablations, experiments, smoke)",
+	Short: "Organize a project's experiments into sections (studies, smoke)",
 	Long: `Sections organize a project's jobs; they carry no execution config.
 
-Every project has "unsorted" (jobs no rule matched) and "smoke" (with a
+Every project has "unsorted" (experiments no rule matched) and "smoke" (with a
 default rule: name *smoke*). A new job lands in the section named by
 'submit -s' or job.yaml 'section:' (it must exist), else in the first
 section whose rule matches, else in unsorted. Moving a job changes nothing
@@ -34,7 +34,7 @@ func withSectioner(cmd *cobra.Command, fn func(backend.Sectioner) error) error {
 var sectionLsCmd = &cobra.Command{
 	Use:     "ls <project>",
 	Aliases: []string{"list"},
-	Short:   "List a project's sections with job counts and rules",
+	Short:   "List a project's sections with experiment counts and rules",
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		jsonOut, _ := cmd.Flags().GetBool("json")
@@ -83,7 +83,7 @@ var sectionCreateCmd = &cobra.Command{
 
 var sectionRmCmd = &cobra.Command{
 	Use:   "rm <project> <name>",
-	Short: "Remove a section; its jobs become unsorted",
+	Short: "Remove a section; its experiments become unsorted",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return withSectioner(cmd, func(sec backend.Sectioner) error {
@@ -91,7 +91,7 @@ var sectionRmCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			fmt.Printf("section %q removed; %d job(s) now unsorted\n", args[1], n)
+			fmt.Printf("section %q removed; %d experiment(s) now unsorted\n", args[1], n)
 			return nil
 		})
 	},
@@ -99,7 +99,7 @@ var sectionRmCmd = &cobra.Command{
 
 var sectionMoveCmd = &cobra.Command{
 	Use:     "move <section> <jb…> [jb…]",
-	Short:   "File jobs under a section of their project (\"unsorted\" clears it)",
+	Short:   "File experiments under a section of their project (\"unsorted\" clears it)",
 	Example: `  runq section move smoke jb7817 jbf051`,
 	Args:    cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -109,7 +109,7 @@ var sectionMoveCmd = &cobra.Command{
 				if err != nil {
 					return err
 				}
-				fmt.Printf("job %s → %s\n", id, args[0])
+				fmt.Printf("experiment %s → %s\n", id, args[0])
 			}
 			return nil
 		})
@@ -118,7 +118,7 @@ var sectionMoveCmd = &cobra.Command{
 
 var sectionSortCmd = &cobra.Command{
 	Use:   "sort <project>",
-	Short: "Apply the project's rules to its unsorted jobs (by job name)",
+	Short: "Apply the project's rules to its unsorted experiments (by name)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return withSectioner(cmd, func(sec backend.Sectioner) error {
@@ -126,7 +126,7 @@ var sectionSortCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			fmt.Printf("%d unsorted job(s) filed\n", n)
+			fmt.Printf("%d unsorted experiment(s) filed\n", n)
 			return nil
 		})
 	},
@@ -134,12 +134,12 @@ var sectionSortCmd = &cobra.Command{
 
 var sectionRuleCmd = &cobra.Command{
 	Use:   "rule",
-	Short: "Rules that file new jobs into sections (first match wins)",
+	Short: "Rules that file new experiments into sections (first match wins)",
 }
 
 var sectionRuleAddCmd = &cobra.Command{
 	Use:   "add <project> <section> (--name GLOB | --path GLOB)",
-	Short: "File new jobs whose name or job-file path matches into a section",
+	Short: "File new experiments whose name or job-file path matches into a section",
 	Long: `Add a rule. Rules apply in order to new jobs without an explicit
 section; the first match wins. Globs: * and ? stay within one path segment,
 ** crosses '/'; matching ignores case. A --path pattern without '/' matches
@@ -189,7 +189,7 @@ var sectionRuleRmCmd = &cobra.Command{
 
 func init() {
 	sectionLsCmd.Flags().Bool("json", false, "output raw JSON")
-	sectionRuleAddCmd.Flags().String("name", "", "glob on the job name")
+	sectionRuleAddCmd.Flags().String("name", "", "glob on the experiment name")
 	sectionRuleAddCmd.Flags().String("path", "", "glob on the job file path")
 	sectionRuleCmd.AddCommand(sectionRuleAddCmd, sectionRuleRmCmd)
 	sectionCmd.AddCommand(sectionLsCmd, sectionCreateCmd, sectionRmCmd, sectionMoveCmd, sectionSortCmd, sectionRuleCmd)

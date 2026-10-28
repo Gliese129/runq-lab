@@ -12,8 +12,8 @@ import (
 // ── runq kill (shortcut for task kill) ──
 
 var killCmd = &cobra.Command{
-	Use:   "kill <task_id | job_id>",
-	Short: "Kill a task or a job's tasks",
+	Use:   "kill <experiment | version>",
+	Short: "Kill an experiment's running versions, or one version (tk…, ex…/<cell>[@vN])",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runKill,
 }
@@ -28,8 +28,14 @@ func runKill(cmd *cobra.Command, args []string) error {
 	return withBackend(cmd, func(be backend.Backend) error {
 		ctx := cmd.Context()
 		// Short ids resolve as in ps/show; an ambiguous prefix is an answer.
-		resolve := map[string]func(context.Context, backend.Backend, string) (string, error){"tk": resolveTaskRef, "jb": resolveJobRef}
-		if fn, ok := resolve[prefixOf(id)]; ok {
+		var fn func(context.Context, backend.Backend, string) (string, error)
+		switch {
+		case isVersionRef(id):
+			fn = resolveTaskRef
+		case isExperimentRef(id):
+			fn = resolveJobRef
+		}
+		if fn != nil {
 			full, err := fn(ctx, be, id)
 			if err != nil && !errors.Is(err, backend.ErrNotFound) {
 				return err
@@ -51,7 +57,7 @@ func runKill(cmd *cobra.Command, args []string) error {
 				printJSON(map[string]bool{"ok": true})
 				return nil
 			}
-			fmt.Printf("task %s killed\n", id)
+			fmt.Printf("version %s killed\n", id)
 			return nil
 		}
 		if !errors.Is(taskErr, backend.ErrNotFound) {
@@ -64,14 +70,14 @@ func runKill(cmd *cobra.Command, args []string) error {
 				printJSON(map[string]bool{"ok": true})
 				return nil
 			}
-			fmt.Printf("job %s killed\n", id)
+			fmt.Printf("experiment %s killed\n", id)
 			return nil
 		}
 		if !errors.Is(jobErr, backend.ErrNotFound) {
 			return jobErr
 		}
 
-		return fmt.Errorf("no task or job found with id %q", id)
+		return fmt.Errorf("no version or experiment found with id %q", id)
 	})
 }
 

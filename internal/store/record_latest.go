@@ -106,8 +106,12 @@ func upsertLatest(ctx context.Context, tx *sql.Tx, r ResultRecordRow) error {
 	return err
 }
 
+// RecordWarnings lists a job's record-schema warnings from its selected
+// versions (a replaced version's warnings no longer apply).
 func (s *Store) RecordWarnings(ctx context.Context, jobID string) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT source_id,section,warning FROM record_schema WHERE job_id=? AND warning!=''`, jobID)
+	rows, err := s.db.QueryContext(ctx, `SELECT source_id,section,warning FROM record_schema WHERE job_id=? AND warning!=''
+ AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.job_id=record_schema.job_id AND t.superseded_by IS NOT NULL
+  AND (record_schema.source_id=t.id OR record_schema.source_id LIKE t.id || '@%'))`, jobID)
 	if err != nil {
 		return nil, err
 	}

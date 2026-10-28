@@ -146,9 +146,9 @@ func (s *Store) ListJobs(ctx context.Context, projectName, target string) ([]Job
 		where = append(where, "project_name = ?")
 		args = append(args, projectName)
 	}
-	if target != "" {
-		where = append(where, "target = ?")
-		args = append(args, target)
+	if target != "" { // the job's first target, or any of its submissions'
+		where = append(where, "(target = ? OR id IN (SELECT job_id FROM tasks WHERE target = ?))")
+		args = append(args, target, target)
 	}
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
@@ -186,6 +186,9 @@ func (s *Store) DeleteJob(ctx context.Context, jobID string) error {
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM job_batches WHERE job_id = ?", jobID); err != nil {
 		return fmt.Errorf("delete batches: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM cell_picks WHERE job_id = ?", jobID); err != nil {
+		return fmt.Errorf("delete cell picks: %w", err)
 	}
 	result, err := tx.ExecContext(ctx, "DELETE FROM jobs WHERE id = ?", jobID)
 	if err != nil {
@@ -335,12 +338,13 @@ func TerminalJobStatus(success, failed, killed int) string {
 
 // ProjectJobStatus is the single lifecycle projection from task rows to a job
 // status. Pause remains an orthogonal job-level overlay: callers that hold a
-// pause intent keep "paused" instead of applying this projection. Tasks a
-// rerun superseded are history and do not count.
+// pause intent keep "paused" instead of applying this projection. Every
+// version still queued or running keeps the job live; how it ended is read
+// from the selected versions only (the others carry superseded_by).
 func ProjectJobStatus(tasks []TaskRow) (string, error) {
 	var waiting, active, success, failed, killed int
 	for _, task := range tasks {
-		if task.SupersededBy != "" {
+		if task.SupersededBy != "" && IsTerminalTaskStatus(task.Status) {
 			continue
 		}
 		switch task.Status {

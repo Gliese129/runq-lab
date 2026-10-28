@@ -9,7 +9,7 @@ import (
 
 // consumerReplacement is what replaced runq-managed consumers: the script
 // runs wherever you start it and reads the job itself.
-const consumerReplacement = "run the scoring script yourself; it reads the job with `runq.job()` and writes results runq ingests (docs/views.md)"
+const consumerReplacement = "run the scoring script yourself; it reads the experiment with `runq.experiment()` and writes results runq ingests (docs/views.md)"
 
 // Removed commands, each a hidden stub that fails with what replaced it.
 // A stub swallows its old subcommands and flags (`runq job archive jb1`).
@@ -20,12 +20,12 @@ func init() {
 		replacement string
 	}{
 		{rootCmd, "task", "use `runq show <tk…>`"},
-		{rootCmd, "job", "use `runq archive <jb…>` (`--restore` to undo); jobs are listed by `runq ps`"},
-		{rootCmd, "results", "use `runq view --job <jb…>`"},
+		{rootCmd, "job", "use `runq archive <ex…>` (`--restore` to undo); experiments are listed by `runq ps`"},
+		{rootCmd, "results", "use `runq view --experiment <ex…>`"},
 		{rootCmd, "consumer", consumerReplacement},
 		{rootCmd, "config", "edit ~/.runq/config.yaml directly (`runq doctor` prints its path, `runq target check` validates it)"},
 		{rootCmd, "gpu", "GPU allocation is shown on the dashboard's Targets page (`runq dashboard`)"},
-		{rootCmd, "open", "use `runq dashboard`; job, task and draft pages are linked from `runq show`, `runq ps` and `runq draft`"},
+		{rootCmd, "open", "use `runq dashboard`; experiment, version and draft pages are linked from `runq show`, `runq ps` and `runq draft`"},
 		{rootCmd, "version", "use `runq --version`"},
 		{rootCmd, "connect", "use `runq target connect`"},
 		{projectCmd, "add", "use `runq project <project.yaml>` (registers or updates)"},

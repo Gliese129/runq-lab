@@ -330,18 +330,8 @@ func (b *SSHBackend) restoreLane(ctx context.Context) error {
 		}
 	}
 	for jobID := range repairedJobs {
-		tasks, lerr := b.store.ListTasks(ctx, store.TaskFilter{JobID: jobID})
-		if lerr != nil {
-			repairErrs = append(repairErrs, fmt.Errorf("project recovered job %s: %w", jobID, lerr))
-			continue
-		}
-		status, perr := store.ProjectJobStatus(tasks)
-		if perr != nil {
-			repairErrs = append(repairErrs, perr)
-			continue
-		}
-		if uerr := b.store.UpdateJobStatus(ctx, jobID, status); uerr != nil {
-			repairErrs = append(repairErrs, fmt.Errorf("persist recovered job %s: %w", jobID, uerr))
+		if _, _, rerr := b.store.RefreshJob(ctx, jobID, false); rerr != nil {
+			repairErrs = append(repairErrs, fmt.Errorf("refresh recovered job %s: %w", jobID, rerr))
 		}
 	}
 	if err := errors.Join(repairErrs...); err != nil {
@@ -772,7 +762,8 @@ func (b *SSHBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, erro
 		return nil, err
 	}
 	keys, _ := b.store.MetricKeys(ctx, jobID) // summaries: exact, remote-safe
-	detail := BuildJobDetail(*j, tasks, keys)
+	picks, _ := b.store.CellPicks(ctx, jobID)
+	detail := BuildJobDetail(*j, tasks, keys, picks)
 	attachTaskLinks(ctx, b.store, detail.Tasks)
 	if cfg, err := b.reg.Get(ctx, j.ProjectName); err == nil && cfg.Wandb != nil {
 		detail.Wandb = &WandbInfo{

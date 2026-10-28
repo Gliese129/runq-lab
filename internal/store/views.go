@@ -206,6 +206,23 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 			return in, err
 		}
 		params := map[string]map[string]any{}
+		versions := map[string]int{}
+		picks, err := s.CellPicks(ctx, j.ID)
+		if err != nil {
+			return in, err
+		}
+		pinned := map[string]bool{}
+		for _, id := range picks {
+			pinned[id] = true
+		}
+		if all, err := s.JobTasksInOrder(ctx, j.ID); err == nil {
+			for _, c := range GroupCells(all, picks) {
+				for i, v := range c.Versions {
+					versions[v.ID] = i + 1
+				}
+			}
+		}
+		status := map[string]string{}
 		source := views.Source{JobID: j.ID, Note: j.Name, Status: j.Status, Tasks: len(tasks), Attention: []map[string]any{}, ObservationState: "never"}
 		source.ObservedAt, source.ObservationState, err = s.JobObservation(ctx, tasks)
 		if err != nil {
@@ -215,6 +232,7 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 			var p map[string]any
 			_ = json.Unmarshal([]byte(t.ParamsJSON), &p)
 			params[t.ID] = p
+			status[t.ID] = t.Status
 			obs, err := s.SourceObservation(ctx, t.ID)
 			if err != nil {
 				return in, err
@@ -240,7 +258,8 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 			}
 			if tableJobs[j.ID] {
 				taskID, producer := SplitSourceID(r.TaskID)
-				v := views.Record{SourceID: r.TaskID, Producer: producer, JobID: r.JobID, Section: r.Section, TS: r.TS, Params: params[taskID]}
+				v := views.Record{SourceID: r.TaskID, Producer: producer, JobID: r.JobID, Section: r.Section, TS: r.TS, Params: params[taskID],
+					Status: status[taskID], Version: versions[taskID], Pinned: pinned[taskID]}
 				if err := json.Unmarshal([]byte(r.AxesJSON), &v.Axes); err != nil {
 					return in, err
 				}
@@ -263,7 +282,7 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 		}
 		in.Sources = append(in.Sources, source)
 		vals := map[string]any{"status": j.Status}
-		rows, err := s.db.QueryContext(ctx, `SELECT key,last,last_ts,task_id FROM metric_summary WHERE job_id=? UNION ALL SELECT key,last,last_ts,source_id FROM consumer_metrics WHERE job_id=? ORDER BY last_ts,task_id`, j.ID, j.ID) // consumer_metrics: removed consumers, read-only
+		rows, err := s.db.QueryContext(ctx, `SELECT m.key,m.last,m.last_ts,m.task_id FROM metric_summary m JOIN tasks t ON t.id=m.task_id WHERE m.job_id=? AND t.superseded_by IS NULL UNION ALL SELECT key,last,last_ts,source_id FROM consumer_metrics WHERE job_id=? ORDER BY 3,4`, j.ID, j.ID) // selected versions only; consumer_metrics: removed consumers, read-only
 		if err != nil {
 			return in, err
 		}

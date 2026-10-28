@@ -5,7 +5,7 @@
 The SDK has two halves. **Write this task** — inside your training script:
 typed parameters from the sweep (the ablation axes), step metrics and
 axis-keyed result records. **Read a job** — in a scoring script beside it:
-`runq.job()` lists a job's tasks and records results for each. Every write
+`runq.experiment()` lists a job's tasks and records results for each. Every write
 is a file in a task directory that runq ingests; nothing needs a network
 connection or a running service.
 
@@ -127,20 +127,23 @@ Each new task gets a new `ctx.checkpoint_dir`. Scripts own writing, retention
 and selection. To reuse an old checkpoint, explicitly pass its path in the new
 job's command or parameters. A failed task is never restarted in place.
 
-## Reading a job: `runq.job(ref=None, *, producer=None)`
+## Reading an experiment: `runq.experiment(ref=None, *, producer=None)`
 
 ```python
-job = runq.job("/gs/work/kl/jb7817")    # the job directory (or its job.json)
-job.id, job.name, job.project, job.status, job.observed_at
-for t in job.tasks:                       # live tasks; replaced reruns left out
+exp = runq.experiment("/gs/work/kl/ex7817")    # the job directory (or its job.json)
+exp.id, exp.name, exp.project, exp.status, exp.observed_at
+for t in exp.tasks:                       # the version each cell shows
     t.id, t.run_name, t.status, t.params, t.task_dir, t.output_dir, t.checkpoint_dir
-    t.started_at, t.finished_at, t.last_output_at, t.batch_seq
+    t.started_at, t.finished_at, t.last_output_at, t.batch_seq, t.version, t.selected
     t.record({"acc": 0.81}, section="math", split="test")
+for cell in exp.cells:                    # cell.name, cell.selected, cell.versions (oldest first)
+    ...
+exp.versions                              # every version, shown or not
 ```
 
-`ref` is the job directory, which runq fills with `job.json` at submit and
+`runq.job()` is the older name. `ref` is the experiment directory, which runq fills with `job.json` at submit and
 whenever it sees the job change. With no `ref` inside a runq task it is the
-task's own job; a `jb…` id works when the runq service socket is reachable
+task's own job; a `ex…` id works when the runq service socket is reachable
 (`RUNQ_SOCKET` or the local one). A missing or unreadable job.json raises.
 
 `t.record` is `runq.record` for that task — same validation, same frozen
@@ -164,10 +167,10 @@ with runq.utils.atomic_write("output.json") as f:
 |---|---|---|
 | `params.json` | runq (at submit) | SDK `context()` |
 | `metrics.jsonl` | SDK `report` | dashboard |
-| `results.jsonl` | SDK `record` | `runq view --job`, dashboard |
-| `results.<producer>.jsonl` | a scoring script's `job.tasks[i].record` | `runq view --job`, dashboard |
+| `results.jsonl` | SDK `record` | `runq view --experiment`, dashboard |
+| `results.<producer>.jsonl` | a scoring script's `exp.tasks[i].record` | `runq view --experiment`, dashboard |
 | `links.json` | SDK `link` | `runq show <tk…>`, dashboard |
-| `../job.json` (the job dir) | runq (submit, refresh) | SDK `runq.job()` |
+| `../job.json` (the job dir) | runq (submit, refresh) | SDK `runq.experiment()` |
 | `checkpoints/` | your training script | your resume code |
 
 ## Installation

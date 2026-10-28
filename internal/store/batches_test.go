@@ -54,44 +54,99 @@ func TestMigrateBackfillsFirstBatch(t *testing.T) {
 	}
 }
 
-// An append reopens the job, counts only live tasks, and refuses when the
-// failed task it reruns changed meanwhile (nothing is written then).
-func TestAppendTasksReopensJob(t *testing.T) {
+// A task whose run name the job has is a new version of that cell. Each
+// cell shows one version (pinned, else latest success, else latest); the job
+// counts cells, ends by the selected versions and stays live while any
+// version runs.
+func TestAppendTasksAddsVersions(t *testing.T) {
 	s := batchTestStore(t)
 	ctx := context.Background()
-	insertBatchTestJob(t, s, "jbaaaa0001", "success", "failed")
+	if err := s.InsertJob(ctx, &JobRow{ID: "jbaaaa0001", ProjectName: "p", Name: "seeds", ConfigJSON: `{}`, Status: "partial", TotalTasks: 2, Target: "c", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now()
+	task := func(id, run, status string, seq int) TaskRow {
+		at = at.Add(time.Second)
+		return TaskRow{ID: id, RunName: run, BatchSeq: seq, JobID: "jbaaaa0001", ProjectName: "p", Command: "x", ParamsJSON: "{}", Status: status, EnqueuedAt: at}
+	}
+	for _, tr := range []TaskRow{task("a1", "a", "success", 1), task("b1", "b", "failed", 1)} {
+		if err := s.InsertTask(ctx, &tr); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := s.DB().Exec(`UPDATE jobs SET finished_at = 1 WHERE id = 'jbaaaa0001'`); err != nil {
 		t.Fatal(err)
 	}
-	newTask := TaskRow{ID: "jbaaaa0001-r", JobID: "jbaaaa0001", ProjectName: "p", Command: "x", ParamsJSON: "{}", Status: "pending", EnqueuedAt: time.Now()}
-	seq, err := s.AppendTasks(ctx, JobBatch{JobID: "jbaaaa0001", SubmittedAt: time.Now(), Name: "rerun"}, []TaskRow{newTask}, map[string]string{"jbaaaa0001-t1": "jbaaaa0001-r"})
+	live := func() []string {
+		rows, _ := s.ListTasks(ctx, TaskFilter{JobID: "jbaaaa0001", LiveOnly: true})
+		var ids []string
+		for _, r := range rows {
+			ids = append(ids, r.ID)
+		}
+		return ids
+	}
+	job := func() *JobRow { j, _ := s.GetJob(ctx, "jbaaaa0001"); return j }
+
+	seq, err := s.AppendTasks(ctx, JobBatch{JobID: "jbaaaa0001", SubmittedAt: time.Now(), Name: "retry"}, []TaskRow{task("b2", "b", "pending", 0)})
 	if err != nil || seq != 2 {
 		t.Fatalf("append: seq %d, %v", seq, err)
 	}
-	j, _ := s.GetJob(ctx, "jbaaaa0001")
-	if j.TotalTasks != 2 || j.Status != "running" || j.FinishedAt != nil {
+	if j := job(); j.TotalTasks != 2 || j.Status != "running" || j.FinishedAt != nil {
 		t.Fatalf("job = total %d, %s, finished %v", j.TotalTasks, j.Status, j.FinishedAt)
 	}
-	tasks, _ := s.ListTasks(ctx, TaskFilter{JobID: "jbaaaa0001"})
-	if st, _ := ProjectJobStatus(tasks); st != "running" {
-		t.Fatalf("status with the superseded failure = %s", st)
-	}
-	live, _ := s.ListTasks(ctx, TaskFilter{JobID: "jbaaaa0001", LiveOnly: true})
-	if len(live) != 2 {
-		t.Fatalf("live tasks = %d", len(live))
+	if got := live(); len(got) != 2 || got[1] != "b2" {
+		t.Fatalf("live = %v, want a1 and the new version b2", got)
 	}
 
-	// The same failed task cannot be superseded twice.
-	again := newTask
-	again.ID = "jbaaaa0001-r2"
-	if _, err := s.AppendTasks(ctx, JobBatch{JobID: "jbaaaa0001", SubmittedAt: time.Now()}, []TaskRow{again}, map[string]string{"jbaaaa0001-t1": again.ID}); !errors.Is(err, ErrAppendRaced) {
-		t.Fatalf("second supersede: %v", err)
+	if err := s.UpdateTaskStatus(ctx, "b2", "success", nil); err != nil {
+		t.Fatal(err)
 	}
-	if b, _ := s.ListJobBatches(ctx, "jbaaaa0001"); len(b) != 2 {
-		t.Fatalf("a refused append left a batch: %d", len(b))
+	if st, _, err := s.RefreshJob(ctx, "jbaaaa0001", false); err != nil || st != "done" {
+		t.Fatalf("after the new version succeeded: %s, %v", st, err)
 	}
-	if got, _ := s.GetTask(ctx, again.ID); got != nil {
-		t.Fatal("a refused append left a task")
+	if job().FinishedAt == nil {
+		t.Fatal("a done job has finished_at")
+	}
+
+	// Pinning the failed version makes it the cell's again.
+	if st, err := s.PinVersion(ctx, "jbaaaa0001", "b", "b1"); err != nil || st != "partial" {
+		t.Fatalf("pin b1: %s, %v", st, err)
+	}
+	if got := live(); len(got) != 2 || got[1] != "b1" {
+		t.Fatalf("live after pin = %v", got)
+	}
+	if _, err := s.PinVersion(ctx, "jbaaaa0001", "a", "b1"); err == nil {
+		t.Fatal("pinned a version of another cell")
+	}
+	if st, err := s.PinVersion(ctx, "jbaaaa0001", "b", ""); err != nil || st != "done" {
+		t.Fatalf("unpin: %s, %v", st, err)
+	}
+
+	// Running a succeeded cell again: the success stays selected, but the job
+	// is live until the new version ends.
+	if _, err := s.AppendTasks(ctx, JobBatch{JobID: "jbaaaa0001", SubmittedAt: time.Now()}, []TaskRow{task("a2", "a", "running", 0)}); err != nil {
+		t.Fatal(err)
+	}
+	if j := job(); j.Status != "running" || j.TotalTasks != 2 {
+		t.Fatalf("rerun of a success: %s, total %d", j.Status, j.TotalTasks)
+	}
+	if got := live(); got[0] != "a1" {
+		t.Fatalf("live = %v, want the earlier success a1 while a2 runs", got)
+	}
+}
+
+// Tasks without run names (pre-rc6) stay one cell with the task their
+// superseded_by chain leads to, else each is a cell of its own.
+func TestGroupCellsLegacy(t *testing.T) {
+	at := time.Now()
+	tasks := []TaskRow{
+		{ID: "x", Status: "failed", SupersededBy: "y", EnqueuedAt: at},
+		{ID: "y", RunName: "base", Status: "success", EnqueuedAt: at.Add(time.Second)},
+		{ID: "z", Status: "success", EnqueuedAt: at.Add(2 * time.Second)},
+	}
+	cells := GroupCells(tasks, nil)
+	if len(cells) != 2 || len(cells[0].Versions) != 2 || cells[0].Selected != "y" || cells[1].Selected != "z" {
+		t.Fatalf("cells = %+v", cells)
 	}
 }
 
@@ -101,13 +156,13 @@ func TestAppendTasksRefusesArchivedAndPaused(t *testing.T) {
 	insertBatchTestJob(t, s, "jbarch0001", "success")
 	_ = s.ArchiveJob(ctx, "jbarch0001")
 	task := TaskRow{ID: "x1", JobID: "jbarch0001", ProjectName: "p", Command: "x", ParamsJSON: "{}", Status: "pending", EnqueuedAt: time.Now()}
-	if _, err := s.AppendTasks(ctx, JobBatch{JobID: "jbarch0001"}, []TaskRow{task}, nil); err == nil {
+	if _, err := s.AppendTasks(ctx, JobBatch{JobID: "jbarch0001"}, []TaskRow{task}); err == nil {
 		t.Fatal("append to an archived job")
 	}
 	insertBatchTestJob(t, s, "jbpaus0001", "pending")
 	_ = s.UpdateJobStatus(ctx, "jbpaus0001", "paused")
 	task.JobID = "jbpaus0001"
-	if _, err := s.AppendTasks(ctx, JobBatch{JobID: "jbpaus0001"}, []TaskRow{task}, nil); err == nil {
+	if _, err := s.AppendTasks(ctx, JobBatch{JobID: "jbpaus0001"}, []TaskRow{task}); err == nil {
 		t.Fatal("append to a paused job")
 	}
 }
@@ -137,5 +192,38 @@ func TestProjectJobStatusIgnoresSuperseded(t *testing.T) {
 	tasks := []TaskRow{{ID: "a", Status: "success"}, {ID: "b", Status: "failed", SupersededBy: "c"}, {ID: "c", Status: "success"}}
 	if got, _ := ProjectJobStatus(tasks); got != "done" {
 		t.Fatalf("status = %s, want done", got)
+	}
+	tasks = append(tasks, TaskRow{ID: "d", Status: "running", SupersededBy: "a"})
+	if got, _ := ProjectJobStatus(tasks); got != "running" {
+		t.Fatalf("a version still running keeps the job live: %s", got)
+	}
+}
+
+// <experiment>/<cell>[@vN] names a version: N counts from the cell's first,
+// no @vN is the selected one.
+func TestResolveVersionRef(t *testing.T) {
+	s := batchTestStore(t)
+	ctx := context.Background()
+	if err := s.InsertJob(ctx, &JobRow{ID: "exaaaa0001", ProjectName: "p", Name: "x", ConfigJSON: `{}`, Status: "done", Target: "c", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tr := range []TaskRow{
+		{ID: "v1", RunName: "base", BatchSeq: 1, Status: "success"},
+		{ID: "v2", RunName: "base", BatchSeq: 2, Status: "failed"},
+	} {
+		tr.JobID, tr.ProjectName, tr.Command, tr.ParamsJSON, tr.EnqueuedAt = "exaaaa0001", "p", "x", "{}", time.Now()
+		if err := s.InsertTask(ctx, &tr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for ref, want := range map[string]string{"exaaaa0001/base": "v1", "exaaaa/base@v2": "v2", "exaaaa0001/base@v1": "v1"} {
+		if got, err := s.ResolveTaskRef(ctx, ref); err != nil || got != want {
+			t.Errorf("%s = %q, %v; want %s", ref, got, err, want)
+		}
+	}
+	for _, ref := range []string{"exaaaa0001/base@v3", "exaaaa0001/nope"} {
+		if _, err := s.ResolveTaskRef(ctx, ref); err == nil {
+			t.Errorf("%s resolved", ref)
+		}
 	}
 }

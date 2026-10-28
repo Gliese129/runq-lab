@@ -34,9 +34,12 @@ type JobConfig struct {
 	Note        string         `yaml:"note,omitempty" json:"note,omitempty"`
 	FixedParams map[string]any `yaml:"fixed_params,omitempty" json:"fixed_params,omitempty"` // params with fixed values (not swept)
 	Sweep       []SweepBlock   `yaml:"sweep" json:"sweep"`
-	// Tasks lists named runs explicitly (the alternative to Sweep): each row
-	// is fixed_params overridden by the row's own params.
-	Tasks []TaskRow `yaml:"tasks,omitempty" json:"tasks,omitempty"`
+	// Tasks lists the cells explicitly (the alternative to Sweep), written
+	// cells: in job.yaml: each row is fixed_params overridden by the row's
+	// own params. LegacyTasks is the older tasks: key, folded in on parse.
+	Tasks          []TaskRow `yaml:"cells,omitempty" json:"tasks,omitempty"`
+	LegacyTasks    []TaskRow `yaml:"tasks,omitempty" json:"-"`
+	legacyTasksKey bool
 	// Baseline names the reference run (default: the first row). Run names
 	// of sweep rows and the plan table describe rows relative to it.
 	Baseline string `yaml:"baseline,omitempty" json:"baseline,omitempty"`
@@ -47,10 +50,14 @@ type JobConfig struct {
 	Draft string `yaml:"draft,omitempty" json:"-"`
 	Rev   int    `yaml:"rev,omitempty" json:"-"`
 	// Into appends this plan to an existing job (jb…) instead of creating
-	// one: cells it already has are skipped. RerunFailed also reruns its
-	// failed and killed cells (as new tasks; the old ones stay as history).
-	Into        string `yaml:"into,omitempty" json:"into,omitempty"`
-	RerunFailed bool   `yaml:"rerun_failed,omitempty" json:"rerun_failed,omitempty"`
+	// one: a row whose run name the job has is a new version of that cell
+	// when its selected version failed or was killed, and is skipped when it
+	// succeeded or still runs. Rerun names succeeded cells to run again.
+	Into  string   `yaml:"into,omitempty" json:"into,omitempty"`
+	Rerun []string `yaml:"rerun,omitempty" json:"rerun,omitempty"`
+	// RetiredRerunFailed is the old rerun_failed: failed cells now get a new
+	// version by default, so setting it is an error that says so.
+	RetiredRerunFailed bool `yaml:"rerun_failed,omitempty" json:"rerun_failed,omitempty"`
 	// FromJob is written by `runq export` for provenance; ignored as input.
 	FromJob   string     `yaml:"from_job,omitempty" json:"from_job,omitempty"`
 	Overrides *Overrides `yaml:"overrides,omitempty" json:"overrides,omitempty"`
@@ -108,4 +115,48 @@ func (p *ParameterSpec) UnmarshalYAML(value *yaml.Node) error {
 	default:
 		return fmt.Errorf("unsupported YAML node kind %d for parameter spec", value.Kind)
 	}
+}
+
+// CheckAppendFields rejects the retired rerun_failed and a rerun list
+// without into.
+func (c *JobConfig) CheckAppendFields() error {
+	if c.RetiredRerunFailed {
+		return fmt.Errorf("rerun_failed (--rerun-failed) is gone: with into: a failed or killed cell gets a new version by default; rerun: [cell] (--rerun <cell>) runs a succeeded one again")
+	}
+	if len(c.Rerun) > 0 && c.Into == "" {
+		return fmt.Errorf("rerun needs into: <job>")
+	}
+	return nil
+}
+
+// MergeNames appends the names in more that names lacks.
+func MergeNames(names, more []string) []string {
+	have := make(map[string]bool, len(names))
+	for _, n := range names {
+		have[n] = true
+	}
+	for _, n := range more {
+		if !have[n] {
+			names = append(names, n)
+			have[n] = true
+		}
+	}
+	return names
+}
+
+// UnmarshalYAML reads cells: (and the older tasks:) into Tasks.
+func (c *JobConfig) UnmarshalYAML(n *yaml.Node) error {
+	type plain JobConfig
+	var p plain
+	if err := n.Decode(&p); err != nil {
+		return err
+	}
+	*c = JobConfig(p)
+	if len(c.LegacyTasks) > 0 {
+		if len(c.Tasks) > 0 {
+			return fmt.Errorf("cells: and tasks: are the same list; keep cells:")
+		}
+		c.Tasks, c.LegacyTasks, c.legacyTasksKey = c.LegacyTasks, nil, true
+	}
+	return nil
 }

@@ -33,15 +33,16 @@ import (
 // (--fresh, dashboard refresh) covers every unarchived job of the target.
 
 const (
-	jobSnapshotVersion = 1
+	jobSnapshotVersion = 2
 	recentJobWindow    = 14 * 24 * time.Hour
 	jobFilesChunk      = 100
 
 	idleProducerScanInterval = 5 * time.Minute
 )
 
-// JobSnapshot is <job_dir>/job.json. Superseded tasks (a rerun replaced
-// them) are left out.
+// JobSnapshot is <job_dir>/job.json: every version of every cell, each
+// with its number within its cell and whether it is the one the cell shows
+// (version 2; version 1 listed the selected versions only).
 type JobSnapshot struct {
 	Version          int               `json:"version"`
 	Job              JobSnapshotJob    `json:"job"`
@@ -72,22 +73,45 @@ type JobSnapshotTask struct {
 	FinishedAt    *int64         `json:"finished_at"`
 	LastOutputAt  *int64         `json:"last_output_at"`
 	BatchSeq      int            `json:"batch_seq"`
+	Version       int            `json:"version"`
+	Selected      bool           `json:"selected"`
+	Target        string         `json:"target"`
 }
 
-// jobSnapshot builds a job's job.json from the store. dir is "" when no task
-// recorded a workspace (nothing to publish into).
-func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow) (snap JobSnapshot, dir string, err error) {
-	tasks, err := st.ListTasks(ctx, store.TaskFilter{JobID: j.ID, LiveOnly: true})
+// jobSnapshot builds a job's job.json from the store; dir is the job's
+// directory on target, "" when no task there recorded a workspace (nothing
+// to publish into). An experiment that ran on several targets gets the same
+// job.json in its directory on each.
+func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow, target string) (snap JobSnapshot, dir string, err error) {
+	tasks, err := st.JobTasksInOrder(ctx, j.ID)
 	if err != nil {
 		return snap, "", err
 	}
+	picks, err := st.CellPicks(ctx, j.ID)
+	if err != nil {
+		return snap, "", err
+	}
+	version := map[string]int{}
+	for _, c := range store.GroupCells(tasks, picks) {
+		for i, v := range c.Versions {
+			version[v.ID] = i + 1
+		}
+	}
+	var selected []store.TaskRow
 	snap = JobSnapshot{Version: jobSnapshotVersion, Tasks: []JobSnapshotTask{},
 		Job: JobSnapshotJob{ID: j.ID, Name: j.Name, Project: j.ProjectName, Status: j.Status, Target: j.Target, CreatedAt: j.CreatedAt.Unix()}}
 	for _, t := range tasks {
+		if t.SupersededBy == "" {
+			selected = append(selected, t)
+		}
 		if t.TaskDir == "" {
 			continue
 		}
-		if dir == "" {
+		taskTarget := t.Target
+		if taskTarget == "" {
+			taskTarget = j.Target
+		}
+		if dir == "" && taskTarget == target {
 			dir = path.Dir(t.TaskDir)
 		}
 		params := map[string]any{}
@@ -100,9 +124,10 @@ func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow) (snap Job
 			ID: t.ID, RunName: t.RunName, Status: t.Status, Params: params, TaskDir: t.TaskDir,
 			OutputDir: workspace.OutputsDir(t.TaskDir), CheckpointDir: workspace.CheckpointsDir(t.TaskDir),
 			StartedAt: unixPtr(t.StartedAt), FinishedAt: unixPtr(t.FinishedAt), LastOutputAt: obs.LastOutputAt, BatchSeq: t.BatchSeq,
+			Version: version[t.ID], Selected: t.SupersededBy == "", Target: taskTarget,
 		})
 	}
-	snap.ObservedAt, snap.ObservationState, err = st.JobObservation(ctx, tasks)
+	snap.ObservedAt, snap.ObservationState, err = st.JobObservation(ctx, selected)
 	return snap, dir, err
 }
 
@@ -127,11 +152,11 @@ func (b *SSHBackend) publishJobSnapshot(ctx context.Context, jobID string) error
 }
 
 func (b *SSHBackend) publishJob(ctx context.Context, j store.JobRow) (JobSnapshot, error) {
-	snap, dir, err := jobSnapshot(ctx, b.store, j)
+	snap, dir, err := jobSnapshot(ctx, b.store, j, b.targetName)
 	if err != nil || dir == "" {
 		return snap, err
 	}
-	h := snap.hash()
+	h := snap.hash() + "@" + b.targetName // one stored hash per job: a second target's copy rewrites
 	if prev, err := b.store.JobSnapshotHash(ctx, j.ID); err != nil || prev == h {
 		return snap, err
 	}
@@ -169,6 +194,9 @@ func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
 			b.logger.Debug("job files: publish job.json", "job", j.ID, "error", err)
 		}
 		for _, t := range snap.Tasks {
+			if t.Target != b.targetName {
+				continue // another target's version: not on this filesystem
+			}
 			dir := path.Dir(t.TaskDir)
 			if dirs[dir] == nil {
 				dirs[dir] = map[string]string{}
@@ -190,7 +218,7 @@ func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
 		for _, f := range files {
 			taskID := dirs[path.Dir(f.TaskDir)][f.TaskDir]
 			if taskID == "" {
-				continue // not a live task of this job (superseded, or a stray dir)
+				continue // not a version of this job (a stray dir)
 			}
 			err := b.store.WithTaskLock(taskID, func() error {
 				row, err := b.store.GetTask(ctx, taskID)

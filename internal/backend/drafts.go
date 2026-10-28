@@ -42,38 +42,41 @@ type DraftRequest struct {
 	Name       string `json:"name,omitempty"`    // overrides job.yaml name:
 	Target     string `json:"target,omitempty"`  // -t
 	// Into makes the draft an append to that job (id or unique prefix);
-	// RerunFailed also reruns the job's failed cells.
-	Into        string `json:"into,omitempty"`
-	RerunFailed bool   `json:"rerun_failed,omitempty"`
+	// Rerun names succeeded cells to run again. RetiredRerunFailed is the
+	// old rerun_failed, refused with a pointer to the new default.
+	Into               string   `json:"into,omitempty"`
+	Rerun              []string `json:"rerun,omitempty"`
+	RetiredRerunFailed bool     `json:"rerun_failed,omitempty"`
 }
 
-// DraftSubmitOptions: Rev > 0 must match the draft's rev; Into and
-// RerunFailed set (or confirm) the draft's append. (A pre-rc6 client's
-// no_preflight is ignored: preflight only warns.)
+// DraftSubmitOptions: Rev > 0 must match the draft's rev; Into and Rerun
+// set (or confirm) the draft's append. (A pre-rc6 client's no_preflight is
+// ignored: preflight only warns.)
 type DraftSubmitOptions struct {
-	Rev         int    `json:"rev,omitempty"`
-	Into        string `json:"into,omitempty"`
-	RerunFailed bool   `json:"rerun_failed,omitempty"`
+	Rev                int      `json:"rev,omitempty"`
+	Into               string   `json:"into,omitempty"`
+	Rerun              []string `json:"rerun,omitempty"`
+	RetiredRerunFailed bool     `json:"rerun_failed,omitempty"`
 }
 
 type DraftView struct {
-	ID          string `json:"id"`
-	Project     string `json:"project"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Section     string `json:"section,omitempty"`
-	Target      string `json:"target"`
-	Into        string `json:"into,omitempty"`
-	RerunFailed bool   `json:"rerun_failed,omitempty"`
-	Rows        int    `json:"rows"`
-	NeedsCode   int    `json:"needs_code"`
-	Rev         int    `json:"rev"`
-	Edited      bool   `json:"edited"`
-	Status      string `json:"status"`
-	JobID       string `json:"job_id,omitempty"`
-	SourcePath  string `json:"source_path,omitempty"`
-	CreatedAt   int64  `json:"created_at"`
-	UpdatedAt   int64  `json:"updated_at"`
+	ID          string   `json:"id"`
+	Project     string   `json:"project"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Section     string   `json:"section,omitempty"`
+	Target      string   `json:"target"`
+	Into        string   `json:"into,omitempty"`
+	Rerun       []string `json:"rerun,omitempty"`
+	Rows        int      `json:"rows"`
+	NeedsCode   int      `json:"needs_code"`
+	Rev         int      `json:"rev"`
+	Edited      bool     `json:"edited"`
+	Status      string   `json:"status"`
+	JobID       string   `json:"job_id,omitempty"`
+	SourcePath  string   `json:"source_path,omitempty"`
+	CreatedAt   int64    `json:"created_at"`
+	UpdatedAt   int64    `json:"updated_at"`
 }
 
 type DraftResult struct {
@@ -133,7 +136,8 @@ func (m *MultiBackend) CreateDraft(ctx context.Context, req DraftRequest) (*Draf
 	if req.Into != "" {
 		cfg.Into = req.Into
 	}
-	cfg.RerunFailed = cfg.RerunFailed || req.RerunFailed
+	cfg.Rerun = job.MergeNames(cfg.Rerun, req.Rerun)
+	cfg.RetiredRerunFailed = cfg.RetiredRerunFailed || req.RetiredRerunFailed
 	if strings.TrimSpace(cfg.Project) == "" && cfg.Into == "" {
 		return nil, fmt.Errorf("draft needs an explicit project: set project: in the job file or pass -p <project>")
 	}
@@ -169,12 +173,13 @@ func (m *MultiBackend) planDraft(ctx context.Context, cfg job.JobConfig, target 
 	if len(m.snapshot()) == 0 { // nothing could run it: say what to do first
 		return PreviewResult{}, job.JobConfig{}, noTargetConfiguredError()
 	}
+	if err := cfg.CheckAppendFields(); err != nil {
+		return PreviewResult{}, job.JobConfig{}, err
+	}
 	if cfg.Into != "" {
 		if _, err := m.resolveInto(ctx, &cfg, target); err != nil {
 			return PreviewResult{}, job.JobConfig{}, err
 		}
-	} else if cfg.RerunFailed {
-		return PreviewResult{}, job.JobConfig{}, fmt.Errorf("rerun_failed needs into: <job>")
 	}
 	name, err := m.registry.Resolve(ctx, cfg.Project)
 	if err != nil {
@@ -248,7 +253,7 @@ func (m *MultiBackend) draftResult(ctx context.Context, d *store.DraftRow) (*Dra
 
 func draftView(d *store.DraftRow, cfg job.JobConfig, rows []job.Row) DraftView {
 	v := DraftView{ID: d.ID, Project: d.Project, Name: cfg.Name, Description: cfg.Description, Section: cfg.Section,
-		Target: d.Target, Into: cfg.Into, RerunFailed: cfg.RerunFailed, Rows: len(rows), Rev: d.Rev, Edited: d.Rev > 1, Status: d.Status, JobID: d.JobID,
+		Target: d.Target, Into: cfg.Into, Rerun: cfg.Rerun, Rows: len(rows), Rev: d.Rev, Edited: d.Rev > 1, Status: d.Status, JobID: d.JobID,
 		SourcePath: d.SourcePath, CreatedAt: d.CreatedAt.Unix(), UpdatedAt: d.UpdatedAt.Unix()}
 	for _, r := range rows {
 		if len(r.NeedsCode) > 0 {
@@ -336,7 +341,7 @@ func (m *MultiBackend) DraftYAML(ctx context.Context, ref string) ([]byte, error
 }
 
 func (m *MultiBackend) draftYAML(ctx context.Context, d *store.DraftRow, cfg job.JobConfig, rows []job.Row) ([]byte, error) {
-	in := job.ExportInput{DraftID: d.ID, Rev: d.Rev, Into: cfg.Into, RerunFailed: cfg.RerunFailed, Project: d.Project, Name: cfg.Name, Description: cfg.Description,
+	in := job.ExportInput{DraftID: d.ID, Rev: d.Rev, Into: cfg.Into, Rerun: cfg.Rerun, Project: d.Project, Name: cfg.Name, Description: cfg.Description,
 		Section: cfg.Section, Target: cfg.Target, Command: cfg.Command, Overrides: cfg.Overrides,
 		Baseline: cfg.Baseline, Rows: rows}
 	if proj, err := m.registry.GetCached(ctx, d.Project); err == nil {
@@ -442,7 +447,11 @@ func (m *MultiBackend) SubmitDraft(ctx context.Context, ref string, opts DraftSu
 		}
 		cfg.Into = j.ID
 	}
-	cfg.RerunFailed = cfg.RerunFailed || opts.RerunFailed
+	cfg.Rerun = job.MergeNames(cfg.Rerun, opts.Rerun)
+	cfg.RetiredRerunFailed = cfg.RetiredRerunFailed || opts.RetiredRerunFailed
+	if err := cfg.CheckAppendFields(); err != nil {
+		return nil, err
+	}
 	cfg.Project, cfg.DraftID = d.Project, d.ID
 	var appended job.AppendSummary
 	var report preflight.Report
@@ -498,12 +507,22 @@ func (m *MultiBackend) storedAppendSummary(ctx context.Context, cfg job.JobConfi
 	if err != nil {
 		return nil, err
 	}
+	picks, err := m.store.CellPicks(ctx, cfg.Into)
+	if err != nil {
+		return nil, err
+	}
+	batches, err := m.store.ListJobBatches(ctx, cfg.Into)
+	if err != nil {
+		return nil, err
+	}
 	seq, err := m.store.NextBatchSeq(ctx, cfg.Into)
 	if err != nil {
 		return nil, err
 	}
 	exclude := map[string]bool{}
+	projectCmd := ""
 	if proj, err := m.registry.GetCached(ctx, cfg.Project); err == nil {
+		projectCmd = proj.CmdTemplate
 		for _, p := range proj.Params {
 			if p.Scope == "scheduler" {
 				exclude[p.Name] = true
@@ -517,6 +536,14 @@ func (m *MultiBackend) storedAppendSummary(ctx context.Context, cfg job.JobConfi
 			}
 		}
 	}
-	s := remote.AppendSummaryFor(tasks, rows, exclude, cfg.RerunFailed, cfg.Into, seq)
+	command := cfg.Command
+	if command == "" {
+		command = projectCmd
+	}
+	cells, err := job.ClassifyCells(rows, remote.ExistingCells(tasks, picks, batches, projectCmd), exclude, cfg.Rerun, command)
+	if err != nil {
+		return nil, err
+	}
+	s := job.SummarizeCells(cfg.Into, seq, cells)
 	return &s, nil
 }

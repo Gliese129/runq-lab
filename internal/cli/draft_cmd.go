@@ -21,7 +21,7 @@ import (
 
 var draftCmd = &cobra.Command{
 	Use:   "draft <job.yaml | -> | draft ps|show|edit|discard",
-	Short: "Plan a job as an editable draft (preview included); submit it with runq submit dr…",
+	Short: "Plan an experiment (or an append to one) as an editable draft; submit it with runq submit dr…",
 	Long: `Create a draft from a job file ('-' reads stdin). The draft is the real,
 expanded plan — the same rows, names, rendered command and submit line that
 submitting would use — kept server-side as dr…. Nothing is synced, probed,
@@ -31,14 +31,16 @@ freeze it into a job with 'runq submit dr…'.
 The project must be explicit: job.yaml 'project:' or -p. Each project keeps
 its newest 5 open drafts; creating a 6th discards the oldest.
 
---into jb… makes the draft an append to an existing job of the same project
-and target: the preview says which cells are new and which the job already
-has (done, running or queued — skipped; failed or killed — skipped unless
---rerun-failed). Params only the scheduler reads (walltime, reservation id)
-do not make a cell different.`,
+--into ex… makes the draft an append to an existing experiment of the same
+project and target. A cell is a row name: a row whose name the experiment has is a
+new version of that cell when its selected version failed or was killed, and
+is skipped when it succeeded or still runs (--rerun <cell> runs a succeeded
+one again). Such a row must keep the cell's params, except the ones only the
+scheduler reads (walltime, reservation id); a changed command is allowed and
+flagged.`,
 	Example: `  runq draft configs/runq/a1-batch1.yaml
   runq draft job.yaml -s "KL 消融" -t tsubame
-  runq draft more-seeds.yaml --into jb6573   # add cells to an existing job
+  runq draft more-seeds.yaml --into ex6573   # add cells to an existing experiment
   runq show dr8f2k --yaml > plan.yaml         # edit, then:
   runq draft edit dr8f2k -f plan.yaml
   runq submit dr8f2k`,
@@ -65,9 +67,9 @@ do not make a cell different.`,
 		section, _ := cmd.Flags().GetString("section")
 		jsonOut, _ := cmd.Flags().GetBool("json")
 		into, _ := cmd.Flags().GetString("into")
-		rerunFailed, _ := cmd.Flags().GetBool("rerun-failed")
+		rerun, _ := cmd.Flags().GetStringArray("rerun")
 		req := backend.DraftRequest{JobYAML: string(data), Project: project, Section: section, Target: explicitSubmitTarget(cmd),
-			Into: into, RerunFailed: rerunFailed}
+			Into: into, Rerun: rerun}
 		if src != "-" {
 			req.SourcePath = src
 		}
@@ -115,8 +117,8 @@ func draftLine(v backend.DraftView) string {
 	}
 	if v.Into != "" {
 		line += " · into " + v.Into
-		if v.RerunFailed {
-			line += " (rerun failed)"
+		if len(v.Rerun) > 0 {
+			line += " (rerun " + strings.Join(v.Rerun, ", ") + ")"
 		}
 	}
 	return line
@@ -126,11 +128,11 @@ func draftLine(v backend.DraftView) string {
 func submittedLine(res *backend.DraftSubmitResult) string {
 	switch {
 	case res.AlreadySubmitted:
-		return fmt.Sprintf("draft %s was already submitted as job %s (%d tasks)", res.DraftID, utils.IDColor(res.JobID), res.TotalTasks)
+		return fmt.Sprintf("draft %s was already submitted as experiment %s (%d versions)", res.DraftID, utils.IDColor(res.JobID), res.TotalTasks)
 	case res.Append != nil:
-		return fmt.Sprintf("appended %d task(s) to job %s as batch %d (%s) from draft %s", res.TotalTasks, utils.IDColor(res.JobID), res.Append.Batch, res.Append.Line(), res.DraftID)
+		return fmt.Sprintf("appended %d version(s) to experiment %s as submission %d (%s) from draft %s", res.Append.Submits(), utils.IDColor(res.JobID), res.Append.Batch, res.Append.Line(), res.DraftID)
 	}
-	return fmt.Sprintf("submitted job %s (%d tasks) from draft %s", utils.IDColor(res.JobID), res.TotalTasks, res.DraftID)
+	return fmt.Sprintf("submitted experiment %s (%d versions) from draft %s", utils.IDColor(res.JobID), res.TotalTasks, res.DraftID)
 }
 
 // printPreflightWarnings lists a submit's preflight warnings — it went
@@ -139,7 +141,7 @@ func printPreflightWarnings(w io.Writer, warns []preflight.CheckResult) {
 	if len(warns) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "preflight: %d warning(s) — submitted anyway; a smoke job tells you whether it runs\n", len(warns))
+	fmt.Fprintf(w, "preflight: %d warning(s) — submitted anyway; a smoke experiment tells you whether it runs\n", len(warns))
 	fmt.Fprint(w, preflight.Format(warns))
 }
 
@@ -376,10 +378,12 @@ func submitDraft(cmd *cobra.Command, ref string, opts backend.DraftSubmitOptions
 
 func init() {
 	draftCmd.Flags().StringP("project", "p", "", "project (name or id); default: the job file's project:")
-	draftCmd.Flags().StringP("section", "s", "", "section to file the job under (must exist)")
+	draftCmd.Flags().StringP("section", "s", "", "section to file the experiment under (must exist)")
 	draftCmd.Flags().StringP("target", "t", "", "execution target override (-t > job.target > project.target)")
-	draftCmd.Flags().String("into", "", "append to this job (jb…) instead of creating one; cells it has are skipped")
-	draftCmd.Flags().Bool("rerun-failed", false, "with --into: also rerun the job's failed and killed cells")
+	draftCmd.Flags().String("into", "", "append to this experiment (ex…) instead of creating one; failed cells get a new version, succeeded ones are skipped")
+	draftCmd.Flags().StringArray("rerun", nil, "with --into: run this succeeded cell again (repeatable)")
+	draftCmd.Flags().Bool("rerun-failed", false, "")
+	retireFlag(draftCmd, "rerun-failed", "with --into, failed and killed cells get a new version by default; --rerun <cell> runs a succeeded one again")
 	draftCmd.Flags().Bool("json", false, "output raw JSON")
 	draftPsCmd.Flags().StringP("project", "p", "", "only this project")
 	draftPsCmd.Flags().Bool("json", false, "output raw JSON")

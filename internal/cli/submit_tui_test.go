@@ -82,7 +82,7 @@ func TestTUISubmitAndQuit(t *testing.T) {
 	if err := ui.run(); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.submitted) != 1 || f.submitted[0] != "dr00000001@1" || !strings.Contains(out.String(), "submitted job") {
+	if len(f.submitted) != 1 || f.submitted[0] != "dr00000001@1" || !strings.Contains(out.String(), "submitted experiment") {
 		t.Fatalf("s should submit the shown rev: %v\n%s", f.submitted, out)
 	}
 

@@ -41,6 +41,10 @@ export const jobsApi = {
   kill: (jobId: string) =>
     api.post(`/jobs/${encodeURIComponent(jobId)}/kill`),
 
+  /** The version a cell shows; taskId '' returns it to latest. */
+  pinVersion: (jobId: string, cell: string, taskId: string) =>
+    api.put<{ status: string }>(`/jobs/${encodeURIComponent(jobId)}/cells/${encodeURIComponent(cell)}/pin`, { task_id: taskId }),
+
   /** Force a reconcile from external sources (poll-model backends only).
    *  D22: the receipt always says whether the refresh actually happened. */
   refresh: (jobId: string) =>

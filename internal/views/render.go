@@ -19,6 +19,12 @@ type Record struct {
 	Axes     map[string]any `json:"axes"`
 	Metrics  map[string]any `json:"metrics"`
 	Params   map[string]any `json:"params,omitempty"`
+	// The version the record came from: its status, its number within
+	// its cell, and whether the researcher pinned it (else it is the
+	// cell's latest).
+	Status  string `json:"status,omitempty"`
+	Version int    `json:"version,omitempty"`
+	Pinned  bool   `json:"pinned,omitempty"`
 }
 type Contributor struct {
 	SourceID  string `json:"source_id"`
@@ -26,6 +32,9 @@ type Contributor struct {
 	JobID     string `json:"job_id"`
 	Section   string `json:"section"`
 	UpdatedAt int64  `json:"updated_at"`
+	Status    string `json:"status,omitempty"`
+	Version   int    `json:"version,omitempty"`
+	Pinned    bool   `json:"pinned,omitempty"`
 }
 type Source struct {
 	JobID            string           `json:"job_id"`
@@ -430,7 +439,8 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 					x.values[k] = v
 				}
 			}
-			c := Contributor{r.SourceID, r.Producer, r.JobID, r.Section, r.TS}
+			c := Contributor{SourceID: r.SourceID, Producer: r.Producer, JobID: r.JobID, Section: r.Section, UpdatedAt: r.TS,
+				Status: r.Status, Version: r.Version, Pinned: r.Pinned}
 			row.Contributors = append(row.Contributors, c)
 			if row.UpdatedAt == nil || r.TS > *row.UpdatedAt {
 				ts := r.TS

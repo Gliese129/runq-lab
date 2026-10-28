@@ -209,6 +209,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/kill", s.handleKillJob)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/archive", s.handleArchiveJob)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/rename", s.handleRenameJob)
+	s.mux.HandleFunc("PUT /api/v1/jobs/{id}/cells/{cell}/pin", s.handlePinVersion)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/section", s.handleMoveJob)
 	s.mux.HandleFunc("GET /api/v1/jobs/{id}/export", s.handleExportJob)
 	s.mux.HandleFunc("POST /api/v1/drafts", s.handleCreateDraft)
@@ -808,6 +809,29 @@ func (s *Server) handleRenameJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "name": strings.TrimSpace(body.NewName)})
+}
+
+// handlePinVersion — PUT /jobs/{id}/cells/{cell}/pin {task_id}: the version
+// the cell shows; an empty task_id returns it to latest.
+func (s *Server) handlePinVersion(w http.ResponseWriter, r *http.Request) {
+	pinner, ok := s.backend.(backend.VersionPinner)
+	if !ok {
+		writeErrorStatus(w, http.StatusNotImplemented, fmt.Errorf("pinning versions is not supported by this backend"))
+		return
+	}
+	var body struct {
+		TaskID string `json:"task_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErrorStatus(w, http.StatusBadRequest, err)
+		return
+	}
+	status, err := pinner.PinVersion(r.Context(), r.PathValue("id"), r.PathValue("cell"), body.TaskID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": status})
 }
 
 func (s *Server) handleArchiveJob(w http.ResponseWriter, r *http.Request) {

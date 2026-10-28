@@ -38,7 +38,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useJobDetailQuery } from '@/queries/useJobQueries'
 import type { PlanRow } from '@/types/api'
-import { liveCells } from '@/utils/jobCells'
+import { jobCells } from '@/utils/jobCells'
 import PlanTable from './PlanTable.vue'
 import StatusDot from './StatusDot.vue'
 import SegmentedProgress from './SegmentedProgress.vue'
@@ -48,7 +48,7 @@ const { t } = useI18n()
 const router = useRouter()
 const query = useJobDetailQuery(() => props.jobId)
 const detail = computed(() => query.data.value ?? null)
-const cells = computed(() => liveCells(detail.value?.tasks ?? []))
+const cells = computed(() => jobCells(detail.value?.tasks ?? [], detail.value?.pinned).map((c) => c.selected))
 const rows = computed<PlanRow[]>(() =>
   cells.value.map((x) => ({ run: x.run_name || x.id.slice(0, 8), params: x.params ?? {} })))
 

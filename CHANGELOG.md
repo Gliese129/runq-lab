@@ -4,6 +4,38 @@
 
 ### Breaking
 
+- Experiments, cells, submissions and versions. A job is now an experiment
+  (new ids `ex…`; `jb…` ids keep working), one table the researcher compares;
+  a cell is one named combination in it (job.yaml `cells:` rows named with
+  `cell:` — `tasks:`/`run:` still parse and warn); a submission is one `runq
+  submit dr…`; a version is one execution of a cell (a task, `tk…`, also
+  addressable as `ex…/<cell>[@vN]` in show/logs/kill).
+  - `--into` matches rows to cells by name: a failed or killed cell gets a new
+    version by default, a succeeded or running one is skipped, `--rerun <cell>`
+    (job.yaml `rerun:`) runs a succeeded one again. A row naming a cell must
+    keep its params except the scheduler-only ones; the command may change and
+    is flagged. `--rerun-failed`/`rerun_failed:` fail with this pointer; the
+    command/overrides lock, the `(bN)` renames and the "same cell" plan error
+    for rows that differ only in scheduler params are gone.
+  - Each cell shows one version — the pinned one (dashboard picker, `PUT
+    /jobs/{id}/cells/{cell}/pin`), else the latest success, else the latest —
+    and status, counts, results, views and export follow it. An experiment
+    stays running while any version runs. `total_tasks` counts cells.
+  - `runq export` is a snapshot of the shown versions (another version's
+    command appears as a row comment); it no longer refuses experiments whose
+    submissions ran different commands.
+  - A submission picks its own target: `--into` no longer requires the
+    experiment's first target; versions on another target live in the
+    experiment's directory there, and kill, refresh, job.json and ingest
+    follow each version's target.
+  - `runq view --job` and `runq clean --job` → `--experiment`.
+  - job.json (version 2) lists every version with `version` and `selected`.
+    SDK: `runq.experiment()` replaces `runq.job()` (kept, with a
+    DeprecationWarning); `exp.tasks` is the shown version of each cell,
+    `exp.cells` / `exp.versions` give the rest. `ctx.seed` derives from the
+    experiment and cell, so every version of a cell gets the same seed; a
+    cell's later versions are named `<cell> #N` in W&B. Tasks get
+    `RUNQ_EXPERIMENT_ID`, `RUNQ_CELL` and (for later versions) `RUNQ_VERSION`.
 - SDK: removed `ctx.job_tasks()` (→ `runq.job()`), `runq.params`/`runq.seed`
   (→ `ctx.params`/`ctx.seed`), `latest_report_metrics`, the `Context`/
   `ParamDict`/`get_ctx` exports, daemon mode and `ctx.socket_path` (modes are

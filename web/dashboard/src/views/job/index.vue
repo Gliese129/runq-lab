@@ -20,7 +20,7 @@
       <v-tab value="tasks" size="small">
         {{ t('job.tab_tasks') }} ({{ detail.tasks.length }})
       </v-tab>
-      <v-tab value="plan" size="small">{{ t('job.tab_plan') }}</v-tab>
+      <v-tab value="plan" size="small">{{ t('job.tab_plan') }} ({{ cells.length }})</v-tab>
       <v-tab value="results" size="small">{{ t('job.tab_results') }}</v-tab>
       <v-tab value="data" size="small">{{ t('job.tab_data') }}</v-tab>
     </v-tabs>
@@ -71,29 +71,45 @@
     <!-- Results = this job's views (each project view rendered against this
          job alone, when it has data); the raw record table stays as the last
          choice and is the whole tab when no view applies. -->
-    <!-- Plan: run × what each run changes vs the baseline (same table as
-         `runq show jb…` / the draft page). Rows open their task. -->
+    <!-- Cells: each cell (row name) once, with the version it shows — the
+         pinned one, else latest; the picker switches it. Rows open that
+         version. Same table as `runq show ex…` / the draft page. -->
     <div v-else-if="tab === 'plan'">
       <PlanTable
         :rows="planRows"
         :baseline="detail.config?.baseline"
-        :statuses="cells.map((x) => x.status)"
+        :statuses="cells.map((c) => c.selected.status)"
         :row-links="cells.map(() => true)"
         :tags="cellTags"
-        @open="(i) => onClickTask(cells[i].id)"
-      />
-      <div v-if="(detail.batches?.length ?? 0) > 1" class="batches mt-4">
+        :accent="cells.map((c) => commandVaries(c, batches))"
+        :extra-header="t('cells.version')"
+        @open="(i) => onClickTask(cells[i].selected.id)"
+      >
+        <template #extra="{ index }">
+          <select
+            class="version-pick" :value="cells[index].pinned ? cells[index].selected.id : LATEST"
+            :aria-label="t('cells.version_of', { cell: cells[index].name })"
+            :disabled="pinning === cells[index].name"
+            @change="pin(cells[index], ($event.target as HTMLSelectElement).value)"
+          >
+            <option :value="LATEST">{{ t('cells.latest', { v: latestOf(cells[index]) }) }}</option>
+            <template v-for="(o, k) in versionOptions(cells[index])" :key="o.id">
+              <option v-if="o.divider && k > 0" disabled>{{ t('cells.command_changed') }}</option>
+              <option :value="o.id">{{ o.label }}</option>
+            </template>
+          </select>
+        </template>
+      </PlanTable>
+      <div v-if="batches.length" class="batches mt-4">
         <div class="text-caption font-weight-medium mb-1">{{ t('plan.batches') }}</div>
-        <div v-for="b in detail.batches" :key="b.seq" class="batch">
-          <span class="mono">b{{ b.seq }}</span>
+        <div v-for="b in batches" :key="b.seq" class="batch">
+          <span class="mono">s{{ b.seq }}</span>
           <span>{{ t('plan.batch_tasks', { n: b.task_count }) }}</span>
           <span class="text-on-surface-variant">{{ new Date(b.submitted_at * 1000).toLocaleString() }}</span>
           <span v-if="b.name" class="text-truncate">{{ b.name }}</span>
+          <code v-if="b.command" class="cmd text-truncate" :class="{ changed: b.seq > 1 && commandOf(b.seq) !== commandOf(b.seq - 1) }" :title="b.command">{{ b.command }}</code>
           <code v-if="b.draft_id" class="text-on-surface-variant">{{ b.draft_id }}</code>
         </div>
-      </div>
-      <div v-else-if="detail.job.draft_id" class="text-caption text-on-surface-variant mt-3">
-        {{ t('plan.from_draft', { id: detail.job.draft_id }) }}
       </div>
     </div>
 
@@ -170,7 +186,9 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useCancelling } from '@/composables/useCancelling'
 import { useJobDetailQuery, useCompareQuery, useJobResultsQuery, useJobActions, useJobActivityQuery } from '@/queries/useJobQueries'
 import { lastOutputTs } from '@/utils/lastOutput'
-import { liveCells, rerunIds } from '@/utils/jobCells'
+import { jobCells, versionCommand, commandVaries, type CellView } from '@/utils/jobCells'
+import { useQueryClient } from '@tanstack/vue-query'
+import { qk } from '@/queries/keys'
 import { useTaskActions } from '@/queries/useTaskQueries'
 import JobHeader from './JobHeader.vue'
 import TaskTable from './TaskTable.vue'
@@ -251,26 +269,60 @@ watch(() => detail.value?.tasks, (tasks) => { if (tasks) prune(tasks) })
 // ── Tabs (RQ2-4 ②): ?tab= is the shareable truth; replace (not push) so
 // tab flips don't pollute back-button history. ──
 const TABS = new Set(['tasks', 'plan', 'results', 'data'])
-// The plan shows cells: a rerun stands where the failure it replaced was.
-const cells = computed(() => liveCells(detail.value?.tasks ?? []))
-const cellTags = computed(() => {
-  const reruns = rerunIds(detail.value?.tasks ?? [])
-  const multi = (detail.value?.batches?.length ?? 0) > 1
-  return cells.value.map((x) => {
-    if (reruns.has(x.id)) return t('plan.rerun')
-    return multi && (x.batch_seq ?? 1) > 1 ? `b${x.batch_seq}` : undefined
-  })
-})
+// Cells: each shows one version (pinned, else latest); its row reads that
+// version's params and status.
+const batches = computed(() => detail.value?.batches ?? [])
+const cells = computed(() => jobCells(detail.value?.tasks ?? [], detail.value?.pinned))
+const cellTags = computed(() => cells.value.map((c) => {
+  const parts: string[] = []
+  if (c.versions.length > 1) parts.push(`v${c.selected.version ?? c.versions.length}/${c.versions.length}`)
+  if (commandVaries(c, batches.value)) parts.push(t('cells.commands_differ'))
+  return parts.join(' · ') || undefined
+}))
 // Pre-rc6 tasks have no run name: fall back to the short task id.
 const planRows = computed<PlanRow[]>(() => {
   const notes = new Map<string, string[]>()
   for (const r of detail.value?.config?.tasks ?? []) if (r.run && r.needs_code) notes.set(String(r.run), r.needs_code)
-  return cells.value.map((x) => ({
-    run: x.run_name || x.id.slice(0, 8),
-    params: x.params ?? {},
-    needs_code: x.run_name ? notes.get(x.run_name) : undefined,
+  return cells.value.map((c) => ({
+    run: c.selected.run_name || c.selected.id.slice(0, 8),
+    params: c.selected.params ?? {},
+    needs_code: c.selected.run_name ? notes.get(c.selected.run_name) : undefined,
   }))
 })
+
+// ── Version picker: latest follows the default rule; a number pins. In the
+// list (newest first) a divider marks where the command changed. ──
+const LATEST = '__latest__'
+const qc = useQueryClient()
+const pinning = ref('')
+function commandOf(seq: number): string {
+  return (batches.value.find((b) => b.seq === seq)?.command ?? '').split(/\s+/).join(' ')
+}
+function latestOf(c: CellView): string {
+  const newest = c.versions.map((_, i, a) => a[a.length - 1 - i])
+  const best = newest.find((v) => v.status === 'success') ?? newest[0]
+  return `v${best.version ?? c.versions.length} · ${t('status.task.' + best.status)}`
+}
+function versionOptions(c: CellView) {
+  const newest = c.versions.map((_, i, a) => a[a.length - 1 - i])
+  return newest.map((v, k) => ({
+    id: v.id,
+    label: `v${v.version ?? ''} · ${t('status.task.' + v.status)}`,
+    divider: k > 0 && versionCommand(v, batches.value).split(/\s+/).join(' ') !== versionCommand(newest[k - 1], batches.value).split(/\s+/).join(' '),
+  }))
+}
+async function pin(c: CellView, value: string) {
+  pinning.value = c.name
+  try {
+    await jobsApi.pinVersion(props.jobId, c.name, value === LATEST ? '' : value)
+    await qc.invalidateQueries({ queryKey: qk.job(props.jobId) })
+    void qc.invalidateQueries({ queryKey: ['views'] })
+  } catch (e: any) {
+    snack.error(e?.message || t('common.error'))
+  } finally {
+    pinning.value = ''
+  }
+}
 const tab = ref(TABS.has(String(route.query.tab)) ? String(route.query.tab) : 'tasks')
 
 // The job's views (see useJobViewsQuery); the first is preselected, raw
@@ -439,6 +491,13 @@ function onClickTask(id: string) {
 .batches { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
 .batch { display: flex; gap: 10px; align-items: baseline; }
 .batch .mono { font-family: var(--font-mono); }
+.batch .cmd { font-size: 11px; max-width: 420px; color: rgb(var(--v-theme-on-surface-variant)); background: none; }
+.batch .cmd.changed { color: rgb(var(--v-theme-warning)); }
+.version-pick {
+  font-size: 12px; padding: 1px 6px; border-radius: 6px; cursor: pointer; font-family: inherit;
+  color: rgb(var(--v-theme-on-surface)); background: rgb(var(--v-theme-surface));
+  border: 0.5px solid rgb(var(--v-theme-outline-variant));
+}
 .view-pick {
   font-size: 13px; padding: 3px 12px; border-radius: 999px; cursor: pointer; background: none;
   color: rgb(var(--v-theme-on-surface)); border: 0.5px solid rgb(var(--v-theme-outline-variant));

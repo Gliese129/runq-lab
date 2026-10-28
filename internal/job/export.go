@@ -13,32 +13,34 @@ import (
 
 // ExportInput is a submitted job, frozen: what `runq export` writes back as
 // a job.yaml. Empty Target/Command mean "the project's default" and are
-// left out.
+// left out; so is a Command equal to DefaultCommand (the project's).
 type ExportInput struct {
-	JobID       string
-	DraftID     string // set: the file is a draft's editable form (draft/rev header)
-	Rev         int
-	Into        string // a draft's append target
-	RerunFailed bool
-	ExportedAt  time.Time
-	Project     string
-	Name        string
-	Description string
-	Section     string // "" or "unsorted" = left out
-	Target      string
-	Command     string
-	Overrides   *Overrides
-	Baseline    string // run name; left out when it is the first row
-	Rows        []Row
-	ParamOrder  []string // project param order; others follow sorted
+	JobID          string
+	DraftID        string // set: the file is a draft's editable form (draft/rev header)
+	Rev            int
+	Into           string   // a draft's append target
+	Rerun          []string // a draft's succeeded cells to run again
+	ExportedAt     time.Time
+	DefaultCommand string
+	Project        string
+	Name           string
+	Description    string
+	Section        string // "" or "unsorted" = left out
+	Target         string
+	Command        string
+	Overrides      *Overrides
+	Baseline       string // run name; left out when it is the first row
+	Rows           []Row
+	ParamOrder     []string // project param order; others follow sorted
 }
 
-// ExportYAML renders the job as `tasks:` rows (grid/list blocks are not
+// ExportYAML renders the job as `cells:` rows (grid/list blocks are not
 // reconstructed). fixed_params holds the baseline row's values (for every
 // param all rows have); each row lists only what differs from it, one flow
 // mapping per line — the plan reads as "what each run changes". Feeding
 // the output back as a job.yaml reproduces the same rows, names, params and
-// baseline.
+// baseline; a row whose Command differs from the file's carries it as a
+// comment only.
 func ExportYAML(in ExportInput) ([]byte, error) {
 	order := paramOrder(in.Rows, in.ParamOrder)
 	base := TaskParams{}
@@ -64,8 +66,12 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 		if in.Into != "" {
 			add("into", str(in.Into))
 		}
-		if in.RerunFailed {
-			add("rerun_failed", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
+		if len(in.Rerun) > 0 {
+			rr := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
+			for _, name := range in.Rerun {
+				rr.Content = append(rr.Content, str(name))
+			}
+			add("rerun", rr)
 		}
 	} else {
 		add("from_job", str(in.JobID))
@@ -83,7 +89,7 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 	if in.Target != "" {
 		add("target", str(in.Target))
 	}
-	if in.Command != "" {
+	if in.Command != "" && in.Command != in.DefaultCommand {
 		add("command", str(in.Command))
 	}
 	if len(in.Rows) > 0 && in.Baseline != "" && in.Baseline != in.Rows[0].Run {
@@ -119,7 +125,7 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 	tasks := &yaml.Node{Kind: yaml.SequenceNode}
 	for _, r := range in.Rows {
 		m := &yaml.Node{Kind: yaml.MappingNode, Style: yaml.FlowStyle}
-		m.Content = append(m.Content, str("run"), str(r.Run))
+		m.Content = append(m.Content, str("cell"), str(r.Run))
 		for _, k := range order {
 			v, ok := r.Params[k]
 			if !ok || fixed[k] && SameValue(v, base[k]) {
@@ -138,9 +144,12 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 			}
 			m.Content = append(m.Content, str("needs_code"), nc)
 		}
+		if r.Command != "" && !SameCommand(r.Command, in.Command) {
+			m.LineComment = "command: " + r.Command
+		}
 		tasks.Content = append(tasks.Content, m)
 	}
-	add("tasks", tasks)
+	add("cells", tasks)
 
 	var buf bytes.Buffer
 	if in.DraftID != "" {
@@ -250,7 +259,7 @@ func PlanTable(rows []Row, baseline string, declared []string) string {
 			cols = append(cols, k)
 		}
 	}
-	header := append([]string{"RUN"}, cols...)
+	header := append([]string{"CELL"}, cols...)
 	header = append(header, "NOTE")
 	table := [][]string{header}
 	for i, r := range rows {

@@ -33,8 +33,8 @@ runq.record({"acc": acc, "f1": f1}, seed=ctx.seed, split="val")  # one comparabl
 ## Read a job: scoring scripts
 
 ```python
-job = runq.job("/gs/work/kl/jb7817")     # job dir (holds job.json); runq.job() in a task = own job
-for t in job.tasks:                      # id, run_name, status, params, task_dir, output_dir, ...
+exp = runq.experiment("/gs/work/kl/ex7817")     # job dir (holds job.json); runq.experiment() in a task = own job
+for t in exp.tasks:                      # id, run_name, status, params, task_dir, output_dir, ...
     if t.status == "success":
         t.record({"acc": score(t.output_dir)}, section="math", split="test")
 ```
@@ -67,7 +67,7 @@ init. No URL (offline/disabled run) = no-op.
 `safe_save`, `best_checkpoint`, `latest_checkpoint`, `early_stop`, `Decision`,
 `patience`, `threshold`, `convergence`, `runq.range`, `runq.loop`, `runq.epoch`,
 `is_preempted` / `runq.preempted`, `RunqDiskFullError`, `TransportError`,
-`ctx.job_tasks()` (→ `runq.job()`), `runq.params` / `runq.seed` (→ `ctx.params` /
+`ctx.job_tasks()` (→ `runq.experiment()`), `runq.params` / `runq.seed` (→ `ctx.params` /
 `ctx.seed`), `latest_report_metrics`, and the `Context` / `ParamDict` / `get_ctx`
 exports. `ctx.link_wandb(run)` still works with a DeprecationWarning (→
 `runq.link("wandb", run)`). `report()` returns `None` now.

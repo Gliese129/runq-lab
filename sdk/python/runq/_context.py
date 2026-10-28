@@ -107,8 +107,8 @@ class Context:
     # NO auto-increment counter: pass step explicitly when you want one.
     current_step: int | None = None
 
-    # Deterministic seed derived from task_id. Different per task in the
-    # same sweep, but reproducible across reruns of the same task.
+    # Deterministic seed derived from the experiment and cell (else the
+    # task id): different per cell, the same for every version of a cell.
     seed: int = 0
 
     # ---- convenience accessors ----
@@ -152,9 +152,11 @@ class Context:
         # RUNQ_JOB_NOTE: tasks submitted before rc6.
         job_name = os.environ.get("RUNQ_JOB_NAME") or os.environ.get("RUNQ_JOB_NOTE", "")
 
-        run_name = os.environ.get("RUNQ_RUN_NAME", "")
+        run_name = os.environ.get("RUNQ_CELL") or os.environ.get("RUNQ_RUN_NAME", "")
+        version = os.environ.get("RUNQ_VERSION", "")
         if run_name:
-            name = run_name
+            # A cell's later versions are "<cell> #N"; the W&B id stays the task id.
+            name = f"{run_name} #{version}" if version not in ("", "1") else run_name
         elif sweep_keys and self.params:
             parts = [f"{k}={self.params[k]}" for k in sweep_keys if k in self.params]
             name = "_".join(parts) if parts else (f"{self.job_id}/{self.task_id}" if self.job_id else self.task_id)
@@ -319,7 +321,7 @@ def context() -> Context:
         results_file=results_file,
         links_file=links_file,
         params=ParamDict(params),
-        seed=int(hashlib.sha256(task_id.encode()).hexdigest(), 16) % (2**32),
+        seed=_seed(env, task_id),
     )
 
     # Make sure dirs we will write to actually exist. Cheap, idempotent,
@@ -401,3 +403,11 @@ def get_ctx() -> Context:
 def _reset_for_tests() -> None:
     global _ctx
     _ctx = None
+
+
+def _seed(env, task_id: str) -> int:
+    """sha256 of "<experiment>/<cell>" (or the task id), mod 2**32."""
+    exp = env.get("RUNQ_EXPERIMENT_ID") or env.get("RUNQ_JOB_ID", "")
+    cell = env.get("RUNQ_CELL") or env.get("RUNQ_RUN_NAME", "")
+    key = f"{exp}/{cell}" if exp and cell else task_id
+    return int(hashlib.sha256(key.encode()).hexdigest(), 16) % (2**32)

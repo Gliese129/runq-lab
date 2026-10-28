@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,8 +10,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/store"
+	"gopkg.in/yaml.v3"
 )
+
+// sweepRunName is the run name sweepYAML gives the row with these params.
+func sweepRunName(t *testing.T, params string) string {
+	t.Helper()
+	var cfg job.JobConfig
+	if err := yaml.Unmarshal([]byte(sweepYAML), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := job.Rows(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want job.TaskParams
+	_ = json.Unmarshal([]byte(params), &want)
+	for _, r := range rows {
+		if job.SameValue(r.Params["kl"], want["kl"]) && job.SameValue(r.Params["seed"], want["seed"]) {
+			return r.Run
+		}
+	}
+	t.Fatalf("no sweep row has %s", params)
+	return ""
+}
 
 // seedJob stores a finished job with one task per status, on lane "a".
 func seedJob(t *testing.T, st *store.Store, id string, statuses ...string) []store.TaskRow {
@@ -26,6 +51,7 @@ func seedJob(t *testing.T, st *store.Store, id string, statuses ...string) []sto
 		r := store.TaskRow{ID: id + "t" + string(rune('a'+i)), JobID: id, ProjectName: "kl", Command: "x", Target: "a",
 			ParamsJSON: `{"kl":` + []string{"0", "0.1"}[i%2] + `,"lr":0.000001,"seed":` + []string{"1", "2"}[i/2] + `}`,
 			Status:     s, EnqueuedAt: now, TaskDir: filepath.Join(dir, id+string(rune('a'+i)))}
+		r.RunName = sweepRunName(t, r.ParamsJSON)
 		if err := st.InsertTask(ctx, &r); err != nil {
 			t.Fatal(err)
 		}
@@ -53,29 +79,35 @@ func TestDraftIntoJob(t *testing.T) {
 		t.Fatalf("draft = %+v", res.Draft)
 	}
 	a := res.Append
-	if a == nil || a.New != 1 || a.SkippedExisting != 2 || a.SkippedFailed != 1 || a.Batch != 2 {
+	if a == nil || a.New != 1 || a.Skipped != 2 || a.NewVersion != 1 || a.Batch != 2 {
 		t.Fatalf("append = %+v", a)
 	}
 	if y, _ := m.DraftYAML(ctx, res.Draft.ID); !strings.Contains(string(y), "into: jb11112222") {
 		t.Errorf("draft yaml lacks into:\n%s", y)
 	}
 
-	if _, err := m.CreateDraft(ctx, DraftRequest{JobYAML: noProject, Into: "jb1111", Target: "b"}); err == nil || !strings.Contains(err.Error(), "an append uses the job's target") {
+	// Another target is the submission's choice now; here the project does
+	// not list "b", so the usual target rules refuse it.
+	if _, err := m.CreateDraft(ctx, DraftRequest{JobYAML: noProject, Into: "jb1111", Target: "b"}); err == nil || !strings.Contains(err.Error(), `unknown target "b"`) {
 		t.Errorf("other target: %v", err)
 	}
-	if _, err := m.CreateDraft(ctx, DraftRequest{JobYAML: sweepYAML, RerunFailed: true}); err == nil {
-		t.Error("rerun_failed without into must be refused")
+	if _, err := m.CreateDraft(ctx, DraftRequest{JobYAML: sweepYAML, Rerun: []string{"base"}}); err == nil {
+		t.Error("rerun without into must be refused")
+	}
+	if _, err := m.CreateDraft(ctx, DraftRequest{JobYAML: noProject, Into: "jb1111", RetiredRerunFailed: true}); err == nil || !strings.Contains(err.Error(), "new version by default") {
+		t.Errorf("retired rerun_failed: %v", err)
 	}
 
 	seedJob(t, st, "jb99990000", "success")
 	if _, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{Into: "jb9999"}); err == nil || !strings.Contains(err.Error(), "appends to jb11112222") {
 		t.Errorf("conflicting --into: %v", err)
 	}
-	if _, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{RerunFailed: true}); err != nil {
+	base := sweepRunName(t, `{"kl":0,"seed":1}`)
+	if _, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{Rerun: []string{base}}); err != nil {
 		t.Fatal(err)
 	}
-	if lane.received.Into != "jb11112222" || !lane.received.RerunFailed {
-		t.Fatalf("lane got into=%q rerun=%v", lane.received.Into, lane.received.RerunFailed)
+	if lane.received.Into != "jb11112222" || len(lane.received.Rerun) != 1 || lane.received.Rerun[0] != base {
+		t.Fatalf("lane got into=%q rerun=%v", lane.received.Into, lane.received.Rerun)
 	}
 }
 
@@ -142,23 +174,33 @@ func TestJobSummaryCountsLiveTasks(t *testing.T) {
 	}
 }
 
-// A pre-strict job whose batches ran different commands cannot be one
-// job.yaml: export says so instead of writing the first command for all.
-func TestExportRefusesBatchesThatRanDifferently(t *testing.T) {
+// Export writes each cell's selected version; a row whose version ran
+// another command than the file's says so in a comment.
+func TestExportWritesSelectedVersions(t *testing.T) {
 	ctx := context.Background()
 	m, _, st := newDraftBackend(t)
-	seedJob(t, st, "jbexport1", "success")
-	if _, err := st.DB().Exec(`UPDATE jobs SET config_json = '{"command":"python first.py"}' WHERE id = 'jbexport1'`); err != nil {
+	rows := seedJob(t, st, "jbexport1", "failed")
+	if _, err := st.DB().Exec(`UPDATE job_batches SET command = 'python first.py', config_json = '{"command":"python first.py"}' WHERE job_id = 'jbexport1'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.DB().Exec(`UPDATE job_batches SET config_json = '{"command":"python first.py"}' WHERE job_id = 'jbexport1'`); err != nil {
-		t.Fatal(err)
-	}
+	retry := store.TaskRow{ID: "tkretry", JobID: "jbexport1", ProjectName: "kl", RunName: rows[0].RunName, Target: "a", Command: "x", ParamsJSON: rows[0].ParamsJSON, Status: "success", EnqueuedAt: time.Now()}
+	second := store.TaskRow{ID: "tksecond", JobID: "jbexport1", ProjectName: "kl", RunName: "second", Target: "a", Command: "x", ParamsJSON: `{"kl":0,"lr":0.000001,"seed":9}`, Status: "pending", EnqueuedAt: time.Now()}
 	if _, err := st.AppendTasks(ctx, store.JobBatch{JobID: "jbexport1", Name: "more", Command: "python second.py", Target: "a", ConfigJSON: `{"command":"python second.py"}`, SubmittedAt: time.Now()},
-		[]store.TaskRow{{ID: "tksecond", JobID: "jbexport1", ProjectName: "kl", RunName: "second", Target: "a", Command: "python second.py", ParamsJSON: `{"lr":1}`, Status: "pending", EnqueuedAt: time.Now()}}, nil); err != nil {
+		[]store.TaskRow{retry, second}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ExportJob(ctx, "jbexport1"); err == nil || !strings.Contains(err.Error(), "batch 2") {
-		t.Fatalf("export = %v, want a refusal naming batch 2", err)
+	if _, err := st.DB().Exec(`UPDATE job_batches SET command = 'python first.py' WHERE job_id = 'jbexport1' AND seq = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AppendTasks(ctx, store.JobBatch{JobID: "jbexport1", Name: "fix", Command: "python first.py", Target: "a", ConfigJSON: `{"command":"python first.py"}`, SubmittedAt: time.Now()}, nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := m.ExportJob(ctx, "jbexport1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(raw)
+	if strings.Count(out, "- {cell:") != 2 || !strings.Contains(out, "command: python first.py") || !strings.Contains(out, "# command: python second.py") {
+		t.Fatalf("export:\n%s", out)
 	}
 }

@@ -62,7 +62,7 @@ same API data. A view describes how to show a section; it is not tied to jobs:
 the dashboard's job page renders every view against that job (its Results tab),
 and the project view page compares jobs the researcher adds by hand, showing the
 columns they all have. So leave `jobs` out (the CLI then uses the latest job) and
-pass `--job <id>` (repeatable) to render for specific jobs; list ids in `jobs:`
+pass `--experiment <id>` (repeatable) to render for specific experiments; list ids in `jobs:`
 when a view is meant to compare a fixed set. `--project` disambiguates names.
 `--wide` adds provenance.
 
@@ -72,7 +72,7 @@ False/unknown column `when` hides the value. Type comparisons are strict.
 Use `group: [generation, eval]` only when their axis schemas match; qualify
 ambiguous metric names (`eval.scored`). No arbitrary functions in expressions.
 
-For sharded counters use `extra: [{name: Generated, job: jb123,
+For sharded counters use `extra: [{name: Generated, job: ex123,
 value: 'metric:generated:sum', format: int}]`. The explicit sum combines each
 source's latest value. An unqualified `metric:generated` selects the newest value.
 
@@ -145,7 +145,7 @@ Only run short summaries on login nodes. Expired sources run on demand;
 Failures retain the last good value/time and display the last 20 stderr lines.
 Put expensive work in a task or a scoring script and emit record snapshots.
 
-## Scoring scripts (runq.job)
+## Scoring scripts (runq.experiment)
 
 Scoring that is not part of training (an LLM judge, an offline evaluator) is a
 plain script you start yourself where the job dir is readable — login node or a
@@ -153,8 +153,8 @@ CPU node in your own iqrsh/tmux; runq does not start, watch or stop it:
 
 ```python
 import runq
-job = runq.job("/gs/work/kl/jb123")          # the job dir (holds job.json)
-for t in job.tasks:
+exp = runq.experiment("/gs/work/kl/ex123")          # the job dir (holds job.json)
+for t in exp.tasks:
     if t.status == "success":
         t.record({"acc": score(t.output_dir)}, section="math", split="test")
 ```
@@ -166,7 +166,7 @@ unfinished or from the last 14 days; `--fresh` on a command ingests at once and
 covers older jobs. The rows carry the task's
 params, so `rows: [param.…]` lines scores up with the sweep. job.json is
 rewritten when the job changes; a script waiting for tasks re-reads
-`runq.job(...)` and decides itself when to stop. Keep a list of scored tasks in
+`runq.experiment(...)` and decides itself when to stop. Keep a list of scored tasks in
 the script's own output dir so a restart skips them.
 
 ## Errors → corrections

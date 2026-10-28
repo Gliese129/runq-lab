@@ -126,7 +126,7 @@ are never synced. A project without `targets` is pinned to its `target`.
 
 Run the scoring script yourself on a node that can read the job workspace (the
 login node for light work; a CPU allocation from iqrsh, in your own tmux, for
-heavy work). It reads the job with `runq.job("<job_dir>")` and records results
+heavy work). It reads the job with `runq.experiment("<job_dir>")` and records results
 per task; runq ingests them from the task directories, so the script needs no
 connection to runq. runq does not start, watch or stop it. See the views
 reference for the record contract.

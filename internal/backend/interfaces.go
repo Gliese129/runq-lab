@@ -177,6 +177,12 @@ type JobRenamer interface {
 	RenameJob(ctx context.Context, ref, newName string) (string, error)
 }
 
+// VersionPinner chooses which version a cell shows (taskID "" = back to
+// latest) and returns the experiment's status after the change.
+type VersionPinner interface {
+	PinVersion(ctx context.Context, jobRef, cell, taskID string) (string, error)
+}
+
 // Sectioner manages a project's sections (rc6): organization only, no
 // execution config. projectRef is a name, id or unique id prefix.
 type Sectioner interface {

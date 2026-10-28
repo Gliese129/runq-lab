@@ -34,12 +34,12 @@ func TestBuildJobDetailCarriesDataDirAndOmitsWhenAbsent(t *testing.T) {
 	job := store.JobRow{ID: "j1", ConfigJSON: "{}"}
 	withDir := BuildJobDetail(job, []store.TaskRow{
 		{ID: "t1", ParamsJSON: "{}", TaskDir: "/ws/exp-j1/t1"},
-	}, nil)
+	}, nil, nil)
 	if withDir.DataDir != "/ws/exp-j1" {
 		t.Errorf("DataDir = %q", withDir.DataDir)
 	}
 
-	without := BuildJobDetail(job, []store.TaskRow{{ID: "t1", ParamsJSON: "{}"}}, nil)
+	without := BuildJobDetail(job, []store.TaskRow{{ID: "t1", ParamsJSON: "{}"}}, nil, nil)
 	buf, err := json.Marshal(without)
 	if err != nil {
 		t.Fatal(err)

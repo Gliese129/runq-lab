@@ -62,8 +62,10 @@ Examples:
 func init() {
 	cleanCmd.Flags().String("older-than", "", "Age threshold, e.g. 7d, 1m2w, 2w3d4h")
 	cleanCmd.Flags().Bool("orphan", false, "Select orphan tasks (workspace directory missing)")
-	cleanCmd.Flags().Bool("archived", false, "Select tasks from archived jobs")
-	cleanCmd.Flags().String("job", "", "Select all tasks in a specific job")
+	cleanCmd.Flags().Bool("archived", false, "Select versions from archived experiments")
+	cleanCmd.Flags().String("experiment", "", "Select every version in an experiment")
+	cleanCmd.Flags().String("job", "", "")
+	retireFlag(cleanCmd, "job", "use --experiment <ex…> (a job is now an experiment)")
 	cleanCmd.Flags().String("task", "", "Select a specific task")
 	cleanCmd.Flags().Bool("checkpoints", false, "Delete only the tasks' checkpoints/ contents; keep logs, results, outputs and records")
 	cleanCmd.Flags().Bool("show", false, "Preview what would be deleted without deleting")
@@ -89,7 +91,7 @@ func buildCleanOptions(cmd *cobra.Command) (backend.CleanOptions, error) {
 
 	opts.Orphan, _ = cmd.Flags().GetBool("orphan")
 	opts.Archived, _ = cmd.Flags().GetBool("archived")
-	opts.JobID, _ = cmd.Flags().GetString("job")
+	opts.JobID, _ = cmd.Flags().GetString("experiment")
 	opts.TaskID, _ = cmd.Flags().GetString("task")
 	opts.Checkpoints, _ = cmd.Flags().GetBool("checkpoints")
 	showOnly, _ := cmd.Flags().GetBool("show")
@@ -97,7 +99,7 @@ func buildCleanOptions(cmd *cobra.Command) (backend.CleanOptions, error) {
 
 	// At least one selector must be given.
 	if !opts.Orphan && !opts.Archived && opts.JobID == "" && opts.TaskID == "" && opts.OlderThan == nil {
-		return opts, fmt.Errorf("at least one selector required: --older-than, --orphan, --archived, --job, --task")
+		return opts, fmt.Errorf("at least one selector required: --older-than, --orphan, --archived, --experiment, --task")
 	}
 
 	return opts, nil
@@ -183,7 +185,7 @@ func runClean(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		fmt.Printf("Deleted %d tasks, %d jobs", result.Tasks, result.Jobs)
+		fmt.Printf("Deleted %d versions, %d experiments", result.Tasks, result.Jobs)
 		if result.FreedBytes > 0 {
 			fmt.Printf(", freed %s", humanBytes(result.FreedBytes))
 		}
@@ -231,7 +233,7 @@ func runCleanCheckpoints(cmd *cobra.Command, be backend.Backend, opts backend.Cl
 		fmt.Println("No checkpoints to clean.")
 		return nil
 	}
-	fmt.Printf("Deleted checkpoints of %d tasks in %d jobs, freed %s\n", result.Tasks, result.Jobs, humanBytes(result.FreedBytes))
+	fmt.Printf("Deleted checkpoints of %d versions in %d experiments, freed %s\n", result.Tasks, result.Jobs, humanBytes(result.FreedBytes))
 	return cleanFailures(result)
 }
 
@@ -279,7 +281,7 @@ func printCheckpointPreview(r *backend.CleanResult) int64 {
 			fmt.Println(line)
 		}
 	}
-	fmt.Printf("\nTotal: %s of checkpoints in %d jobs\n", humanBytes(total), len(r.CheckpointJobs))
+	fmt.Printf("\nTotal: %s of checkpoints in %d experiments\n", humanBytes(total), len(r.CheckpointJobs))
 	return total
 }
 
@@ -358,7 +360,7 @@ func cleanPickerFlow(preview []backend.CleanPreviewItem, olderThan *time.Time) (
 		lines = append(lines, fmt.Sprintf("%-10s %-20s metrics: %s; %d tasks",
 			shortID(g.jobID), note, humanBytes(g.metricB), len(g.tasks)))
 	}
-	idx, ok := selectOne(fmt.Sprintf("Delete from %s — pick a job, or Clear All", project), lines)
+	idx, ok := selectOne(fmt.Sprintf("Delete from %s — pick an experiment, or Clear All", project), lines)
 	if !ok {
 		return nil, false
 	}
@@ -388,7 +390,7 @@ func cleanPickerFlow(preview []backend.CleanPreviewItem, olderThan *time.Time) (
 	if dir := firstTaskDir(g); dir != "" {
 		path = filepath.Dir(dir) // the job's workspace dir
 	}
-	warn := fmt.Sprintf("Delete job %s (%d tasks, %s, path: %s)?\nThis cannot be undone — all files will be removed.",
+	warn := fmt.Sprintf("Delete experiment %s (%d versions, %s, path: %s)?\nThis cannot be undone — all files will be removed.",
 		shortID(g.jobID), len(g.tasks), humanBytes(g.bytes()), path)
 	if !confirmYN(warn) {
 		return nil, false

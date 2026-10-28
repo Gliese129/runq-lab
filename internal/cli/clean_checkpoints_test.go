@@ -39,7 +39,7 @@ func TestPrintCheckpointPreviewListsJobsAndFreeSpace(t *testing.T) {
 	if total != 3<<30 {
 		t.Fatalf("total = %d", total)
 	}
-	for _, want := range []string{"jb1", "3.0 GB", "/gs/bs on tsubame: 2.0 GB free of 100.0 GB (2%)", "10 of 1000 inodes free (1%)", "unknown", "Total: 3.0 GB of checkpoints in 2 jobs"} {
+	for _, want := range []string{"jb1", "3.0 GB", "/gs/bs on tsubame: 2.0 GB free of 100.0 GB (2%)", "10 of 1000 inodes free (1%)", "unknown", "Total: 3.0 GB of checkpoints in 2 experiments"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output lacks %q:\n%s", want, out)
 		}

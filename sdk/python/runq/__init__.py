@@ -13,10 +13,10 @@ Public API::
     runq.record({"acc": acc}, seed=ctx.seed, split="val")  # axis-keyed result
     runq.link("wandb", run)                  # show the W&B run on the task
 
-    # Read a job (a scoring script): results land per task
-    job = runq.job("/path/to/job_dir")
-    for t in job.tasks:
-        t.record({"acc": score(t.output_dir)}, section="math")
+    # Read an experiment (a scoring script): results land per cell version
+    exp = runq.experiment("/path/to/experiment_dir")
+    for cell in exp.cells:
+        cell.selected.record({"acc": score(cell.selected.output_dir)}, section="math")
 
     # Checkpoints: write under ctx.checkpoint_dir (stable across retries);
     # runq does not manage their lifecycle.
@@ -24,7 +24,7 @@ Public API::
 
 from ._context import context
 from ._exceptions import RunqError
-from ._job import job
+from ._job import experiment, job
 from ._link import link
 from ._log_group import log_group
 from ._record import record
@@ -40,7 +40,8 @@ __all__ = [  # noqa: RUF022
     "record",
     # External links shown on the task (e.g. the W&B run page)
     "link",
-    # Read a job and write results for its tasks
+    # Read an experiment and write results for its cells (job: older name)
+    "experiment",
     "job",
     # Exceptions
     "RunqError",

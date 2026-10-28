@@ -64,16 +64,17 @@ func (s *LaneScope) Owns(target, generation string) bool {
 	return generation == "" || generation == s.Generation
 }
 
-// whereClause renders the ownership predicate (target column is handled by
-// the caller's filter; this covers generation ownership only).
+// whereClause renders the ownership predicate: the lane's target (an
+// experiment's submissions may run on several targets, so a job id alone
+// does not confine rows to one lane), then generation ownership.
 func (s *LaneScope) whereClause() (string, []any) {
 	if s.IsRetiring() {
-		return "COALESCE(target_generation,'') = ?", []any{s.Generation}
+		return "target = ? AND COALESCE(target_generation,'') = ?", []any{s.Target, s.Generation}
 	}
-	return `(COALESCE(target_generation,'') = ? OR COALESCE(target_generation,'') = ''
+	return `target = ? AND (COALESCE(target_generation,'') = ? OR COALESCE(target_generation,'') = ''
 		OR target_generation NOT IN (
 			SELECT generation FROM target_generations WHERE target = ?))`,
-		[]any{s.Generation, s.Target}
+		[]any{s.Target, s.Generation, s.Target}
 }
 
 // TargetGenerationRow is one retired (possibly still-retiring) generation.

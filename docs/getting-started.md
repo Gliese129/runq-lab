@@ -96,7 +96,7 @@ also run `runq submit job.yaml` to see the same plan and press `s` to submit,
 `e` to edit or `q` to keep it as a draft. When it looks right:
 
 ```bash
-runq submit dr… --json      # {"job_id": "jb…", "total_tasks": 6}
+runq submit dr… --json      # {"job_id": "ex…", "total_tasks": 6}
 ```
 
 ## 7. Watch
@@ -105,7 +105,7 @@ runq submit dr… --json      # {"job_id": "jb…", "total_tasks": 6}
 runq ps <job_id> --json                    # task states (cached; add --fresh to probe now)
 runq logs <task_id> --grep 'loss' -n 20    # last matching lines, grepped on the cluster
 runq show <task_id>                        # command, dirs, scheduler id, links
-runq view --job <job_id>                   # results from runq.record, one row per cell
+runq view --experiment <job_id>                   # results from runq.record, one row per cell
 ```
 
 The dashboard shows the same jobs, logs, curves and results. `pending` means
@@ -134,7 +134,7 @@ reply is in `~/.runq/logs/runq.log`. Common errors and fixes:
 bulk-storage disk; `<working_dir>/.runq/<project_id>` then links there). Don't
 parse these paths — use `--json`.
 
-When a run is truly over: `runq clean --job <job_id> --show`, then `-y`
+When a run is truly over: `runq clean --experiment <job_id> --show`, then `-y`
 (irreversible: task directories, outputs and checkpoints are deleted).
 
 ## Local GPU machine

@@ -103,11 +103,13 @@ export interface TaskView {
   stale?: boolean
 
   id: string
-  /** row name within the job (tasks: run, or derived from the baseline) */
+  /** the cell this task is a version of (cells: name, or derived from the baseline) */
   run_name?: string
-  /** submission batch: 1 = the job's first submit, then each --into */
+  /** submission: 1 = the experiment's first submit, then each --into */
   batch_seq?: number
-  /** the task that reran this failed cell; this one is history */
+  /** this version's number within its cell (1 = the cell's first) */
+  version?: number
+  /** set on every version but the cell's selected one (names it): history */
   superseded_by?: string
   status: string
   params: Record<string, any>
@@ -214,6 +216,8 @@ export interface JobDetail {
   data_dir?: string
   /** submissions into the job: seq 1, then each `runq submit dr… --into` */
   batches?: JobBatch[]
+  /** cell → the version the researcher pinned; other cells show latest */
+  pinned?: Record<string, string>
 }
 
 export interface JobBatch {
@@ -506,7 +510,8 @@ export interface DraftView {
   target: string
   /** set: the draft appends to this job */
   into?: string
-  rerun_failed?: boolean
+  /** succeeded cells this append runs again */
+  rerun?: string[]
   rows: number
   needs_code: number
   rev: number
@@ -532,17 +537,16 @@ export interface DraftResult {
   append?: AppendSummary
 }
 
-export type CellClass = 'new' | 'skipped_existing' | 'skipped_failed' | 'rerun_failed'
+export type CellClass = 'new' | 'new_version' | 'skipped' | 'rerun'
 
 export interface AppendSummary {
   into: string
   batch: number
   new: number
-  skipped_existing: number
-  skipped_failed: number
-  rerun_failed: number
-  cells: Array<{ run: string; class: CellClass; task_id?: string; status?: string }>
-  renamed?: Record<string, string>
+  new_version: number
+  skipped: number
+  rerun: number
+  cells: Array<{ run: string; class: CellClass; task_id?: string; status?: string; command_changed?: boolean }>
 }
 
 export interface DraftSubmitResult {

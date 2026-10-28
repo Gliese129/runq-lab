@@ -12,15 +12,15 @@ import (
 func TestRetiredCommandsNameTheirReplacement(t *testing.T) {
 	for path, want := range map[string]string{
 		"task show tk1":           "runq show <tk…>",
-		"job archive jb1":         "runq archive <jb…>",
+		"job archive jb1":         "runq archive <ex…>",
 		"project add -f x.yaml":   "runq project <project.yaml>",
-		"results jb1":             "runq view --job <jb…>",
+		"results jb1":             "runq view --experiment <ex…>",
 		"config set data_path=/x": "~/.runq/config.yaml",
 		"target use tsubame":      "-t <target>",
 		"version":                 "runq --version",
 		"open jb1":                "runq dashboard",
-		"consumer add jb1 score":  "runq.job()",
-		"consumer ls jb1":         "runq.job()",
+		"consumer add jb1 score":  "runq.experiment()",
+		"consumer ls jb1":         "runq.experiment()",
 	} {
 		args := strings.Fields(path)
 		cmd, rest, err := rootCmd.Find(args)
@@ -44,8 +44,8 @@ func TestConsumerIDsAreRetired(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := cmd.RunE(cmd, rest); err == nil || !strings.Contains(err.Error(), "runq.job()") {
-			t.Errorf("%v: got %v, want the runq.job() replacement", args, err)
+		if err := cmd.RunE(cmd, rest); err == nil || !strings.Contains(err.Error(), "runq.experiment()") {
+			t.Errorf("%v: got %v, want the runq.experiment() replacement", args, err)
 		}
 	}
 }

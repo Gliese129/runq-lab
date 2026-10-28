@@ -265,6 +265,13 @@ CREATE TABLE IF NOT EXISTS job_batches (
  PRIMARY KEY (job_id, seq)
 );
 
+-- Versions the researcher pinned: the cell (run name) shows this task
+-- instead of its default (latest success, else latest). No row = latest.
+CREATE TABLE IF NOT EXISTS cell_picks (
+ job_id TEXT NOT NULL, cell TEXT NOT NULL, task_id TEXT NOT NULL,
+ PRIMARY KEY (job_id, cell)
+);
+
 -- What a finished job left on disk (du of its job directory), measured
 -- once in the background after it turns terminal and again by
 -- `clean --checkpoints --show`. The draft preview's space estimate is

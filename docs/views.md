@@ -56,7 +56,7 @@ legend: Accuracy uses scored samples only.
 ```bash
 runq view eval.yaml
 runq view eval-progress --project example
-runq view eval-progress --job jb123 --json
+runq view eval-progress --experiment ex123 --json
 runq view ls --project example --json
 runq view rm eval-progress --project example
 ```
@@ -66,7 +66,7 @@ otherwise use project.yaml or an unambiguous saved name. Jobs default to the lat
 unarchived project job; repeat `--job` to render for other jobs. In the dashboard
 a view is rendered per job on that job's Results tab, and the project view page
 compares jobs you add by hand (only the columns every one of them has are shown),
-so most views need no `jobs:` at all. An explicit list, `jobs: [jb123, jb456]`,
+so most views need no `jobs:` at all. An explicit list, `jobs: [ex123, jb456]`,
 fixes the comparison set; the pattern form `jobs: {note: 'eval-*', last: 3}` still
 works for the CLI but depends on how notes are written, so prefer ids.
 Every selected job must belong to the same project.
@@ -90,7 +90,7 @@ Numbers print in full unless a format says otherwise — a seed of 12345678 stay
 scientific notation, ask for it: `key_formats: { param.lr: sci0 }` (tables, the
 LaTeX/Markdown exports and chart labels; CSV keeps raw values).
 
-`extra: [{name: Generated, job: jb123, value: 'metric:generated:sum', format: int}]`
+`extra: [{name: Generated, job: ex123, value: 'metric:generated:sum', format: int}]`
 uses each source's latest metric, then the explicit sum. Without `:sum`/`:min`/
 `:max`/`:mean`, the newest timestamp wins. Job status is available as `status`.
 
@@ -179,7 +179,7 @@ or a scoring script (below) instead of a view script. Custom data appears under
 `data.<name>.{state,updated_at,value,error}`. Record values are rendered rows;
 report values are series; script values are the returned JSON.
 
-## Scoring scripts with runq.job()
+## Scoring scripts with runq.experiment()
 
 A scoring script (an LLM judge, an offline evaluator) is an ordinary Python
 script you or your agent run wherever the job directory is readable — for an
@@ -189,8 +189,8 @@ not start, watch or stop it. It reads the job and records results per task:
 ```python
 import runq
 
-job = runq.job("/gs/work/kl/jb7817")      # the job directory: holds job.json
-for t in job.tasks:
+exp = runq.experiment("/gs/work/kl/ex7817")      # the job directory: holds job.json
+for t in exp.tasks:
     if t.status != "success":
         continue
     acc = score(t.output_dir / "preds.jsonl")
@@ -204,12 +204,12 @@ unarchived jobs. It lists the live tasks (a rerun's replaced task is left out)
 with `id, run_name, status, params, task_dir, output_dir, checkpoint_dir,
 started_at, finished_at, last_output_at, batch_seq`, plus the job header,
 `observed_at` and `observation_state` as of that write. A loop that waits for
-tasks re-reads it with `runq.job(...)`.
+tasks re-reads it with `runq.experiment(...)`.
 
 `t.record(...)` is `runq.record` for that task (same leniency, same frozen
 section keys) and appends to `<task_dir>/results.<producer>.jsonl`. The
 producer defaults to the script's file name (`score_math.py` → `score_math`);
-pass `runq.job(path, producer="judge")` to choose one (letters, digits, `_ . -`).
+pass `runq.experiment(path, producer="judge")` to choose one (letters, digits, `_ . -`).
 runq ingests each producer file like the task's own `results.jsonl`, also after
 the task finished — within 30 s while the target runs tasks, within 5 min
 otherwise, at once with `--fresh` — as a separate source `<task_id>@<producer>`: views show its
@@ -218,9 +218,9 @@ rows with `producer` in their contributors and the task's params, so
 appends; recovered sections keep their first keys. Keep your own record of
 what was already scored in the script's output directory.
 
-`runq.job("jb…")` resolves an id through the runq service socket (local, or a
+`runq.experiment("ex…")` resolves an id through the runq service socket (local, or a
 forwarded `RUNQ_SOCKET`); otherwise pass the path. Inside a runq task,
-`runq.job()` reads the task's own job.
+`runq.experiment()` reads the task's own job.
 
 Results that the removed runq consumers (`cs…`) already recorded stay in views;
 their `consumers/` directories stay on disk untouched.

@@ -19,8 +19,9 @@ type TaskRow struct {
 	// BatchSeq is the submission batch that created the task (1 = the
 	// job's first submit; appends with --into add 2, 3, …).
 	BatchSeq int
-	// SupersededBy is the task that reran this failed cell (--rerun-failed).
-	// A superseded task is history: it no longer counts toward the job.
+	// SupersededBy is set on every version of a cell but the selected one
+	// (it names the selected version; see cells.go). Such a task is history:
+	// it no longer counts toward the job's results, views or counts.
 	SupersededBy  string
 	JobID         string
 	ProjectName   string
@@ -90,7 +91,7 @@ type TaskRow struct {
 type TaskFilter struct {
 	VisibleOnly bool // default user-facing lists hide archived jobs/projects
 
-	// LiveOnly leaves out tasks a rerun superseded (results and views).
+	// LiveOnly keeps each cell's selected version only (results and views).
 	LiveOnly bool
 
 	Status string // filter by status; empty = no filter

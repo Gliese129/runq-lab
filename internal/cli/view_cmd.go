@@ -52,11 +52,11 @@ func viewProject(cmd *cobra.Command, p *api.Proxy, name string) (string, error) 
 	return "", fmt.Errorf("view %q exists in %v; use --project", name, matches)
 }
 
-var viewCmd = &cobra.Command{Use: "view <file.yaml | name> | view --job <jb…>", Short: "Render a saved research view (cached data); --job alone shows a job's recorded results", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+var viewCmd = &cobra.Command{Use: "view <file.yaml | name> | view --experiment <ex…>", Short: "Render a saved research view (cached data); --experiment alone shows an experiment's recorded results", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
-		jobs, _ := cmd.Flags().GetStringArray("job")
+		jobs, _ := cmd.Flags().GetStringArray("experiment")
 		if len(jobs) != 1 {
-			return fmt.Errorf("give a view (file or name), or exactly one --job <jb…> for that job's recorded results")
+			return fmt.Errorf("give a view (file or name), or exactly one --experiment <ex…> for that experiment's recorded results")
 		}
 		return runJobView(cmd, jobs[0])
 	}
@@ -132,7 +132,7 @@ var viewCmd = &cobra.Command{Use: "view <file.yaml | name> | view --job <jb…>"
 			fmt.Fprintln(cmd.OutOrStdout(), address)
 			return openBrowser(cmd.Context(), cmd.ErrOrStderr(), address)
 		}
-		jobs, _ := cmd.Flags().GetStringArray("job")
+		jobs, _ := cmd.Flags().GetStringArray("experiment")
 		for i, ref := range jobs { // short ids, as everywhere else
 			id, err := resolveJobRef(cmd.Context(), be, ref)
 			if err != nil {
@@ -175,7 +175,7 @@ var viewCmd = &cobra.Command{Use: "view <file.yaml | name> | view --job <jb…>"
 // the same formats as a saved view.
 func runJobView(cmd *cobra.Command, ref string) error {
 	if refresh, _ := cmd.Flags().GetBool("refresh"); refresh {
-		return fmt.Errorf("--refresh re-runs a saved view's script sources; a job's own view has none (use --fresh to re-pull the job's status)")
+		return fmt.Errorf("--refresh re-runs a saved view's script sources; an experiment's own view has none (use --fresh to re-pull its status)")
 	}
 	return withBackend(cmd, func(be backend.Backend) error {
 		p := be.(*api.Proxy)
@@ -223,7 +223,9 @@ func runJobView(cmd *cobra.Command, ref string) error {
 
 func init() {
 	viewCmd.Flags().String("project", "", "Project containing the view")
-	viewCmd.Flags().StringArray("job", nil, "Use this job for this render only (repeatable)")
+	viewCmd.Flags().StringArray("experiment", nil, "Use this experiment for this render only (repeatable)")
+	viewCmd.Flags().StringArray("job", nil, "")
+	retireFlag(viewCmd, "job", "use --experiment <ex…> (a job is now an experiment)")
 	viewCmd.Flags().Bool("json", false, "Output the render API response")
 	viewCmd.Flags().Bool("wide", false, "Include source IDs and timestamps")
 	viewCmd.Flags().String("format", "text", "text, json, latex, markdown or csv")

@@ -80,13 +80,18 @@ func BuildJobSummary(job store.JobRow, tasks []store.TaskRow) JobSummary {
 // caller's store (SELECT DISTINCT over summaries) — the old file-scanning
 // key discovery is gone: it capped at 5 tasks and silently returned
 // nothing for remote task dirs.
-func BuildJobDetail(job store.JobRow, tasks []store.TaskRow, metricKeys []string) JobDetail {
+func BuildJobDetail(job store.JobRow, tasks []store.TaskRow, metricKeys []string, pinned map[string]string) JobDetail {
 	views := make([]TaskView, 0, len(tasks))
 	for _, task := range tasks {
 		views = append(views, buildTaskView(task, false))
 	}
+	numberVersions(views, tasks)
 	fillLegacyRunNames(job.ConfigJSON, views)
+	if len(pinned) == 0 {
+		pinned = nil
+	}
 	return JobDetail{
+		Pinned:     pinned,
 		Job:        BuildJobSummary(job, tasks),
 		Tasks:      views,
 		MetricKeys: metricKeys,
@@ -883,5 +888,19 @@ func fillLegacyRunNames(configJSON string, views []TaskView) {
 		if views[i].RunName == "" {
 			views[i].RunName = names[i]
 		}
+	}
+}
+
+// numberVersions sets each view's version number within its cell; views and
+// tasks are parallel.
+func numberVersions(views []TaskView, tasks []store.TaskRow) {
+	n := map[string]int{}
+	for _, c := range store.GroupCells(tasks, nil) {
+		for i, v := range c.Versions {
+			n[v.ID] = i + 1
+		}
+	}
+	for i := range views {
+		views[i].Version = n[views[i].ID]
 	}
 }

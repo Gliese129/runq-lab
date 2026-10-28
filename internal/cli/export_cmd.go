@@ -10,7 +10,7 @@ import (
 
 var exportCmd = &cobra.Command{
 	Use:   "export <jb…>",
-	Short: "Write a submitted job back as job.yaml (tasks: rows)",
+	Short: "Write an experiment back as job.yaml (cells: rows, a snapshot)",
 	Long: `Write a submitted job back as a job.yaml: every task as a named row under
 tasks: (grid/list blocks are not reconstructed), params shared by all rows
 under fixed_params. The file is a snapshot — editing it does not change the
@@ -24,7 +24,7 @@ Use it to bring a plan edited elsewhere back into the repo.`,
 		return withBackend(cmd, func(be backend.Backend) error {
 			ex, ok := be.(backend.JobExporter)
 			if !ok {
-				return fmt.Errorf("this backend cannot export jobs")
+				return fmt.Errorf("this backend cannot export experiments")
 			}
 			data, err := ex.ExportJob(cmd.Context(), args[0])
 			if err != nil {

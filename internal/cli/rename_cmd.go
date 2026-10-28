@@ -10,7 +10,7 @@ import (
 
 var renameCmd = &cobra.Command{
 	Use:   "rename <jb…|pj…|project-name> <new-name>",
-	Short: "Rename a job or a project (ids never change)",
+	Short: "Rename an experiment or a project (ids never change)",
 	Long: `Rename a job or a project. Both are "immutable id + renamable name":
 the id keeps naming directories and links, so a rename moves nothing.
 
@@ -24,16 +24,16 @@ project: its id, a unique id prefix (pj…), or its current name.`,
 		ref, newName := args[0], strings.TrimSpace(args[1])
 		return withBackend(cmd, func(be backend.Backend) error {
 			ctx := cmd.Context()
-			if strings.HasPrefix(ref, "jb") {
+			if isExperimentRef(ref) {
 				renamer, ok := be.(backend.JobRenamer)
 				if !ok {
-					return fmt.Errorf("this backend cannot rename jobs")
+					return fmt.Errorf("this backend cannot rename experiments")
 				}
 				id, err := renamer.RenameJob(ctx, ref, newName)
 				if err != nil {
 					return err
 				}
-				fmt.Printf("job %s renamed to %q\n", id, newName)
+				fmt.Printf("experiment %s renamed to %q\n", id, newName)
 				return nil
 			}
 			before, err := be.GetProject(ctx, ref)

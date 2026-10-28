@@ -200,7 +200,10 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	// is the id, the 0-<name> marker inside it is for humans.
 	jobRoot := path.Join(projRoot, jobID)
 	if into != nil {
-		jobID, jobRoot = into.job.ID, into.root
+		jobID, jobRoot = into.job.ID, path.Join(projRoot, into.job.ID)
+		if into.root != "" {
+			jobRoot = into.root
+		}
 	}
 
 	deps := b.planDeps()
@@ -216,13 +219,11 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 		*opts.Preflight = plan.Preflight
 	}
 
-	var supersede map[string]string
 	if into != nil {
-		if err := checkSameRun(into.job.ID, plan.CommandTemplate, proj.CmdTemplate, planCfg.Overrides, into.first); err != nil {
+		summary, err := classifyAppend(&plan, into, jobCfg.Rerun, proj.CmdTemplate)
+		if err != nil {
 			return "", nil, err
 		}
-		var summary job.AppendSummary
-		summary, supersede = classifyAppend(&plan, into, jobCfg.RerunFailed)
 		if opts.Append != nil {
 			*opts.Append = summary
 		}
@@ -275,7 +276,7 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	if err := b.FS.MkdirAll(jobRoot, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create job directory: %w", err)
 	}
-	if into == nil {
+	if into == nil || into.root == "" { // a new experiment, or its first submission to this target
 		_ = workspace.WriteMarker(ctx, b.FS, jobRoot, plan.Name)
 	}
 
@@ -316,7 +317,7 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 		batchJSON, _ := json.Marshal(jobCfg)
 		batch := store.JobBatch{JobID: jobID, SubmittedAt: now, Name: batchName, Description: plan.Description,
 			Command: plan.CommandTemplate, Target: b.Cfg.Name, ConfigJSON: string(batchJSON), DraftID: jobCfg.DraftID}
-		seq, err := b.Store.AppendTasks(ctx, batch, rows, supersede)
+		seq, err := b.Store.AppendTasks(ctx, batch, rows)
 		if err != nil {
 			return jobID, nil, fmt.Errorf("append tasks to %s: %w", jobID, err)
 		}
