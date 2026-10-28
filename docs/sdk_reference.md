@@ -4,8 +4,8 @@
 
 The SDK has two halves. **Write this task** — inside your training script:
 typed parameters from the sweep (the ablation axes), step metrics and
-axis-keyed result records. **Read a job** — in a scoring script beside it:
-`runq.experiment()` lists a job's tasks and records results for each. Every write
+axis-keyed result records. **Read an experiment** — in a scoring script beside it:
+`runq.experiment()` lists an experiment's tasks and records results for each. Every write
 is a file in a task directory that runq ingests; nothing needs a network
 connection or a running service.
 
@@ -64,7 +64,7 @@ runq.link("wandb", run)              # runq shows the run on the task (CLI + das
 `wandb_like_cfg` fills: `project` / `entity` / `tags` / `mode` from the
 project's `wandb:` block (falling back to the runq project name), `id` =
 task id with `resume="allow"` so an online retried task continues the same run,
-`name` from the swept values, `group` from the job name at submit, `config` = params.
+`name` from the swept values, `group` from the experiment name at submit, `config` = params.
 Only rank 0 reports: when `RANK > 0` it sets `mode="disabled"`, so a
 multi-GPU task is one run (W&B's system monitor on rank 0 covers every GPU
 on that node; multi-node runs only show the first node).
@@ -125,7 +125,7 @@ See [views and scoring scripts](views.md) for the full contract and examples.
 
 Each new task gets a new `ctx.checkpoint_dir`. Scripts own writing, retention
 and selection. To reuse an old checkpoint, explicitly pass its path in the new
-job's command or parameters. A failed task is never restarted in place.
+experiment's command or parameters. A failed task is never restarted in place.
 
 ## Reading an experiment: `runq.experiment(ref=None, *, producer=None)`
 
@@ -142,8 +142,8 @@ exp.versions                              # every version, shown or not
 ```
 
 `runq.job()` is the older name. `ref` is the experiment directory, which runq fills with `job.json` at submit and
-whenever it sees the job change. With no `ref` inside a runq task it is the
-task's own job; a `ex…` id works when the runq service socket is reachable
+whenever it sees the experiment change. With no `ref` inside a runq task it is the
+task's own experiment; a `ex…` id works when the runq service socket is reachable
 (`RUNQ_SOCKET` or the local one). A missing or unreadable job.json raises.
 
 `t.record` is `runq.record` for that task — same validation, same frozen
@@ -170,7 +170,7 @@ with runq.utils.atomic_write("output.json") as f:
 | `results.jsonl` | SDK `record` | `runq view --experiment`, dashboard |
 | `results.<producer>.jsonl` | a scoring script's `exp.tasks[i].record` | `runq view --experiment`, dashboard |
 | `links.json` | SDK `link` | `runq show <tk…>`, dashboard |
-| `../job.json` (the job dir) | runq (submit, refresh) | SDK `runq.experiment()` |
+| `../job.json` (the experiment dir) | runq (submit, refresh) | SDK `runq.experiment()` |
 | `checkpoints/` | your training script | your resume code |
 
 ## Installation
@@ -189,7 +189,7 @@ cd sdk/python && pip install -e .   # development
 | W&B run root | `WANDB_DIR` | `ctx.wandb_dir`, `wandb_like_cfg["dir"]` | `<task_dir>` |
 
 Runq resolves these paths in preview and creates/checks them on the selected
-execution target before submission. Project environment and job override values
+execution target before submission. Project environment and experiment override values
 win over directory defaults; relative overrides resolve against `working_dir`.
 Use literal target paths, rather than shell expressions. Commands still run in
 the project's code directory. Write products explicitly to `ctx.output_dir`.
@@ -209,7 +209,8 @@ Call it on global rank zero only: set `RANK` to the framework's global rank
 the other ranks. For frameworks without `RANK`, also set `mode="disabled"` in
 init kwargs for nonzero global ranks.
 
-A resubmission creates a new task and W&B run ID. Reusing an earlier checkpoint
+A cell's new version is a new task with a new W&B run ID (named `<cell> #N`;
+`ctx.seed` stays the cell's). Reusing an earlier checkpoint
 or W&B run is an explicit choice in your script. Offline bundles can be synced
 with W&B's official `wandb sync`.
 

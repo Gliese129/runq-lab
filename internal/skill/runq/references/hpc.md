@@ -1,7 +1,7 @@
 # runq on HPC clusters (SGE/UGE, Slurm, PBS)
 
 runq does not replace the scheduler: it expands the sweep, writes one
-workspace + `run.sh` per task, renders your `submit_template`, and runs it on
+workspace + `run.sh` per version, renders your `submit_template`, and runs it on
 the login node over SSH. All scheduler dialect lives in `~/.runq/config.yaml`.
 
 ## Targets
@@ -19,8 +19,8 @@ runq target show [tsubame]       # current definition (alias: target ls)
   opens `$EDITOR`), then `runq target check <name>`.
 - `config.yaml` is hot-reloaded by the service. Only if `target connect`
   reports the lane missing, run `runq serve restart`.
-- `max_inflight` (per target) caps how many of its tasks are in flight; extra
-  tasks wait in runq's queue, not the cluster's.
+- `max_inflight` (per target) caps how many of its versions are in flight; extra
+  versions wait in runq's queue, not the cluster's.
 - Submit target is `-t > job.target > project.target`. Session target scopes queries only.
 
 ### SSH facts
@@ -55,7 +55,7 @@ runq target show [tsubame]       # current definition (alias: target ls)
 Placeholders: `{{name}}`, `{{task_dir}}`, `{{run_sh}}`, `{{ext_id}}`,
 `{{param.<x>}}` (scheduler-scope params). `runq target check` lists issues.
 
-Per-task scheduler knobs are params with `scope: scheduler`, consumed only by
+Per-version scheduler knobs are params with `scope: scheduler`, consumed only by
 `submit_template` and never passed to your command:
 
 ```yaml
@@ -72,7 +72,7 @@ sweep:
     parameters: { benchmark: [mmlu, gsm8k], h_rt: ["4:00:00", "2:00:00"] }
 ```
 
-`environment:` in project.yaml is exported into every task **and** prefixed to
+`environment:` in project.yaml is exported into every version **and** prefixed to
 the submit command, so `$TSUBAME_GROUP`-style references in templates resolve.
 Secrets belong in `<working_dir>/.env`, not `environment:`.
 
@@ -80,7 +80,7 @@ Secrets belong in `<working_dir>/.env`, not `environment:`.
 
 A reservation works best as a param on the same target — code, sync and target
 stay unchanged. The TSUBAME preset carries `[[-ar {{param.ar_id}}]]`; for other
-targets, add that segment to `submit_template`. Then set it per job:
+targets, add that segment to `submit_template`. Then set it per experiment:
 
 ```yaml
 fixed_params: { ar_id: "9245", node_kind: node_f, h_rt: "4:00:00" }  # shape: qrstat -ar <id>
@@ -113,20 +113,20 @@ are never synced. A project without `targets` is pinned to its `target`.
 
 ## How state is learned
 
-- Each task's `run.sh` writes `status.json` at start, exit, and on scheduler
+- Each version's `run.sh` writes `status.json` at start, exit, and on scheduler
   kill (signal trap). Reading it is a file read, not a scheduler query.
-- `status_template` probes only cover tasks that died silently; probes are
+- `status_template` probes only cover versions that died silently; probes are
   rate-limited. `runq ps <job_id> --fresh` forces one.
 - Every submit/kill is logged with the fully rendered command and raw
   scheduler output in `~/.runq/logs/runq.log`.
-- Each task runs from `working_dir`; stdout/stderr go to the task log
+- Each version runs from `working_dir`; stdout/stderr go to the version log
   (`runq logs`). `-o/-e` in `submit_template` only catch scheduler noise.
 
-## CPU scoring beside a job
+## CPU scoring beside an experiment
 
-Run the scoring script yourself on a node that can read the job workspace (the
+Run the scoring script yourself on a node that can read the experiment workspace (the
 login node for light work; a CPU allocation from iqrsh, in your own tmux, for
-heavy work). It reads the job with `runq.experiment("<job_dir>")` and records results
-per task; runq ingests them from the task directories, so the script needs no
+heavy work). It reads the experiment with `runq.experiment("<job_dir>")` and records results
+per version; runq ingests them from the task directories, so the script needs no
 connection to runq. runq does not start, watch or stop it. See the views
 reference for the record contract.

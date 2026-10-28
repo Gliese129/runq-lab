@@ -11,21 +11,21 @@ until the statuses the command would show change or all finish, at most `max`
 Errors say what is wrong and how to fix it, and exit non-zero.
 `runq <command> --help` is always the authoritative, current form.
 When the service serves the dashboard, `submit`, `ps` and `show` JSON carry a
-`url` for each job/task page (text output prints a `dashboard:` line).
+`url` for each experiment/version page (text output prints a `dashboard:` line).
 
 ## Run an experiment
 
 | Command | What it does |
 |---|---|
-| `runq draft <job.yaml \| . \| -> [-p project] [-s section] [-t target]` | Plan: expanded tasks, run table, chosen target and section, rendered command (HPC: run.sh + submit line), params that reach the code only via `ctx.params`, preflight results (warnings only; `--json`: `preflight`). Submits nothing; keeps the plan as draft `dr…` (5 open per project) |
+| `runq draft <job.yaml \| . \| -> [-p project] [-s section] [-t target]` | Plan: expanded versions, run table, chosen target and section, rendered command (HPC: run.sh + submit line), params that reach the code only via `ctx.params`, preflight results (warnings only; `--json`: `preflight`). Submits nothing; keeps the plan as draft `dr…` (5 open per project) |
 | `runq draft ps` / `runq show dr… [--yaml]` | Open drafts / one draft's run table (`--yaml`: its editable form) |
 | `runq draft edit dr… [-f file]` | Replace the plan from the edited YAML (rev-checked) or in `$EDITOR` |
 | `runq draft discard dr…` | Delete an open draft |
-| `runq submit dr… [--rev N] --json` | Freeze the draft into a job → `{"job_id", "total_tasks", "draft_id", "url", "preflight_warnings"}`; submitting it again returns the same job. Preflight runs again and only warns (see [configuration](configuration.md#preflight)) |
-| `runq draft <job.yaml> --into <ex…> [--rerun <cell>]` | Plan an append to an existing job (same project and target). A cell is a run name: each row is a new cell, a new version of a cell whose selected version failed or was killed, or skipped (succeeded or still running; `--rerun <cell>` runs a succeeded one again). A row that names a cell must keep its params, except the ones only the scheduler reads; a changed command is allowed and flagged |
-| `runq submit dr… --into <ex…> [--rerun <cell>]` | Append the draft to that job as its next submission → `{"job_id", "total_tasks", "append": {"new", "new_version", "skipped", "rerun", "batch"}}`. Each cell shows one version (the pinned one, else the latest success, else the latest); older versions stay as history. Nothing to run → an error, no submission |
+| `runq submit dr… [--rev N] --json` | Freeze the draft into an experiment → `{"job_id", "total_tasks", "draft_id", "url", "preflight_warnings"}`; submitting it again returns the same experiment. Preflight runs again and only warns (see [configuration](configuration.md#preflight)) |
+| `runq draft <job.yaml> --into <ex…> [--rerun <cell>]` | Plan an append to an existing experiment of the same project (`-t` may send it to another target). A cell is a run name: each row is a new cell, a new version of a cell whose selected version failed or was killed, or skipped (succeeded or still running; `--rerun <cell>` runs a succeeded one again). A row that names a cell must keep its params, except the ones only the scheduler reads; a changed command is allowed and flagged |
+| `runq submit dr… --into <ex…> [--rerun <cell>]` | Append the draft to that experiment as its next submission → `{"job_id", "total_tasks", "append": {"new", "new_version", "skipped", "rerun", "batch"}}`. Each cell shows one version (the pinned one, else the latest success, else the latest); older versions stay as history. Nothing to run → an error, no submission |
 | `runq submit [job.yaml \| . \| -]` (at a terminal) | Plan the file as a draft and show it, then one key: `s` submit, `e` edit in `$EDITOR`, `p` pick the project, `q` quit keeping the draft. No argument starts from a template. Outside a terminal a job file is refused — use `runq draft` |
-| `runq kill <task_id \| job_id>` | Cancel a task, or every task of a job |
+| `runq kill <task_id \| job_id>` | Cancel a version, or every version of an experiment |
 
 ## Watch it
 
@@ -34,14 +34,14 @@ When the service serves the dashboard, `submit`, `ps` and `show` JSON carry a
 | `runq ps --json` | Experiments: name, id, project, section, status, counts (alias `ls`; `-t` filters by target) |
 | `runq ps <ex…> --json` | That experiment's versions: cell, version number, id, status (a version its cell no longer shows says `replaced`), scheduler state, queue, step, elapsed, params |
 | `runq ps <job_id> --fresh --json` | Same, after forcing a scheduler probe |
-| `runq ps <job_id> --wait --json` | Same, once a task changes state or all finish (at most 30m; `--wait=2h` for longer). Exit 0 either way; the line `no change in 30m (last refresh 13:42:10)` (stderr with `--json`) says it timed out. Without an id it waits on the job table. It reads the local service, which keeps polling the scheduler on its own, so waiting adds no cluster load |
+| `runq ps <job_id> --wait --json` | Same, once a version changes state or all finish (at most 30m; `--wait=2h` for longer). Exit 0 either way; the line `no change in 30m (last refresh 13:42:10)` (stderr with `--json`) says it timed out. Without an id it waits on the experiment table. It reads the local service, which keeps polling the scheduler on its own, so waiting adds no cluster load |
 | `runq export <ex…> [-o file]` | The experiment as job.yaml `cells:` rows (fixed_params = baseline, rows = differences), one per cell from the version it shows; a snapshot (a row whose version ran another command says so in a comment) |
-| `runq show <ex… \| tk… \| dr… \| pj… \| project>` | One thing by id (unique prefix is enough): a job with its run table, a task as JSON (command, dirs, external id, status source, links), a draft, a project. With `--wait`, a job or task prints once its state changes or it finishes; `--json` gains `"wait": {"outcome", "waited_seconds", "last_refresh"}` (outcome `changed`, `finished` or `timeout`) |
+| `runq show <ex… \| tk… \| dr… \| pj… \| project>` | One thing by id (unique prefix is enough): an experiment with its run table, a version as JSON (command, dirs, external id, status source, links), a draft, a project. With `--wait`, an experiment or version prints once its state changes or it finishes; `--json` gains `"wait": {"outcome", "waited_seconds", "last_refresh"}` (outcome `changed`, `finished` or `timeout`) |
 | `runq logs <task_id> -n 200` | Last 200 log lines; at a terminal it then follows until Ctrl-C, otherwise it exits (`--no-follow` makes a terminal exit too) |
 | `runq logs <task_id> --grep '<regex>' -n 20` | Last 20 lines matching an extended regex, grepped on the target |
 | `runq logs <task_id> --timeout 2m` | Tail, then follow for at most 2 minutes — at a terminal or not |
 | `runq view --experiment <job_id>` | Results written by `runq.record(...)`, through the view engine: a table per scoring script and section, one row per cell (`--format csv\|markdown\|latex`, `--json`) |
-| `runq dashboard` | Print the dashboard URL and open it in the browser; job, task and draft pages are linked from `show`, `ps` and `draft` |
+| `runq dashboard` | Print the dashboard URL and open it in the browser; experiment, version and draft pages are linked from `show`, `ps` and `draft` |
 
 ## Projects (one per code base)
 
@@ -49,25 +49,25 @@ When the service serves the dashboard, `submit`, `ps` and `show` JSON carry a
 |---|---|
 | `runq project [project.yaml]` | Register or update the project the file names (default `./project.yaml`); prints its `pj…` id or what changed. runq never re-reads the file on its own |
 | `runq project ls` / `runq show <pj… \| name>` | List (with `pj…` ids) / inspect |
-| `runq archive <pj… \| name \| ex…> [--restore]` | Hide a project (and its jobs) or one job from default lists — reversible |
-| `runq rename <ex… \| pj… \| project-name> <new-name>` | Rename a job or a project; ids (and directories) never change |
+| `runq archive <pj… \| name \| ex…> [--restore]` | Hide a project (and its experiments) or one experiment from default lists — reversible |
+| `runq rename <ex… \| pj… \| project-name> <new-name>` | Rename an experiment or a project; ids (and directories) never change |
 
-## Sections (how a project's jobs are grouped)
+## Sections (how a project's experiments are grouped)
 
 | Command | What it does |
 |---|---|
-| `runq section ls <project> [--json]` | Sections with job counts and rules; always `unsorted` and `smoke` |
-| `runq section create <project> <name>` / `runq section rm <project> <name>` | Add a section / remove one (its jobs become unsorted) |
-| `runq submit job.yaml -s <section>` | File the new job under an existing section (same as job.yaml `section:`) |
-| `runq section move <section> <ex…> [ex…]` | Move jobs; `unsorted` clears the section. Nothing moves on disk |
-| `runq section rule add <project> <section> --name GLOB \| --path GLOB` | File new jobs by name or job-file path; first matching rule wins (`smoke` starts with `--name '*smoke*'`) |
+| `runq section ls <project> [--json]` | Sections with experiment counts and rules; always `unsorted` and `smoke` |
+| `runq section create <project> <name>` / `runq section rm <project> <name>` | Add a section / remove one (its experiments become unsorted) |
+| `runq submit job.yaml -s <section>` | File the new experiment under an existing section (same as job.yaml `section:`) |
+| `runq section move <section> <ex…> [ex…]` | Move experiments; `unsorted` clears the section. Nothing moves on disk |
+| `runq section rule add <project> <section> --name GLOB \| --path GLOB` | File new experiments by name or job-file path; first matching rule wins (`smoke` starts with `--name '*smoke*'`) |
 | `runq section rule rm <project> <rule-id>` | Remove a rule (ids from `section ls`) |
-| `runq section sort <project>` | Apply the rules to the project's unsorted jobs |
+| `runq section sort <project>` | Apply the rules to the project's unsorted experiments |
 
-A new project must declare `target`. Experiments differ by job, not by project:
-a job may carry its own `command` and `target`.
+A new project must declare `target`. Experiments differ by experiment, not by project:
+an experiment may carry its own `command` and `target`.
 
-## Targets (where tasks run)
+## Targets (where versions run)
 
 | Command | What it does |
 |---|---|
@@ -76,7 +76,7 @@ a job may carry its own `command` and `target`.
 | `runq target check [<name>]` | Validate templates: placeholders, id regex, sample render — free, local |
 | `runq target connect <name>` | Verify SSH + host key, install the remote CLI, start the socket forward |
 | `runq target disconnect <name>` | Stop the forward |
-| `runq target rm <name>` | Remove a target (refused while a project uses it; running tasks finish, old jobs stay readable) |
+| `runq target rm <name>` | Remove a target (refused while a project uses it; running versions finish, old experiments stay readable) |
 | `runq target show [<name>]` | Current definition (alias `ls`) |
 
 To change a target, edit `~/.runq/config.yaml` and run `runq target check <name>`;
@@ -104,25 +104,25 @@ starts and serves history and the dashboard.
 | Command | What it does |
 |---|---|
 | `runq clean --experiment <job_id> --show` | Preview what would be deleted |
-| `runq clean --experiment <job_id> -y` | Delete the job's task directories, logs and records — **irreversible** |
-| `runq clean --checkpoints --older-than 7d --show` | List each job's checkpoint bytes and its filesystem's free space (space and inodes) |
+| `runq clean --experiment <job_id> -y` | Delete the experiment's task directories, logs and records — **irreversible** |
+| `runq clean --checkpoints --older-than 7d --show` | List each experiment's checkpoint bytes and its filesystem's free space (space and inodes) |
 | `runq clean --checkpoints --experiment <ex…>` | Delete only `<task_dir>/checkpoints/*`; logs, results, outputs and records stay |
 
 Selectors: `--job`, `--task`, `--older-than 7d` (units h/d/w/m/y), `--orphan`,
 `--archived`, `-t <target>`; `--checkpoints` combines with any of them. Without
-`-y` on a terminal, an interactive picker walks project → job → confirmation
+`-y` on a terminal, an interactive picker walks project → experiment → confirmation
 (`--checkpoints` lists what it would delete and asks once).
 
-`runq draft` warns when a filesystem the job writes to (the data path and the
+`runq draft` warns when a filesystem the experiment writes to (the data path and the
 project's `working_dir`) has under 5% space or inodes free, or less than the
-project's largest finished job per task × the planned task count.
+project's largest finished experiment per version × the planned version count.
 
 ## Notes for scripts and agents
 
 - `runq submit` queues real cluster jobs — explore with `runq draft`, which submits nothing.
 - `runq logs` prints the tail and returns when stdout is not a terminal; add `--timeout <dur>` for a bounded follow.
 - Check progress with one `runq ps <job_id> --json`; to wait for the next change, use `runq ps <job_id> --wait --json` — one bounded call in place of a sleep loop.
-- When reporting to the researcher, include the `url` of the job or task.
+- When reporting to the researcher, include the `url` of the experiment or version.
 - `runq clean` is irreversible; preview with `--show`.
 
 ## Reusable views and scoring scripts
@@ -135,7 +135,8 @@ project's largest finished job per task × the planned task count.
 | `runq view <name> --refresh` | Refresh on-demand script sources |
 | `runq view ls --json` | List saved views |
 | `runq view rm <name> --project <project>` | Remove a view |
-A scoring script needs no command: run it yourself, read the job with
-`runq.experiment("<job_dir>")` and record per task; its results show up in views.
-Each task executes once; fix a failed task and submit a new task.
+A scoring script needs no command: run it yourself, read the experiment with
+`runq.experiment("<job_dir>")` and record per version; its results show up in views.
+A version runs once and is never restarted in place: fix the problem, then
+run the cell again with `runq draft job.yaml --into <ex…>` (same cell name) — it becomes the cell's next version.
 View YAML, data contracts and scoring scripts: [views.md](views.md).

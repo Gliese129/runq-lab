@@ -32,7 +32,7 @@ The project must be explicit: job.yaml 'project:' or -p. Each project keeps
 its newest 5 open drafts; creating a 6th discards the oldest.
 
 --into ex… makes the draft an append to an existing experiment of the same
-project and target. A cell is a row name: a row whose name the experiment has is a
+project (-t may run it on another target). A cell is a row name: a row whose name the experiment has is a
 new version of that cell when its selected version failed or was killed, and
 is skipped when it succeeded or still runs (--rerun <cell> runs a succeeded
 one again). Such a row must keep the cell's params, except the ones only the

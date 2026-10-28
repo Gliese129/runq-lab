@@ -7,15 +7,15 @@ Run ablation sweeps on HPC clusters — built to be driven by AI agents.
 ## What it is
 
 You (or your coding agent) describe an experiment in a small `job.yaml`;
-runq expands the sweep, submits one scheduler job per cell, tracks every task,
+runq expands the sweep, submits one scheduler job per cell, tracks every version,
 and keeps each cell's log, params and outputs together. The researcher watches
 a dashboard; the agent drives the CLI.
 
-- **A project is a code base. A job is one experiment.** Smoke tests, resumes,
+- **A project is a code base. An experiment is one experiment.** Smoke tests, resumes,
   a different reservation — each is just another `job.yaml` (it can carry its
   own `command` and `target`), not another project.
 - **No plumbing for ablation axes.** Every swept value is written to the
-  task's `params.json`; training code reads it with `ctx.params.get("kl", 0.0)`.
+  version's `params.json`; training code reads it with `ctx.params.get("kl", 0.0)`.
   Defaults live in your code. Delete the few `runq` lines before publishing
   and nothing else changes.
 - **No wrapper scripts.** Environment, setup commands, output/checkpoint
@@ -114,7 +114,7 @@ runq draft job.yaml                  # after fixing a failed task, plan and subm
 runq clean --experiment <job_id> --show      # preview; deletion is irreversible
 ```
 
-Structured commands provide JSON output. Job IDs look like `ex…`, tasks `tk…`.
+Structured commands provide JSON output. Experiment IDs look like `ex…`, versions `tk…`.
 Reusable progress/paper tables and scoring scripts: [views and runq.experiment()](docs/views.md).
 Full reference: [docs/cli.md](./docs/cli.md)
 
@@ -137,7 +137,7 @@ Run `runq skill install` once per machine. The short version:
 | Doc | What |
 |---|---|
 | [docs/getting-started.md](./docs/getting-started.md) | First sweep end to end |
-| [docs/concepts.md](./docs/concepts.md) | Projects, jobs, tasks, targets, the service |
+| [docs/concepts.md](./docs/concepts.md) | Projects, experiments, versions, targets, the service |
 | [docs/configuration.md](./docs/configuration.md) | project.yaml / job.yaml reference |
 | [docs/hpc.md](./docs/hpc.md) | HPC targets, templates, reservations, sync |
 | [docs/cli.md](./docs/cli.md) | Every command and flag |

@@ -78,9 +78,11 @@ sweep:
     parameters: { kl: [0.0, 0.05, 0.1], seed: [1, 2] }
 ```
 
-A smoke test, a resume, or the same sweep on a reservation is another job
-file — it may set its own `command:`, `target:` or `overrides:` — not
-another project.
+A resume or the same cells on a reservation go into the same experiment with
+`runq draft job.yaml --into <ex…>` (same cell names: each becomes the cell's next
+version); a draft may set its own `command:`, `target:` or `overrides:`. A smoke
+test is a small experiment in the `smoke` section. None of these is another
+project.
 
 ## 6. Draft, then submit
 
@@ -108,8 +110,8 @@ runq show <task_id>                        # command, dirs, scheduler id, links
 runq view --experiment <job_id>                   # results from runq.record, one row per cell
 ```
 
-The dashboard shows the same jobs, logs, curves and results. `pending` means
-the cluster is queueing the task.
+The dashboard shows the same experiments, logs, curves and results. `pending` means
+the cluster is queueing the version.
 
 ## 8. When something goes wrong
 
@@ -128,7 +130,7 @@ reply is in `~/.runq/logs/runq.log`. Common errors and fixes:
 |---|---|
 | `~/.runq/config.yaml` | Global config and targets |
 | `~/.local/share/runq/` | Service data: database, logs, socket (`runq serve status` prints them) |
-| `<data>/<project_id>/<job_id>/<task_id>/` | Task workspace: log, `params.json`, `metrics.jsonl`, `results.jsonl`, `outputs/`, `checkpoints/`, `run.sh`, `status.json` |
+| `<data>/<project_id>/<job_id>/<task_id>/` | Version workspace: log, `params.json`, `metrics.jsonl`, `results.jsonl`, `outputs/`, `checkpoints/`, `run.sh`, `status.json` |
 
 `<data>` is `<working_dir>/.runq` unless the target sets `data_path` (e.g. a
 bulk-storage disk; `<working_dir>/.runq/<project_id>` then links there). Don't

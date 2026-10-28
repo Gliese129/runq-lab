@@ -1,4 +1,4 @@
-# runq Python SDK (runq-sdk 0.6) — write a task, read a job
+# runq Python SDK (runq-sdk 0.6) — write a task, read an experiment
 
 The SDK never imports wandb, never decides when training stops, and never
 manages checkpoints. Everything works without runq too (manual mode writes
@@ -26,11 +26,11 @@ runq.record({"acc": acc, "f1": f1}, seed=ctx.seed, split="val")  # one comparabl
   Keep keys fixed per section; use null for unknown values. `step` orders snapshots
   but is not identity. The controller retains the latest per source/section/axes;
   full history stays in `results.jsonl`. See `references/views.md`.
-- Checkpoints: write under `ctx.checkpoint_dir`. Every resubmission is a new task;
-  explicitly reference an old checkpoint path when you want to reuse it.
+- Checkpoints: write under `ctx.checkpoint_dir`. Every version of a cell has its own
+  directory; explicitly reference an earlier version's checkpoint path to resume from it.
 - `runq.utils.atomic_write(path)` — tmp + fsync + rename for any output file.
 
-## Read a job: scoring scripts
+## Read an experiment: scoring scripts
 
 ```python
 exp = runq.experiment("/gs/work/kl/ex7817")     # job dir (holds job.json); runq.experiment() in a task = own job
@@ -39,11 +39,11 @@ for t in exp.tasks:                      # id, run_name, status, params, task_di
         t.record({"acc": score(t.output_dir)}, section="math", split="test")
 ```
 
-Run it yourself wherever the job dir is readable (login node / CPU node, your
+Run it yourself wherever the experiment dir is readable (login node / CPU node, your
 tmux); runq does not start or stop it. `t.record` = `runq.record` for that task,
 written to `<task_dir>/results.<producer>.jsonl` (producer = script name, or
 `producer=`); views show it as source `<tk…>@<producer>`, also after the task
-finished. job.json updates when the job changes; re-read it to wait for tasks.
+finished. job.json updates when the experiment changes; re-read it to wait for tasks.
 
 ## W&B
 
@@ -56,7 +56,7 @@ runq.link("wandb", run)                  # runq shows the run on the task
 `wandb_like_cfg` = `project`/`entity`/`tags`/`mode` from the project's
 `wandb:` block (fallback project = runq project name), `id` = task id with
 `resume="allow"` (online retries continue the same run), `name` from the
-swept values, `group` = job name at submit, `config` = params, and `mode="disabled"`
+swept values, `group` = experiment name at submit, `config` = params, and `mode="disabled"`
 when `RANK > 0` (one run per multi-GPU task; rank 0's system monitor covers
 every GPU on its node). Every key is a default you can override.
 `runq.link(name, url_or_run)` works with any run-id scheme; call it right after
@@ -80,6 +80,6 @@ exports. `ctx.link_wandb(run)` still works with a DeprecationWarning (→
 - These directories always live in the task directory (under the target's `data_path`); submit rejects `environment`/`overrides.env` entries that redirect them. Submission creates/checks them on the target. CWD stays the code directory.
 - Set global `RANK` (not `LOCAL_RANK`) before W&B init. Without `RANK`, explicitly disable W&B on nonzero framework global ranks and call `runq.link` on rank 0 only.
 - Call `runq.link("wandb", run)` after init. It records the run's actual URL, which stays correct for custom run ids. Core SDK does not import W&B.
-- New submissions have new task and W&B IDs. Explicitly choose an old checkpoint or run ID if reuse is needed. Offline bundles use W&B's official sync.
+- A new version has a new task id and W&B run id (named `<cell> #N`, same `ctx.seed` as the cell's other versions). Explicitly choose an old checkpoint or run ID if reuse is needed. Offline bundles use W&B's official sync.
 - Artifact staging (`WANDB_DATA_DIR`), shared cache (`WANDB_CACHE_DIR`) and download (`artifact.download(root=...)`) are independent of run dir. Runq doesn't upload checkpoints or manage W&B credentials.
 - Task files remain until cleanup. Confirmed `clean all` deletes task dirs (including offline bundles, outputs and checkpoints) and task logs; overridden paths outside task dirs and shared caches survive. Preview before deleting unsynced data.

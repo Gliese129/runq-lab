@@ -32,7 +32,7 @@ project of this directory. Outside a terminal (scripts, agents) a job file is
 refused: use 'runq draft job.yaml', then 'runq submit dr…'.
 
 --into ex… appends the draft's rows to an existing experiment instead (same
-project and target): a row whose cell name it has is a new version of that cell
+project; the draft's target may differ): a row whose cell name it has is a new version of that cell
 when its selected version failed or was killed, and is skipped when it
 succeeded or still runs (--rerun <cell> runs a succeeded one again). Older
 versions stay as history. Nothing to run → an error, no submission.`,

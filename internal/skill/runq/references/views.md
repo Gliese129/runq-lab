@@ -31,8 +31,8 @@ sorted key names. Prefer explicit names for long-lived views.
 and the section signature. Include split/condition/seed/shard when they differ.
 The controller retains the latest snapshot per source/section/identity without a
 10k cap; raw history stays on the source filesystem. Within a source use step,
-then timestamp/file order. Across task/job sources use timestamp, then source ID;
-a new task's step zero can replace an older task's step 1000. Never add repeated
+then timestamp/file order. Across version/experiment sources use timestamp, then source ID;
+a new version's step zero can replace an older version's step 1000. Never add repeated
 snapshots together or silently merge old missing values into a new snapshot.
 
 ## Progress
@@ -58,10 +58,10 @@ charts:
 ```
 
 `runq view progress.yaml` saves/renders; `runq view progress --json` returns the
-same API data. A view describes how to show a section; it is not tied to jobs:
-the dashboard's job page renders every view against that job (its Results tab),
-and the project view page compares jobs the researcher adds by hand, showing the
-columns they all have. So leave `jobs` out (the CLI then uses the latest job) and
+same API data. A view describes how to show a section; it is not tied to experiments:
+the dashboard's experiment page renders every view against that experiment (its Results tab),
+and the project view page compares experiments the researcher adds by hand, showing the
+columns they all have. So leave `jobs` out (the CLI then uses the latest experiment) and
 pass `--experiment <id>` (repeatable) to render for specific experiments; list ids in `jobs:`
 when a view is meant to compare a fixed set. `--project` disambiguates names.
 `--wide` adds provenance.
@@ -72,7 +72,7 @@ False/unknown column `when` hides the value. Type comparisons are strict.
 Use `group: [generation, eval]` only when their axis schemas match; qualify
 ambiguous metric names (`eval.scored`). No arbitrary functions in expressions.
 
-For sharded counters use `extra: [{name: Generated, job: ex123,
+For sharded counters use `extra: [{name: Generated, experiment: ex123,
 value: 'metric:generated:sum', format: int}]`. The explicit sum combines each
 source's latest value. An unqualified `metric:generated` selects the newest value.
 
@@ -148,7 +148,7 @@ Put expensive work in a task or a scoring script and emit record snapshots.
 ## Scoring scripts (runq.experiment)
 
 Scoring that is not part of training (an LLM judge, an offline evaluator) is a
-plain script you start yourself where the job dir is readable — login node or a
+plain script you start yourself where the experiment dir is readable — login node or a
 CPU node in your own iqrsh/tmux; runq does not start, watch or stop it:
 
 ```python
@@ -159,14 +159,14 @@ for t in exp.tasks:
         t.record({"acc": score(t.output_dir)}, section="math", split="test")
 ```
 
-`t.record` is `runq.record` for that task, appended to
+`t.record` is `runq.record` for that version, appended to
 `<task_dir>/results.<producer>.jsonl` (producer = script name). runq ingests it
-as source `<tk…>@<producer>` within 5 min (30 s while tasks run) for jobs
+as source `<tk…>@<producer>` within 5 min (30 s while versions run) for experiments
 unfinished or from the last 14 days; `--fresh` on a command ingests at once and
-covers older jobs. The rows carry the task's
+covers older experiments. The rows carry the version's
 params, so `rows: [param.…]` lines scores up with the sweep. job.json is
-rewritten when the job changes; a script waiting for tasks re-reads
-`runq.experiment(...)` and decides itself when to stop. Keep a list of scored tasks in
+rewritten when the experiment changes; a script waiting for versions re-reads
+`runq.experiment(...)` and decides itself when to stop. Keep a list of scored versions in
 the script's own output dir so a restart skips them.
 
 ## Errors → corrections
@@ -174,6 +174,6 @@ the script's own output dir so a restart skips them.
 - Unknown/ambiguous field → read available fields; qualify the metric section.
 - Rows missing identity / expect mismatch → include all axes in rows and expect.
 - Section key warning → fix the writer to emit every key, null when unknown.
-- No data yet → check selected jobs, section, expected axes; for a scoring script, that `results.<producer>.jsonl` exists in the task dirs (and `--fresh` for an old job).
+- No data yet → check selected experiments, section, expected axes; for a scoring script, that `results.<producer>.jsonl` exists in the task dirs (and `--fresh` for an old experiment).
 - Unconfirmed observation → report last observed time; inspect connection/source.
-- Failed task → read error, fix, dry-run, submit a new task; there is no task retry.
+- Failed version → read the error, fix, then `runq draft job.yaml --into <ex…>` with the same cell name (a new version); there is no in-place retry.

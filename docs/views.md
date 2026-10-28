@@ -24,11 +24,11 @@ use null for unknown values. Missing keys become null; extra keys warn and are
 ignored. A newer snapshot never borrows missing fields from an older snapshot.
 
 The controller retains one record per source/section/axis identity. Within a
-source, greater step wins, then timestamp and file order. Across tasks/jobs,
-timestamp wins, then source ID. A newly submitted task can start at step zero.
+source, greater step wins, then timestamp and file order. Across versions/experiments,
+timestamp wins, then source ID. A newly submitted version can start at step zero.
 Snapshots are never implicitly summed. Include shard/seed/condition axes when
 those represent different cells. No 10,000-record cap applies; full history stays
-on the task's filesystem. More than 50,000 identities produces a source warning.
+on the version's filesystem. More than 50,000 identities produces a source warning.
 
 ## Progress table
 
@@ -62,16 +62,16 @@ runq view rm eval-progress --project example
 ```
 
 A file invocation saves before rendering. `--project` overrides a missing project;
-otherwise use project.yaml or an unambiguous saved name. Jobs default to the latest
-unarchived project job; repeat `--job` to render for other jobs. In the dashboard
-a view is rendered per job on that job's Results tab, and the project view page
-compares jobs you add by hand (only the columns every one of them has are shown),
+otherwise use project.yaml or an unambiguous saved name. Experiments default to the latest
+unarchived project experiment; repeat `--job` to render for other experiments. In the dashboard
+a view is rendered per experiment on that experiment's Results tab, and the project view page
+compares experiments you add by hand (only the columns every one of them has are shown),
 so most views need no `jobs:` at all. An explicit list, `jobs: [ex123, jb456]`,
 fixes the comparison set; the pattern form `jobs: {note: 'eval-*', last: 3}` still
 works for the CLI but depends on how notes are written, so prefer ids.
-Every selected job must belong to the same project.
+Every selected experiment must belong to the same project.
 
-Rows must contain every section identity axis; `param.seed` can add task metadata.
+Rows must contain every section identity axis; `param.seed` can add version metadata.
 `expect` must cover exactly those row dimensions and expands their Cartesian
 product. Missing cells stay visible as `no data yet`, without a DONE label.
 Filters contain typed value lists, e.g. `filter: {split: [test]}`.
@@ -92,7 +92,7 @@ LaTeX/Markdown exports and chart labels; CSV keeps raw values).
 
 `extra: [{name: Generated, job: ex123, value: 'metric:generated:sum', format: int}]`
 uses each source's latest metric, then the explicit sum. Without `:sum`/`:min`/
-`:max`/`:mean`, the newest timestamp wins. Job status is available as `status`.
+`:max`/`:mean`, the newest timestamp wins. Experiment status is available as `status`.
 
 ## Paper tables and charts
 
@@ -125,13 +125,13 @@ Chart templates: compare (x/y/color), sweep (x/y), heatmap (x/y/value), progress
 (done/total), tradeoff (x/y/color), curves (metric). Table charts use row/column
 names. Curves color/facet use `param.<name>`; `aggregate` requests group statistics.
 Curves only aggregate identical full step sequences; differing sequences return
-per-task recorded points with `aligned: false`, without interpolation. Bounded
+per-version recorded points with `aligned: false`, without interpolation. Bounded
 series and animation frames use a target-side prefix/tail pyramid of exact record
 positions; averages are never substituted for progress snapshots.
 
 ### In the dashboard
 
-Each view has a page (project page → Views, or the job page's Views tab):
+Each view has a page (project page → Views, or the experiment page's Views tab):
 the table in booktabs style with Copy LaTeX / Copy Markdown / CSV, and every
 chart on a white "paper" at single- or double-column width (3.3in / 6.9in).
 Charts export as SVG, 300 dpi PNG or vector PDF, and — except `curves` — as a
@@ -184,7 +184,7 @@ report values are series; script values are the returned JSON.
 A scoring script (an LLM judge, an offline evaluator) is an ordinary Python
 script you or your agent run wherever the job directory is readable — for an
 HPC target the login node or a CPU allocation, inside your own tmux. runq does
-not start, watch or stop it. It reads the job and records results per task:
+not start, watch or stop it. It reads the experiment and records results per version:
 
 ```python
 import runq
@@ -198,29 +198,29 @@ for t in exp.tasks:
 ```
 
 `job.json` (in `<job_dir>`, the parent of every `task_dir`) is written at submit
-and rewritten whenever runq sees the job change: within ~30 s for jobs that are
+and rewritten whenever runq sees the experiment change: within ~30 s for experiments that are
 unfinished or from the last 14 days; `--fresh` on any command covers older
-unarchived jobs. It lists the live tasks (a rerun's replaced task is left out)
+unarchived experiments. It lists every version, each with its number in its cell and whether the cell shows it (`version`, `selected`)
 with `id, run_name, status, params, task_dir, output_dir, checkpoint_dir,
-started_at, finished_at, last_output_at, batch_seq`, plus the job header,
+started_at, finished_at, last_output_at, batch_seq`, plus the experiment header,
 `observed_at` and `observation_state` as of that write. A loop that waits for
-tasks re-reads it with `runq.experiment(...)`.
+versions re-reads it with `runq.experiment(...)`.
 
-`t.record(...)` is `runq.record` for that task (same leniency, same frozen
+`t.record(...)` is `runq.record` for that version (same leniency, same frozen
 section keys) and appends to `<task_dir>/results.<producer>.jsonl`. The
 producer defaults to the script's file name (`score_math.py` → `score_math`);
 pass `runq.experiment(path, producer="judge")` to choose one (letters, digits, `_ . -`).
 runq ingests each producer file like the task's own `results.jsonl`, also after
-the task finished — within 30 s while the target runs tasks, within 5 min
+the version finished — within 30 s while the target runs versions, within 5 min
 otherwise, at once with `--fresh` — as a separate source `<task_id>@<producer>`: views show its
-rows with `producer` in their contributors and the task's params, so
+rows with `producer` in their contributors and the version's params, so
 `rows: [param.kl]` lines scorer results up with the sweep. Restarting a script
 appends; recovered sections keep their first keys. Keep your own record of
 what was already scored in the script's output directory.
 
 `runq.experiment("ex…")` resolves an id through the runq service socket (local, or a
 forwarded `RUNQ_SOCKET`); otherwise pass the path. Inside a runq task,
-`runq.experiment()` reads the task's own job.
+`runq.experiment()` reads the task's own experiment.
 
 Results that the removed runq consumers (`cs…`) already recorded stay in views;
 their `consumers/` directories stay on disk untouched.
@@ -238,5 +238,5 @@ their `consumers/` directories stay on disk untouched.
 
 Render accepts repeated `job`, `refresh=true`, `format=json|text|latex|markdown|csv`,
 `wide=true`, `latex_color=true`. Invalid specs return HTTP 400 `invalid_view`.
-Task retry routes are removed (404), as are retry fields in normal task JSON and
-max_retry in project/job config. The frontend must remove retry controls.
+There is no in-place retry (no retry route, no retry fields, no `max_retry`): a
+cell runs again as a new version through `--into`.

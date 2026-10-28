@@ -1,7 +1,7 @@
 # HPC guide — running runq on SLURM / PBS / SGE clusters
 
 On a cluster, runq does **not** replace the scheduler. It compiles your
-sweep, writes per-task workspaces, renders one submit command per task
+sweep, writes per-version workspaces, renders one submit command per version
 from your template, and delegates scheduling to `sbatch`/`qsub`. No
 resident daemon, no root, no admin cooperation — everything runs as your
 user, and all scheduler dialect lives in *your* config.
@@ -28,7 +28,7 @@ runq target connect tsubame
   `runq target disconnect` stops that target's forward.
 
 For TSUBAME, the preset uses `qsub -g {{param.group}}`. Set the charged
-project group alongside the resource parameters in each job:
+project group alongside the resource parameters in each experiment:
 
 ```yaml
 fixed_params:
@@ -74,12 +74,12 @@ the ownership check uses a read-only `python3` Unix socket probe on the login
 node; it only permits cleanup after `ECONNREFUSED`.
 
 Background completion, metrics, heartbeat, and scheduler alignment continue
-while the lane owns unfinished tasks, independently of browser activity. An
+while the lane owns unfinished versions, independently of browser activity. An
 idle lane makes no automatic observation requests. Manual refreshes enter the
 same sensor loop and respect its scheduler query floor.
 
 Set project.target to the code source and default execution target.
-A job runs on `-t > job.target > project.target`; queries cover every target unless
+An experiment runs on `-t > job.target > project.target`; queries cover every target unless
 you pass `-t`.
 
 ## Submitting
@@ -127,11 +127,11 @@ appears in the submit line of `runq draft`.
   A param also used outside a segment is still required.
 - No nesting or escaping; `runq target check` previews every segment as kept.
 
-Code is mirrored automatically when a job runs on a target other than the
+Code is mirrored automatically when an experiment runs on a target other than the
 project's source target (`targets:` + `<working_dir>/.rsync`, see
 [configuration.md](./configuration.md#cross-target-project-sync)).
 
-## Per-task scheduler knobs (walltime, queue)
+## Per-version scheduler knobs (walltime, queue)
 
 Declare them as catalog params with `scope: scheduler`, and reference them
 in `submit_template` as `{{param.*}}`:
@@ -161,25 +161,25 @@ sweep:
 `scope: scheduler` params are consumed by the submit command, never by
 your training command, and never injected into `{{args}}`. With
 nonempty `choices`, a typo'd queue name fails at submit — not after four hours
-in queue. One job can carry per-benchmark time limits this way.
+in queue. One experiment can carry per-benchmark time limits this way.
 
-`environment:` from project.yaml is injected into every task AND prefixed
+`environment:` from project.yaml is injected into every version AND prefixed
 onto the submit command, so `$TSUBAME_GROUP`-style references inside
 submit_template resolve from project config.
 
 ## How runq behaves on the login node
 
-runq is a polite login-node citizen. Task state comes primarily from each
-task's `status.json`, written by the generated run.sh at start, at exit,
-and — via a signal trap — when the scheduler kills the task (walltime,
+runq is a polite login-node citizen. Version state comes primarily from each
+version's `status.json`, written by the generated run.sh at start, at exit,
+and — via a signal trap — when the scheduler kills the version (walltime,
 `qdel`): those are local file reads, not scheduler queries. The
-`status_template` probe only covers tasks that died without last words, is
-rate-limited per job (20s floor for the dashboard's automatic polling;
+`status_template` probe only covers versions that died without last words, is
+rate-limited per experiment (20s floor for the dashboard's automatic polling;
 `--fresh` forces one), and listing-style templates like
 the presets' full `qstat` cost ONE scheduler call per pass regardless of
-task count. When nothing asks, nothing polls.
+version count. When nothing asks, nothing polls.
 
-Each task runs **from the project's `working_dir`** (relative paths in
+Each version runs **from the project's `working_dir`** (relative paths in
 your command just work), with all output redirected to its own log —
 `runq logs <task_id>` and the dashboard read it; `-o`/`-e` in your
 submit_template only catches scheduler-level noise. Workspaces live under
@@ -203,11 +203,11 @@ still run.
 3. `runq target check <name>` re-validates templates after any edit.
 4. `runq doctor` checks the right paths per mode.
 
-## CPU scoring beside a job
+## CPU scoring beside an experiment
 
-Run the scoring script yourself on a node that can read the job workspace (the
+Run the scoring script yourself on a node that can read the experiment workspace (the
 login node for light work; a CPU allocation from iqrsh, in your own tmux, for
-heavy work). It reads the job with `runq.experiment("<job_dir>")` and records results
-per task; runq ingests them from the task directories, so the script needs no
+heavy work). It reads the experiment with `runq.experiment("<job_dir>")` and records results
+per version; runq ingests them from the task directories, so the script needs no
 connection to runq. runq does not start, watch or stop it. See the views
 reference for the record contract.

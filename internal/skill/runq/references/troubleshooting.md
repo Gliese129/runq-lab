@@ -14,7 +14,7 @@ step, then act or report; one retry is usually enough to tell a blip from a faul
 | `Could not resolve hostname …` / `no such host` | DNS/VPN, or a typo in the target host / `~/.ssh/config` entry | `ssh -G <host>` to see what runq resolves; check the network once |
 | `ProxyJump is not supported by runq's SSH transport` | an older runq service is running | upgrade and restart; current runq delegates ProxyJump to system OpenSSH |
 | `handshake failed` although `ssh <host>` works in your shell | the service started without your ssh-agent | `runq serve restart` from a shell with `SSH_AUTH_SOCK` |
-| `template references unknown parameter(s): x` | template uses `x` but this job gives it no value (project `default` is not injected) | add `x` to the job's `fixed_params:` (constant) or `sweep:` |
+| `template references unknown parameter(s): x` | template uses `x` but this experiment gives it no value (project `default` is not injected) | add `x` to the experiment's `fixed_params:` (constant) or `sweep:` |
 | `duplicate parameter "x" found across sweep blocks` | `x` in two blocks | keep it in one block; zip pairs in one `list` block |
 | `… was registered as pj… (renamed?)` on `runq project` | the project was renamed | set `project_name:` in the file to the new name |
 | `project "x" is archived` | archived | `runq archive x --restore` |
@@ -32,35 +32,36 @@ step, then act or report; one retry is usually enough to tell a blip from a faul
   `runq ps <job_id> --fresh --json` (forces a probe). If it still disagrees with
   `qstat` / `qacct -j <ext_id>`, report both values as "unconfirmed /
   conflicting" and let the researcher see both.
-- **A dead task still "running" blocks new submits (max_inflight)**: after
+- **A dead version still "running" blocks new submits (max_inflight)**: after
   confirming with the scheduler that it is gone, `runq kill <task_id>`.
 - **The remote code is stale**: runq ran what was on the target at submit
-  time. Sync (or use project `targets` + `.rsync`), then resubmit.
-- **Need to change walltime/resources of a queued task**: not supported; kill
-  and resubmit (queue time is lost — tell the user first).
+  time. Sync (or use project `targets` + `.rsync`), then run the cell again (`--into`).
+- **Need to change walltime/resources of a queued version**: kill it and run the
+  cell again with `--into` and the new values (queue time is lost — tell the user
+  first).
 
 ## Disk full
 
 HPC filesystems fill up in bytes **or** in inodes (file count), and a target
 often has several (home vs. bulk storage; `data_path` vs. `working_dir`).
 
-- **Task failed with `disk full (inodes|space|quota): <mount> …`**: runq found
+- **Version failed with `disk full (inodes|space|quota): <mount> …`**: runq found
   `No space left on device` / `Disk quota exceeded` in the log and checked that
   filesystem. Inodes: too many small files (checkpoints every step, unpacked
   datasets). Quota: df can't see it; use the cluster's quota command.
 - **Free space**: `runq clean --checkpoints --older-than 7d --show` lists each
-  job's checkpoint bytes and the filesystems' free space; drop `--show` to
+  experiment's checkpoint bytes and the filesystems' free space; drop `--show` to
   delete only `checkpoints/*` (logs, results and outputs stay). Show the list
   to the researcher before deleting; a rerun may want to resume from them.
 - **`warning: disk: <mount> is low on …` in a draft**: free space first or
-  submit fewer tasks; the estimate comes from this project's finished jobs.
+  submit fewer versions; the estimate comes from this project's finished experiments.
 
 ## Where to look
 
 - Every submit/kill with the rendered command + raw scheduler output:
   `~/.runq/logs/runq.log`
 - Service log, socket, data dir, API access log: `runq serve status`
-- Task workspace (log, params.json, run.sh, status.json, metrics, results):
+- Version workspace (log, params.json, run.sh, status.json, metrics, results):
   `runq show <task_id>` → `task_dir`
 - Self-check of this machine's setup: `runq doctor`
 

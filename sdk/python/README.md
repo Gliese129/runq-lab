@@ -78,7 +78,7 @@ run = wandb.init(**ctx.wandb_like_cfg)
 runq.link("wandb", run)  # global rank 0; no URL (offline/disabled) = no-op
 ```
 
-The SDK still works without W&B installed. A rerun is a new task, so it gets a
-new directory and a new W&B run.
+The SDK still works without W&B installed. A cell's new version is a new task, so
+it gets a new directory and a new W&B run (`<cell> #N`).
 See the [directory contract](../../docs/sdk_reference.md#task-outputs-and-wb-files-rc3)
 for artifact staging/cache/download paths and explicit clean behavior.

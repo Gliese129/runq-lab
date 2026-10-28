@@ -91,7 +91,7 @@ are never traversed. Symbolic links selected for sync are rejected explicitly.
 |---|---|
 | `{{args}}` | `--key=value` for every param not otherwise consumed |
 | `{{lr}}` (any param name) | that parameter's value, anywhere — even inside quoted strings |
-| `{{project}}`, `{{task_id}}` | identity of the current project / task |
+| `{{project}}`, `{{task_id}}` | identity of the current project / version |
 
 You can mix: `python train.py --lr {{lr}} {{args}}`. Command placeholders are optional:
 parameters not referenced by the command remain in params.json for `ctx.params`.
@@ -103,9 +103,9 @@ Defaults belong in code and are always written out: `ctx.params.get("lr", 1e-3)`
 (a bare `ctx.params.get("lr")` raises), or `ctx.params["lr"]` for a required param.
 params.json contains only supplied values.
 Legacy parameter `default/min/max/include/glob/strict` fields are ignored and no longer written.
-Project command is optional if the job provides one. Legacy project `command_template` remains
+Project command is optional if the experiment provides one. Legacy project `command_template` remains
 readable; specifying both names is an error, and serialization writes only `command`.
-Labels belong in the job `name`, not in params.
+Labels belong in the experiment `name`, not in params.
 
 ### Python environments
 
@@ -113,11 +113,11 @@ Labels belong in the job `name`, not in params.
 python_env: { type: uv, path: .venv }      # or { type: venv, path: .venv } / { type: conda, name: myenv }
 ```
 
-runq activates it around the task's command. Without `python_env` the command
-runs with whatever `PATH` the task inherits (`environment:`, `setup_command`,
+runq activates it around the version's command. Without `python_env` the command
+runs with whatever `PATH` the version inherits (`environment:`, `setup_command`,
 `.env`); nothing is auto-detected.
 
-## Job command
+## Experiment command
 
 ```yaml
 project: resnet50
@@ -128,7 +128,7 @@ fixed_params: {lr: 0.001, optimizer: adam}
 
 A job-level `preflight:` is ignored with a warning (see Preflight below).
 Resources and environment continue to use `overrides`.
-Preview, preflight and submission use the same effective configuration. Submitted jobs save
+Preview, preflight and submission use the same effective configuration. Submitted experiments save
 command, execution target, its selection source and the merged project snapshot.
 Cross-target preview reports pending code sync; it checks destination files as they currently exist.
 `runq draft` does not submit or sync; register project changes first with `runq project <file>`.
@@ -207,12 +207,12 @@ into one giant hand-written zip table — let the blocks express it.
 ## Secrets
 
 Never put tokens in `command` or `environment:`. Put them in
-`working_dir/.env` — sourced at each task's start, never written to the
+`working_dir/.env` — sourced at each version's start, never written to the
 DB, logs, or UIs.
 
 ## Storage layout
 
-Task workspaces live under `<data>/<project_id>/<job_id>/<task_id>/`. `<data>`
+Version workspaces live under `<data>/<project_id>/<job_id>/<task_id>/`. `<data>`
 is the target's `data_path` when set, else `<working_dir>/.runq`:
 
 ```yaml
@@ -223,22 +223,22 @@ targets:
 ```
 
 With `data_path`, `<working_dir>/.runq/<project_id>` links to the project's data
-directory. Project and job directories carry an empty `0-<name>` marker. A
+directory. Project and experiment directories carry an empty `0-<name>` marker. A
 top-level `data_path` still applies to local targets, as a fallback.
 
-| Path (per task) | What |
+| Path (per version) | What |
 |---|---|
 | `params.json` | the exact sweep-expanded parameters |
 | `metrics.jsonl` | per-step metric stream (SDK `report`) — dashboard curves |
 | `results.jsonl` | result records (SDK `record(metrics, **axes)`) — `runq view --experiment` and the dashboard results view |
 | `links.json` | external pages reported by SDK `runq.link` (e.g. the W&B run) |
-| `results.<producer>.jsonl` | results a scoring script recorded for the task (`runq.experiment()`) |
+| `results.<producer>.jsonl` | results a scoring script recorded for the version (`runq.experiment()`) |
 | `outputs/` | `RUNQ_OUTPUT_DIR` / `ctx.output_dir` — write training outputs here |
 | `checkpoints/` | `RUNQ_CHECKPOINT_DIR` / `ctx.checkpoint_dir` — stable across retries |
-| (task root) | `WANDB_DIR` / `ctx.wandb_dir` — W&B creates its own `wandb/` under it |
+| (version root) | `WANDB_DIR` / `ctx.wandb_dir` — W&B creates its own `wandb/` under it |
 | `run.sh` / `status.json` | HPC only: generated wrapper + self-reported status |
 
-To keep task workspaces on bulk storage, set `data_path` on the target (above).
+To keep version workspaces on bulk storage, set `data_path` on the target (above).
 `RUNQ_OUTPUT_DIR`, `RUNQ_CHECKPOINT_DIR` and `WANDB_DIR` always point into the
 task directory; setting them in `environment:` or `overrides.env` is an error.
 Pass runq's paths to scripts that take an output flag
@@ -249,16 +249,16 @@ before submitting; preflight warns when it could not.
 
 Every `runq draft` and every `runq submit dr…` runs six checks against the
 target. They only **warn** — nothing is ever blocked, and there is nothing to
-switch off. They look for deterministic problems; whether the job actually runs
-(imports, data, GPUs) is a smoke job's question: submit one with small
+switch off. They look for deterministic problems; whether the experiment actually runs
+(imports, data, GPUs) is a smoke experiment's question: submit one with small
 `fixed_params` to know.
 
 | Check | Warns when |
 |---|---|
 | `entry` | the script the command runs (`*.py` / `*.sh`, relative to `working_dir`) does not exist |
 | `interpreter` | the configured python (`python_env` venv's `bin/python`, an absolute path, or `python` on `PATH` inside the env) is missing or not executable |
-| `env_activation` | `python_env` does not activate in a non-interactive shell — the shell class compute nodes give the task (a conda set up only in `~/.bashrc` fails here) |
-| `data_dirs` | the task data directory's nearest existing parent is not writable |
+| `env_activation` | `python_env` does not activate in a non-interactive shell — the shell class compute nodes give the version (a conda set up only in `~/.bashrc` fails here) |
+| `data_dirs` | the version data directory's nearest existing parent is not writable |
 | `huggingface` | a repo listed under `preflight.hf` is not in the target's HF cache (files only; the warning carries the `huggingface-cli download` command) |
 | `shell_syntax` | `bash -n` rejects the generated run.sh or the submit line |
 
@@ -278,7 +278,7 @@ preflight:
 
 ## Views and scoring scripts
 
-Views are project-scoped YAML files saved with `runq view <file.yaml>`. A job's
+Views are project-scoped YAML files saved with `runq view <file.yaml>`. An experiment's
 `consumers:` key is ignored with a warning: scoring scripts run on their own and
-read the job with `runq.experiment()`. See [views.md](views.md). Each task ID executes
-once; reruns are new submissions.
+read the experiment with `runq.experiment()`. See [views.md](views.md). A version runs
+once and is never restarted in place; to run the cell again with `runq draft job.yaml --into <ex…>` (same cell name) — it becomes the cell's next version.
