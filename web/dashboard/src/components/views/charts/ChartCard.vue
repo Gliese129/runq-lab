@@ -1,5 +1,5 @@
 <template>
-  <div class="chart-card">
+  <div class="chart-card" :class="{ wide: width === 'double' }">
     <div class="chart-bar">
       <span class="chart-name">{{ spec.template }}</span>
       <v-spacer />
@@ -24,9 +24,18 @@
       </v-menu>
     </div>
     <div v-if="animating" class="chart-anim">{{ animating }}</div>
-    <div class="chart-paper" :class="{ wide: width === 'double' }">
-      <component :is="comp" v-if="comp" ref="chart" :result="shown" :domain="frameResult ? result : undefined" :spec="spec" :width="width" :project="project" :view="view" :index="index" :jobs="jobs" />
+    <!-- On screen the dashboard theme; the paper copy (off-screen, same
+         geometry) is what SVG/PNG/PDF and animations export. -->
+    <div class="chart-screen" :class="{ wide: width === 'double' }">
+      <ChartThemeScope v-if="comp" :theme="screen">
+        <component :is="comp" :result="result" :spec="spec" :width="width" :project="project" :view="view" :index="index" :jobs="jobs" />
+      </ChartThemeScope>
       <div v-else class="text-caption pa-4">{{ t('views.unknown_template', { name: spec.template }) }}</div>
+    </div>
+    <div v-if="comp" class="chart-paper-copy" aria-hidden="true">
+      <ChartThemeScope :theme="PAPER_THEME">
+        <component :is="comp" ref="chart" :result="shown" :domain="frameResult ? result : undefined" :spec="spec" :width="width" :project="project" :view="view" :index="index" :jobs="jobs" />
+      </ChartThemeScope>
     </div>
   </div>
 </template>
@@ -36,7 +45,9 @@ import { computed, nextTick, ref, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ChartSpec, ViewResult } from '@/types/views'
 import { useSnackbar } from '@/composables/useSnackbar'
-import type { WidthPreset } from './chartGeom'
+import { PAPER_THEME, screenTheme, type WidthPreset } from './chartGeom'
+import ChartThemeScope from './ChartThemeScope.vue'
+import { useTheme } from 'vuetify'
 import { downloadBlob, svgToCanvas, svgToPdf, svgToPng, svgString } from './chartExport'
 import { encodeGif, encodeWebm, stamp } from './chartAnimate'
 import { viewsApi } from '@/apis/views'
@@ -50,6 +61,12 @@ import ChartCurves from './ChartCurves.vue'
 const props = withDefaults(defineProps<{ result: ViewResult; spec: ChartSpec; project: string; view: string; index: number; jobs?: string[] }>(), { jobs: () => [] })
 const { t } = useI18n()
 const snack = useSnackbar()
+const vuetify = useTheme()
+const screen = computed(() => {
+  const c = vuetify.current.value
+  const font = typeof document === 'undefined' ? 'sans-serif' : getComputedStyle(document.body).fontFamily
+  return screenTheme(c.dark, c.colors['on-surface'], c.colors['on-surface-variant'], font)
+})
 
 const COMPONENTS: Record<string, Component> = {
   compare: ChartCompare, sweep: ChartSweep, heatmap: ChartHeatmap,
@@ -115,12 +132,13 @@ async function exportPdf() {
 </script>
 
 <style scoped>
-.chart-card { border: 0.5px solid rgb(var(--v-theme-outline-variant)); border-radius: 12px; padding: 8px 10px 12px; background: rgb(var(--v-theme-surface)); }
-.chart-bar { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
+.chart-card { border: 0.5px solid rgb(var(--v-theme-outline-variant)); border-radius: 12px; padding: 10px 14px 14px; background: rgb(var(--v-theme-surface)); }
+.chart-bar { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
 .chart-name { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
 .chart-anim { font-size: 12px; color: rgb(var(--v-theme-primary)); margin-bottom: 4px; }
-/* A white "paper" in both themes: what you see is what gets exported. */
-.chart-paper { background: #fff; border-radius: 6px; overflow-x: auto; }
-.chart-paper :deep(svg) { display: block; max-width: 100%; height: auto; }
-.chart-paper.wide :deep(svg) { max-width: none; }
+/* The figure geometry scaled ~1.45×: 13px labels, 2px lines, 8px markers. */
+.chart-screen { overflow-x: auto; }
+.chart-screen :deep(svg) { display: block; width: 100%; max-width: 480px; height: auto; margin: 0 auto; }
+.chart-screen.wide :deep(svg) { max-width: 1000px; }
+.chart-paper-copy { position: absolute; left: -100000px; top: 0; width: 0; height: 0; overflow: hidden; }
 </style>

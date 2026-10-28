@@ -40,6 +40,10 @@
       <span class="fixed-label">{{ t('plan.fixed') }}</span>
       <span v-for="[k, v] in model.fixed" :key="k" class="mono fixed-item">{{ k }}={{ v }}</span>
     </div>
+    <div v-if="model.scheduler.length" class="fixed sched" :title="t('plan.scheduler_hint')">
+      <span class="fixed-label">{{ t('plan.scheduler') }}</span>
+      <span v-for="[k, v] in model.scheduler" :key="k" class="mono fixed-item">{{ k }}={{ v }}</span>
+    </div>
   </div>
 </template>
 
@@ -55,6 +59,8 @@ const props = defineProps<{
   baseline?: string
   /** project param order (columns follow it, others sorted) */
   order?: string[]
+  /** params only the scheduler reads: shown apart, never as plan columns */
+  schedulerParams?: string[]
   /** per-row task status, when the plan has run */
   statuses?: string[]
   /** per-row: whether the row opens something (a task page) */
@@ -71,7 +77,7 @@ const props = defineProps<{
 const emit = defineEmits<{ open: [index: number] }>()
 const { t } = useI18n()
 
-const model = computed(() => planTable(props.rows, props.baseline ?? '', props.order ?? []))
+const model = computed(() => planTable(props.rows, props.baseline ?? '', props.order ?? [], props.schedulerParams ?? []))
 const hasNotes = computed(() => model.value.rows.some((r) => r.needsCode.length > 0))
 </script>
 
@@ -102,4 +108,5 @@ const hasNotes = computed(() => model.value.rows.some((r) => r.needsCode.length 
 .fixed { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
 .fixed-label { font-weight: 500; }
 .fixed-item { font-size: 11.5px; }
+.fixed.sched { margin-top: 4px; opacity: 0.75; }
 </style>

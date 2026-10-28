@@ -1,10 +1,10 @@
 <template>
   <XYFrame ref="frame" :g="g" :x-ticks="xTicks" :y-ticks="yTicks" :x-title="xTitle" :y-title="yTitle" :legend="series.map((s) => s.label)">
     <g v-for="(s, si) in series" :key="si">
-      <path v-if="s.band" :d="s.band" :fill="PALETTE[si % PALETTE.length]" fill-opacity="0.14" stroke="none" />
-      <path :d="s.line" fill="none" :stroke="PALETTE[si % PALETTE.length]" stroke-width="1.5" :stroke-dasharray="DASHES[si % DASHES.length]" />
+      <path v-if="s.band" :d="s.band" :fill="th.color(si)" fill-opacity="0.14" stroke="none" />
+      <path :d="s.line" fill="none" :stroke="th.color(si)" stroke-width="1.5" :stroke-dasharray="DASHES[si % DASHES.length]" />
       <path v-for="(p, pi) in s.pts" :key="pi" :d="markerPath(MARKERS[si % MARKERS.length], p.px, p.py, 2.6)"
-        :fill="MARKERS[si % MARKERS.length] === 'cross' ? 'none' : PALETTE[si % PALETTE.length]" :stroke="PALETTE[si % PALETTE.length]" stroke-width="0.8" />
+        :fill="MARKERS[si % MARKERS.length] === 'cross' ? 'none' : th.color(si)" :stroke="th.color(si)" stroke-width="0.8" />
     </g>
   </XYFrame>
 </template>
@@ -14,9 +14,12 @@ import { computed, ref } from 'vue'
 import type { ChartSpec, ViewResult } from '@/types/views'
 import XYFrame from './XYFrame.vue'
 import { DASHES, MARKERS, PALETTE, linear, logScale, markerPath, tickLabel, type WidthPreset } from './chartGeom'
+import { useChartTheme } from './chartGeom'
 import { column, distinct, isPct, points } from './chartData'
 import { frameGeom } from './frame'
 import { formatKey, keyLabel } from '../viewFormat'
+
+const th = useChartTheme()
 
 const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; domain?: ViewResult }>()
 const frame = ref<{ svg: SVGSVGElement | null } | null>(null)

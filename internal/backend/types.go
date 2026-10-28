@@ -90,6 +90,10 @@ type JobDetail struct {
 	// Pinned maps a cell to the version the researcher chose; cells not
 	// listed show their latest (latest success, else latest).
 	Pinned map[string]string `json:"pinned,omitempty"`
+	// SchedulerParams are the params only the scheduler reads (walltime,
+	// reservation …): they may differ between a cell's versions and are not
+	// part of what the experiment compares.
+	SchedulerParams []string `json:"scheduler_params,omitempty"`
 	// DataDir is the job's workspace directory (RQ2-1 §F: the Data tab's
 	// fs/list root). ABSOLUTE path with TARGET semantics — it only means
 	// something on the filesystem of job.target; pair it with that target

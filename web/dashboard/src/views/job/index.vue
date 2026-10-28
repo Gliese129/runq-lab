@@ -2,7 +2,8 @@
   <div v-if="detail">
     <JobHeader
       :detail="detail"
-      :swept-params="sweptParams"
+      :swept-params="comparedParams"
+      :cells="cells.map((c) => c.selected)"
       :is-poll="caps.state_model === 'poll'"
       :refreshing="refreshing"
       :killing="killing"
@@ -83,6 +84,7 @@
         :tags="cellTags"
         :accent="cells.map((c) => commandVaries(c, batches))"
         :extra-header="t('cells.version')"
+        :scheduler-params="detail.scheduler_params"
         @open="(i) => onClickTask(cells[i].selected.id)"
       >
         <template #extra="{ index }">
@@ -204,7 +206,7 @@ import ViewCharts from '@/components/views/ViewCharts.vue'
 import CustomView from '@/components/views/CustomView.vue'
 import ResultsEmpty from './ResultsEmpty.vue'
 import PlanTable from '@/components/PlanTable.vue'
-import type { PlanRow } from '@/types/api'
+import type { PlanRow, TaskView } from '@/types/api'
 import { wandbProjectUrl } from '@/utils/wandbUrl'
 
 const props = defineProps<{ project: string; jobId: string }>()
@@ -382,22 +384,21 @@ const resultsQuery = useJobResultsQuery(
   () => isActiveJob.value,
 )
 
-// Detect swept params: params that differ across tasks
-const sweptParams = computed(() => {
-  if (!detail.value || detail.value.tasks.length < 2) return []
-  const tasks = detail.value.tasks
+// Params that differ between the experiment's cells (the versions each cell
+// shows), scheduler-only ones left out — what the experiment compares. The
+// Versions tab still gets every differing param, walltime included.
+function varying(tasks: TaskView[], skip: Set<string> = new Set()): string[] {
+  if (tasks.length < 2) return []
   const first = tasks[0].params || {}
-  const varying = new Set<string>()
+  const out = new Set<string>()
   for (const task of tasks.slice(1)) {
-    for (const [k, v] of Object.entries(task.params || {})) {
-      if (first[k] !== v) varying.add(k)
-    }
-    for (const k of Object.keys(first)) {
-      if (!(k in (task.params || {}))) varying.add(k)
-    }
+    for (const [k, v] of Object.entries(task.params || {})) if (JSON.stringify(first[k]) !== JSON.stringify(v)) out.add(k)
+    for (const k of Object.keys(first)) if (!(k in (task.params || {}))) out.add(k)
   }
-  return [...varying]
-})
+  return [...out].filter((k) => !skip.has(k))
+}
+const sweptParams = computed(() => varying(detail.value?.tasks ?? []))
+const comparedParams = computed(() => varying(cells.value.map((c) => c.selected), new Set(detail.value?.scheduler_params ?? [])))
 
 // ── Leaderboard: key selection is declarative; the query re-fetches when
 // the key changes (this replaces the watch that fired /compare per poll).

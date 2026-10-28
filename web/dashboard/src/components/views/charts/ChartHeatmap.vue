@@ -1,6 +1,6 @@
 <template>
-  <svg ref="svg" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${W} ${H}`" :width="W" :height="H" :font-family="FONT">
-    <rect :width="W" :height="H" fill="#fff" />
+  <svg ref="svg" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${W} ${H}`" :width="W" :height="H" :font-family="th.font">
+    <rect :width="W" :height="H" :fill="th.bg" />
     <g :transform="`translate(${M.l},${M.t})`">
       <g v-for="(yv, yi) in ys" :key="'r' + yi">
         <g v-for="(xv, xi) in xs" :key="'c' + xi">
@@ -10,18 +10,18 @@
               :font-weight="c.rank === 1 ? 700 : 400" :fill="norm(c.v) > 0.55 ? '#fff' : INK">{{ c.text }}</text>
           </template>
         </g>
-        <text x="-5" :y="yi * ch + ch / 2 + 3" text-anchor="end" font-size="9.5" :fill="INK">{{ formatKey(yv, result.key_formats?.[yKey]) }}</text>
+        <text x="-5" :y="yi * ch + ch / 2 + 3" text-anchor="end" font-size="9.5" :fill="th.ink">{{ formatKey(yv, result.key_formats?.[yKey]) }}</text>
       </g>
-      <text v-for="(xv, xi) in xs" :key="'xl' + xi" :x="xi * cw + cw / 2" :y="ys.length * ch + 12" text-anchor="middle" font-size="9.5" :fill="INK">{{ formatKey(xv, result.key_formats?.[xKey]) }}</text>
+      <text v-for="(xv, xi) in xs" :key="'xl' + xi" :x="xi * cw + cw / 2" :y="ys.length * ch + 12" text-anchor="middle" font-size="9.5" :fill="th.ink">{{ formatKey(xv, result.key_formats?.[xKey]) }}</text>
       <!-- colour key -->
       <g :transform="`translate(${xs.length * cw + 10},0)`">
         <rect v-for="i in 20" :key="'k' + i" x="0" :y="(20 - i) * (plotH / 20)" width="7" :height="plotH / 20 + 0.5" :fill="sequential((i - 1) / 19)" />
-        <text x="10" y="8" font-size="8.5" :fill="MUTED">{{ fmt(hi) }}</text>
-        <text x="10" :y="plotH" font-size="8.5" :fill="MUTED">{{ fmt(lo) }}</text>
+        <text x="10" y="8" font-size="8.5" :fill="th.muted">{{ fmt(hi) }}</text>
+        <text x="10" :y="plotH" font-size="8.5" :fill="th.muted">{{ fmt(lo) }}</text>
       </g>
     </g>
-    <text :transform="`translate(10,${M.t + plotH / 2}) rotate(-90)`" text-anchor="middle" font-size="10" :fill="INK">{{ keyLabel(yKey) }}</text>
-    <text :x="M.l + (xs.length * cw) / 2" :y="H - 4" text-anchor="middle" font-size="10" :fill="INK">{{ keyLabel(xKey) }}</text>
+    <text :transform="`translate(10,${M.t + plotH / 2}) rotate(-90)`" text-anchor="middle" font-size="10" :fill="th.ink">{{ keyLabel(yKey) }}</text>
+    <text :x="M.l + (xs.length * cw) / 2" :y="H - 4" text-anchor="middle" font-size="10" :fill="th.ink">{{ keyLabel(xKey) }}</text>
   </svg>
 </template>
 
@@ -29,8 +29,11 @@
 import { computed, ref } from 'vue'
 import type { ChartSpec, ViewResult } from '@/types/views'
 import { FONT, INK, MUTED, WIDTHS, sequential, tickLabel, type WidthPreset } from './chartGeom'
+import { useChartTheme } from './chartGeom'
 import { column, distinct, isPct } from './chartData'
 import { cellNumber, formatKey, keyLabel } from '../viewFormat'
+
+const th = useChartTheme()
 
 const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; domain?: ViewResult }>()
 const svg = ref<SVGSVGElement | null>(null)

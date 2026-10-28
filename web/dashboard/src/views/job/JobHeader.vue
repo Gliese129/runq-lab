@@ -56,7 +56,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { JobDetail } from '@/types/api'
+import type { JobDetail, TaskView } from '@/types/api'
 import JobStatusBadge from '@/components/JobStatusBadge.vue'
 import { useProjectColors } from '@/composables/useProjectColors'
 import { useSnackbar } from '@/composables/useSnackbar'
@@ -70,6 +70,8 @@ const props = defineProps<{
   detail: JobDetail
   /** params that vary across tasks, in display order */
   sweptParams?: string[]
+  /** the version each cell shows: what the sweep line counts */
+  cells?: TaskView[]
   /** poll state model: render freshness + manual refresh */
   isPoll?: boolean
   refreshing?: boolean
@@ -114,16 +116,18 @@ const countParts = computed(() => {
   ].filter((p) => p.n > 0)
 })
 
-// "model(2) × split(4) = 8 tasks": the sweep shape, read from the tasks.
+// "model(2) × split(4) = 8 cells": the experiment's shape, read from the
+// version each cell shows.
 const sweepLine = computed(() => {
   const swept = props.sweptParams ?? []
   if (!swept.length) return ''
+  const cells = props.cells ?? props.detail.tasks
   const parts = swept.map((k) => {
-    const values = new Set(props.detail.tasks.map((task) => JSON.stringify(task.params?.[k])))
+    const values = new Set(cells.map((task) => JSON.stringify(task.params?.[k])))
     return `${k}(${values.size})`
   })
-  const n = props.detail.tasks.length
-  const product = swept.reduce((p, k) => p * new Set(props.detail.tasks.map((task) => JSON.stringify(task.params?.[k]))).size, 1)
+  const n = cells.length
+  const product = swept.reduce((p, k) => p * new Set(cells.map((task) => JSON.stringify(task.params?.[k]))).size, 1)
   // A cross product reads as a formula; zipped lists do not multiply out.
   return product === n
     ? `${parts.join(' × ')} = ${t('job.n_tasks', n)}`

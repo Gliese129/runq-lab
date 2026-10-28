@@ -5,7 +5,8 @@
         <tr v-if="groups.length" class="vt-top">
           <th v-for="k in rowKeys" :key="k" rowspan="2" class="vt-key vt-bottom">{{ keyLabel(k) }}</th>
           <th v-for="g in groups" :key="String(g.label)" :colspan="g.span" class="vt-group">{{ g.label }}</th>
-          <th v-if="hasState" rowspan="2" class="vt-bottom" />
+          <th v-if="rowMeta" rowspan="2" class="vt-src">{{ t('views.source') }}</th>
+          <th v-if="hasState" rowspan="2" />
         </tr>
         <tr :class="groups.length ? 'vt-mid' : 'vt-top vt-mid'">
           <template v-if="!groups.length">
@@ -14,6 +15,7 @@
           <th v-for="(c, i) in result.columns" :key="i" class="vt-num">
             {{ c.name }}<span v-if="c.better" class="vt-arrow">{{ c.better === 'higher' ? '↑' : '↓' }}</span>
           </th>
+          <th v-if="rowMeta && !groups.length" class="vt-src">{{ t('views.source') }}</th>
           <th v-if="hasState && !groups.length" />
         </tr>
       </thead>
@@ -23,14 +25,15 @@
             <span v-if="!repeated(ri, ki)">{{ formatKey(row.key[k], result.key_formats?.[k]) }}</span>
           </td>
           <template v-if="row.empty">
-            <td :colspan="result.columns.length + (hasState ? 1 : 0)" class="vt-nodata">{{ t('views.no_data') }}</td>
+            <td :colspan="result.columns.length + (hasState ? 1 : 0) + (rowMeta ? 1 : 0)" class="vt-nodata">{{ t('views.no_data') }}</td>
           </template>
           <template v-else>
             <td v-for="(cell, ci) in row.cells" :key="ci" class="vt-num" :title="cellTitle(cell)">
               <span :class="rankClass(cell)">{{ cell.text }}</span>
               <span v-if="cell.delta_text" class="vt-delta" :class="deltaClass(cell, result.columns[ci])">({{ deltaMark(cell, result.columns[ci]) }}{{ cell.delta_text }})</span>
-              <div v-if="cellMeta(cell)" class="vt-meta" :class="{ bad: cellMeta(cell)!.bad }">{{ cellMeta(cell)!.text }}</div>
+              <div v-if="!rowMeta && cellMeta(cell)" class="vt-meta" :class="{ bad: cellMeta(cell)!.bad }">{{ cellMeta(cell)!.text }}</div>
             </td>
+            <td v-if="rowMeta" class="vt-src" :class="{ bad: rowMetaOf(row)?.bad }">{{ rowMetaOf(row)?.text ?? '' }}</td>
             <td v-if="hasState" class="vt-state">{{ row.state ?? '' }}</td>
           </template>
         </tr>
@@ -42,7 +45,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { ViewCell, ViewColumn, ViewResult } from '@/types/views'
+import type { ViewCell, ViewColumn, ViewResult, ViewRow } from '@/types/views'
 import { formatKey, keyLabel } from './viewFormat'
 
 const props = defineProps<{ result: ViewResult }>()
@@ -114,6 +117,19 @@ function cellMeta(cell: ViewCell): { text: string; bad: boolean } | null {
   return { text: `status: ${status}; version: ${version}`, bad: status !== 'success' }
 }
 
+// When every value of a row comes from the same version (the usual case),
+// its source shows once, in its own column; otherwise under each value.
+function rowMetaOf(row: ViewRow): { text: string; bad: boolean } | null {
+  const metas = row.cells.map(cellMeta).filter((m): m is { text: string; bad: boolean } => !!m)
+  const first = metas[0]
+  if (!first || metas.some((m) => m.text !== first.text)) return null
+  return first
+}
+const rowMeta = computed(() => {
+  const rows = props.result.rows.filter((r) => !r.empty)
+  return rows.some((r) => r.cells.some((c) => cellMeta(c))) && rows.every((r) => !r.cells.some((c) => cellMeta(c)) || rowMetaOf(r))
+})
+
 function cellTitle(cell: ViewCell): string {
   const parts: string[] = []
   if (cell.n !== undefined) parts.push(`n = ${cell.n}`)
@@ -123,30 +139,30 @@ function cellTitle(cell: ViewCell): string {
 </script>
 
 <style scoped>
+/* The dashboard's own table: the paper look (serif, three rules) belongs to
+   the exports (LaTeX, Markdown, figures), not the screen. */
 .vt-wrap { overflow-x: auto; }
-.vt {
-  border-collapse: collapse;
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 13.5px;
-  font-variant-numeric: tabular-nums;
-  margin: 0 auto 0 0;
+.vt { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+.vt th, .vt td { padding: 7px 12px; white-space: nowrap; }
+.vt th {
+  font-weight: 500; font-size: 12px; color: rgb(var(--v-theme-on-surface-variant));
+  border-bottom: 0.5px solid rgb(var(--v-theme-outline-variant));
 }
-.vt th, .vt td { padding: 4px 12px; white-space: nowrap; }
-.vt th { font-weight: 500; }
+.vt td { border-bottom: 0.5px solid rgb(var(--v-theme-outline-variant), 0.5); }
+.vt tbody tr:hover td { background: rgb(var(--v-theme-on-surface), 0.035); }
 .vt-key { text-align: left; }
+.vt td.vt-key { color: rgb(var(--v-theme-on-surface)); }
 .vt-num { text-align: right; }
+.vt td.vt-num { font-family: var(--font-mono); font-size: 12.5px; }
+.vt-group { text-align: center; }
 .vt-meta { font-family: var(--font-mono); font-size: 10.5px; color: rgb(var(--v-theme-on-surface-variant)); line-height: 1.3; }
-.vt-meta.bad { color: rgb(var(--v-theme-error)); }
-.vt-top th { border-top: 1.5px solid rgb(var(--v-theme-on-surface)); }
-.vt-mid th { border-bottom: 0.75px solid rgb(var(--v-theme-on-surface)); }
-.vt-bottom { border-bottom: 0.75px solid rgb(var(--v-theme-on-surface)); }
-.vt-group { border-bottom: 0.5px solid rgb(var(--v-theme-on-surface-variant)); text-align: center; }
-.vt-last td { border-bottom: 1.5px solid rgb(var(--v-theme-on-surface)); }
+.vt-meta.bad, .vt-src.bad { color: rgb(var(--v-theme-error)); }
+.vt-src { text-align: left; font-family: var(--font-mono); font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
 .vt-arrow { margin-left: 2px; color: rgb(var(--v-theme-on-surface-variant)); }
 .vt-bold { font-weight: 700; }
 .vt-under { text-decoration: underline; text-underline-offset: 3px; }
-.vt-delta { font-size: 11.5px; margin-left: 4px; color: rgb(var(--v-theme-on-surface-variant)); }
+.vt-delta { font-size: 11px; margin-left: 4px; color: rgb(var(--v-theme-on-surface-variant)); }
 .vt-state { font-family: var(--font-mono); font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
 .vt-empty td { color: rgb(var(--v-theme-on-surface-variant)); }
-.vt-nodata { font-style: italic; }
+.vt-nodata { font-size: 12px; }
 </style>

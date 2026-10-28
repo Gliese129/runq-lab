@@ -3,14 +3,14 @@
   <div v-else-if="!lines.length" class="pa-4 text-caption" style="color: #666">{{ t('views.no_curve_data') }}</div>
   <XYFrame v-else ref="frame" :g="g" :x-ticks="xTicks" :y-ticks="yTicks" x-title="step" :y-title="metric" :legend="lines.map((l) => l.label)">
     <g v-for="(l, li) in lines" :key="li">
-      <path v-if="l.band" :d="l.band" :fill="PALETTE[l.ci % PALETTE.length]" fill-opacity="0.15" stroke="none" />
-      <path v-for="(d, di) in l.paths" :key="di" :d="d" fill="none" :stroke="PALETTE[l.ci % PALETTE.length]" :stroke-width="l.raw ? 1 : 1.5"
+      <path v-if="l.band" :d="l.band" :fill="th.color(l.ci)" fill-opacity="0.15" stroke="none" />
+      <path v-for="(d, di) in l.paths" :key="di" :d="d" fill="none" :stroke="th.color(l.ci)" :stroke-width="l.raw ? 1 : 1.5"
         :stroke-dasharray="DASHES[l.ci % DASHES.length]" :stroke-opacity="l.raw ? 0.8 : 1" />
       <template v-if="l.raw">
-        <circle v-for="(p, pi) in l.dots" :key="pi" :cx="p[0]" :cy="p[1]" r="1.4" :fill="PALETTE[l.ci % PALETTE.length]" />
+        <circle v-for="(p, pi) in l.dots" :key="pi" :cx="p[0]" :cy="p[1]" r="1.4" :fill="th.color(l.ci)" />
       </template>
     </g>
-    <text v-if="note" :x="4" :y="10" font-size="8.5" fill="#666">{{ note }}</text>
+    <text v-if="note" :x="4" :y="10" font-size="8.5" :fill="th.muted">{{ note }}</text>
   </XYFrame>
 </template>
 
@@ -20,9 +20,12 @@ import { useI18n } from 'vue-i18n'
 import type { ChartSpec, ViewResult } from '@/types/views'
 import XYFrame from './XYFrame.vue'
 import { DASHES, PALETTE, linear, tickLabel, type WidthPreset } from './chartGeom'
+import { useChartTheme } from './chartGeom'
 import { frameGeom } from './frame'
 import { useViewSeriesQuery } from '@/queries/useViewQueries'
 import { formatKey, keyLabel } from '../viewFormat'
+
+const th = useChartTheme()
 
 const props = withDefaults(defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; project: string; view: string; index: number; jobs?: string[] }>(), { jobs: () => [] })
 const { t } = useI18n()

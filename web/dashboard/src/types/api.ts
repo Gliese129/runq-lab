@@ -218,6 +218,8 @@ export interface JobDetail {
   batches?: JobBatch[]
   /** cell → the version the researcher pinned; other cells show latest */
   pinned?: Record<string, string>
+  /** params only the scheduler reads (walltime, reservation …): not compared */
+  scheduler_params?: string[]
 }
 
 export interface JobBatch {

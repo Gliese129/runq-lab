@@ -1,5 +1,5 @@
 <template>
-  <g :transform="`translate(${x},${y})`" :font-family="FONT" font-size="10" :fill="INK">
+  <g :transform="`translate(${x},${y})`" :font-family="th.font" font-size="10" :fill="th.ink">
     <g v-for="(it, i) in laid" :key="i" :transform="`translate(${it.x},0)`">
       <rect v-if="kind === 'swatch'" x="0" y="-7" width="9" height="9" :fill="it.color" />
       <template v-else>
@@ -14,6 +14,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { DASHES, FONT, INK, MARKERS, PALETTE, markerPath } from './chartGeom'
+import { useChartTheme } from './chartGeom'
+
+const th = useChartTheme()
 
 const props = withDefaults(defineProps<{
   labels: string[]
@@ -27,7 +30,7 @@ const props = withDefaults(defineProps<{
 const laid = computed(() => {
   let at = 0
   return props.labels.map((label, i) => {
-    const item = { x: at, label, color: PALETTE[i % PALETTE.length], marker: MARKERS[i % MARKERS.length], dash: DASHES[i % DASHES.length] }
+    const item = { x: at, label, color: th.value.color(i), marker: MARKERS[i % MARKERS.length], dash: DASHES[i % DASHES.length] }
     at += (props.kind === 'swatch' ? 12 : 18) + label.length * 5.6 + 12
     return item
   })

@@ -14,5 +14,6 @@ withDefaults(defineProps<{ project: string; name: string; result: ViewResult; jo
 </script>
 
 <style scoped>
-.view-charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; margin-top: 20px; }
+.view-charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 500px), 1fr)); gap: 16px; margin-top: 20px; }
+.view-charts :deep(.chart-card.wide) { grid-column: 1 / -1; }
 </style>

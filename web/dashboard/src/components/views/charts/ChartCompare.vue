@@ -1,17 +1,17 @@
 <template>
-  <svg ref="svg" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${W} ${H}`" :width="W" :height="H" :font-family="FONT">
-    <rect :width="W" :height="H" fill="#fff" />
+  <svg ref="svg" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${W} ${H}`" :width="W" :height="H" :font-family="th.font">
+    <rect :width="W" :height="H" :fill="th.bg" />
     <ChartLegend v-if="colors.length > 1" :labels="colors.map((c) => formatKey(c, kf(slots.color)))" :x="M.l" :y="12" />
     <g v-for="(f, fi) in facets" :key="fi" :transform="`translate(${M.l + fi * (panelW + GAP)},${M.t})`">
-      <text v-if="facets.length > 1" :x="panelW / 2" y="-4" text-anchor="middle" font-size="10" :fill="INK">{{ formatKey(f, kf(slots.facet)) }}</text>
-      <line v-for="tk in y.ticks" :key="'g' + tk" x1="0" :x2="panelW" :y1="y(tk)" :y2="y(tk)" :stroke="GRID" stroke-width="0.6" />
+      <text v-if="facets.length > 1" :x="panelW / 2" y="-4" text-anchor="middle" font-size="10" :fill="th.ink">{{ formatKey(f, kf(slots.facet)) }}</text>
+      <line v-for="tk in y.ticks" :key="'g' + tk" x1="0" :x2="panelW" :y1="y(tk)" :y2="y(tk)" :stroke="th.grid" stroke-width="0.6" />
       <g v-for="(xv, xi) in xs" :key="'x' + xi">
         <template v-for="(cv, ci) in colors" :key="'b' + ci">
           <template v-for="p in [find(f, xv, cv)]" :key="'p'">
             <g v-if="p && p.y !== null">
               <rect :x="barX(xi, ci)" :y="Math.min(y(base(p)), y(0 + (p.y ?? 0)))" :width="barW" :height="Math.abs(y(base(p)) - y(p.y))"
-                :fill="PALETTE[ci % PALETTE.length]" :fill-opacity="0.9" />
-              <g v-if="p.err" :stroke="INK" stroke-width="0.8">
+                :fill="th.color(ci)" :fill-opacity="0.9" />
+              <g v-if="p.err" :stroke="th.axis" stroke-width="0.8">
                 <line :x1="barX(xi, ci) + barW / 2" :x2="barX(xi, ci) + barW / 2" :y1="y(p.y - p.err)" :y2="y(p.y + p.err)" />
                 <line :x1="barX(xi, ci) + barW / 2 - 2" :x2="barX(xi, ci) + barW / 2 + 2" :y1="y(p.y - p.err)" :y2="y(p.y - p.err)" />
                 <line :x1="barX(xi, ci) + barW / 2 - 2" :x2="barX(xi, ci) + barW / 2 + 2" :y1="y(p.y + p.err)" :y2="y(p.y + p.err)" />
@@ -19,19 +19,19 @@
             </g>
           </template>
         </template>
-        <text :x="groupX(xi) + groupW / 2" :y="plotH + 12" text-anchor="middle" font-size="9.5" :fill="INK">{{ formatKey(xv, kf(slots.x)) }}</text>
+        <text :x="groupX(xi) + groupW / 2" :y="plotH + 12" text-anchor="middle" font-size="9.5" :fill="th.ink">{{ formatKey(xv, kf(slots.x)) }}</text>
       </g>
-      <line x1="0" :x2="panelW" :y1="y(yLo)" :y2="y(yLo)" :stroke="INK" stroke-width="0.8" />
-      <g v-if="fi === 0" font-size="9.5" :fill="INK" text-anchor="end">
-        <line x1="0" x2="0" :y1="0" :y2="plotH" :stroke="INK" stroke-width="0.8" />
+      <line x1="0" :x2="panelW" :y1="y(yLo)" :y2="y(yLo)" :stroke="th.axis" stroke-width="0.8" />
+      <g v-if="fi === 0" font-size="9.5" :fill="th.ink" text-anchor="end">
+        <line x1="0" x2="0" :y1="0" :y2="plotH" :stroke="th.axis" stroke-width="0.8" />
         <g v-for="tk in y.ticks" :key="'t' + tk">
-          <line x1="-3" x2="0" :y1="y(tk)" :y2="y(tk)" :stroke="INK" stroke-width="0.8" />
+          <line x1="-3" x2="0" :y1="y(tk)" :y2="y(tk)" :stroke="th.axis" stroke-width="0.8" />
           <text x="-5" :y="y(tk) + 3">{{ tickLabel(tk, pct) }}</text>
         </g>
       </g>
     </g>
-    <text :transform="`translate(11,${M.t + plotH / 2}) rotate(-90)`" text-anchor="middle" font-size="10" :fill="INK">{{ yTitle }}</text>
-    <text v-if="xTitle" :x="M.l + (W - M.l - M.r) / 2" :y="H - 4" text-anchor="middle" font-size="10" :fill="INK">{{ xTitle }}</text>
+    <text :transform="`translate(11,${M.t + plotH / 2}) rotate(-90)`" text-anchor="middle" font-size="10" :fill="th.ink">{{ yTitle }}</text>
+    <text v-if="xTitle" :x="M.l + (W - M.l - M.r) / 2" :y="H - 4" text-anchor="middle" font-size="10" :fill="th.ink">{{ xTitle }}</text>
   </svg>
 </template>
 
@@ -40,8 +40,11 @@ import { computed, ref } from 'vue'
 import type { ChartSpec, ViewResult } from '@/types/views'
 import ChartLegend from './ChartLegend.vue'
 import { FONT, GRID, INK, PALETTE, WIDTHS, linear, niceTicks, tickLabel, type WidthPreset } from './chartGeom'
+import { useChartTheme } from './chartGeom'
 import { column, distinct, isPct, points, type Point } from './chartData'
 import { formatKey, keyLabel } from '../viewFormat'
+
+const th = useChartTheme()
 
 const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; domain?: ViewResult }>()
 const svg = ref<SVGSVGElement | null>(null)

@@ -1,3 +1,5 @@
+import { inject, ref, type InjectionKey, type Ref } from 'vue'
+
 /** Paper-figure geometry: scales, ticks, palette and markers shared by the
  *  six chart templates. Figures are drawn in px at 100 px/in so the two
  *  width presets map to LaTeX columns (3.3in single, 6.9in double). */
@@ -12,6 +14,43 @@ export const GRID = '#e6e6e6'
 
 /** Okabe–Ito: distinguishable with common colour-vision deficiencies. */
 export const PALETTE = ['#0072B2', '#E69F00', '#009E73', '#D55E00', '#CC79A7', '#56B4E9', '#F0E442', '#000000']
+/** How a chart is painted. The geometry (px at 100 px/in) is the same in
+ *  both themes, so an exported figure matches what is on screen: "paper" is
+ *  the figure (white, black ink — exports, animations), "screen" the
+ *  dashboard (transparent, theme ink, recessive axes and grid). */
+export interface ChartTheme {
+  name: 'paper' | 'screen'
+  ink: string // text
+  axis: string // axis lines, ticks, error bars
+  grid: string
+  muted: string
+  track: string // empty part of a progress bar
+  bg: string
+  font: string
+  color: (i: number) => string
+}
+export const PAPER_THEME: ChartTheme = {
+  name: 'paper', ink: INK, axis: INK, grid: GRID, muted: MUTED, track: '#ececec', bg: '#fff', font: FONT,
+  color: (i) => PALETTE[i % PALETTE.length],
+}
+function rgb(hex: string, a: number): string {
+  const n = hex.replace('#', '')
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16))
+  return `rgba(${r},${g},${b},${a})`
+}
+export function screenTheme(dark: boolean, onSurface: string, onSurfaceVariant: string, font: string): ChartTheme {
+  return {
+    name: 'screen', ink: onSurfaceVariant, axis: rgb(onSurface, 0.28), grid: rgb(onSurface, dark ? 0.1 : 0.08),
+    muted: onSurfaceVariant, track: rgb(onSurface, 0.08), bg: 'none', font,
+    color: (i) => seriesColor(i, dark),
+  }
+}
+export const CHART_THEME: InjectionKey<Ref<ChartTheme>> = Symbol('chartTheme')
+/** The theme the enclosing ChartThemeScope set (paper when none did). */
+export function useChartTheme(): Ref<ChartTheme> {
+  return inject(CHART_THEME, ref(PAPER_THEME))
+}
+
 /** Series colour for the on-screen (theme-following) charts: the same
  *  Okabe–Ito order as the paper figures, so a series keeps its colour
  *  everywhere. Black is unreadable on a dark surface, so it turns light gray. */

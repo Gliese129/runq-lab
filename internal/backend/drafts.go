@@ -519,22 +519,10 @@ func (m *MultiBackend) storedAppendSummary(ctx context.Context, cfg job.JobConfi
 	if err != nil {
 		return nil, err
 	}
-	exclude := map[string]bool{}
+	exclude := m.schedulerParams(ctx, cfg.Project, target)
 	projectCmd := ""
 	if proj, err := m.registry.GetCached(ctx, cfg.Project); err == nil {
 		projectCmd = proj.CmdTemplate
-		for _, p := range proj.Params {
-			if p.Scope == "scheduler" {
-				exclude[p.Name] = true
-			}
-		}
-	}
-	if be, ok := m.get(target); ok {
-		if sp, ok := be.(interface{ SchedulerParamRefs() []string }); ok {
-			for _, name := range sp.SchedulerParamRefs() {
-				exclude[name] = true
-			}
-		}
 	}
 	command := cfg.Command
 	if command == "" {
@@ -546,4 +534,28 @@ func (m *MultiBackend) storedAppendSummary(ctx context.Context, cfg job.JobConfi
 	}
 	s := job.SummarizeCells(cfg.Into, seq, cells)
 	return &s, nil
+}
+
+// schedulerParams are the params only the scheduler reads — declared scope:
+// scheduler in the project, or referenced by a target's submit template —
+// across the given targets. They do not make a cell (walltime, reservation).
+func (m *MultiBackend) schedulerParams(ctx context.Context, project string, targets ...string) map[string]bool {
+	out := map[string]bool{}
+	if proj, err := m.registry.GetCached(ctx, project); err == nil {
+		for _, p := range proj.Params {
+			if p.Scope == "scheduler" {
+				out[p.Name] = true
+			}
+		}
+	}
+	for _, target := range targets {
+		if be, ok := m.get(target); ok {
+			if sp, ok := be.(interface{ SchedulerParamRefs() []string }); ok {
+				for _, name := range sp.SchedulerParamRefs() {
+					out[name] = true
+				}
+			}
+		}
+	}
+	return out
 }

@@ -833,6 +833,16 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 		detail.Tasks[i] = m.storedTaskView(ctx, row)
 		detail.Tasks[i].Version = version
 	}
+	targets := []string{j.Target}
+	for _, t := range tasks {
+		if t.Target != "" && t.Target != j.Target {
+			targets = append(targets, t.Target)
+		}
+	}
+	for name := range m.schedulerParams(ctx, j.ProjectName, targets...) {
+		detail.SchedulerParams = append(detail.SchedulerParams, name)
+	}
+	sort.Strings(detail.SchedulerParams)
 	fillLegacyRunNames(j.ConfigJSON, detail.Tasks)
 	attachLastOutput(ctx, m.store, detail.Tasks)
 	if batches, err := m.store.ListJobBatches(ctx, jobID); err == nil {

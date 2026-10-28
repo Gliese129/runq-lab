@@ -1,12 +1,12 @@
 <template>
-  <svg ref="svg" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${W} ${H}`" :width="W" :height="H" :font-family="FONT">
-    <rect :width="W" :height="H" fill="#fff" />
+  <svg ref="svg" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${W} ${H}`" :width="W" :height="H" :font-family="th.font">
+    <rect :width="W" :height="H" :fill="th.bg" />
     <g v-for="(b, i) in bars" :key="i" :transform="`translate(0,${b.y})`">
-      <text v-if="b.heading" x="4" y="-4" font-size="10" font-weight="600" :fill="INK">{{ b.heading }}</text>
-      <text :x="LABEL - 6" y="8" text-anchor="end" font-size="9" :fill="INK">{{ b.label }}</text>
-      <rect :x="LABEL" y="1" :width="barW" height="9" fill="#ececec" />
+      <text v-if="b.heading" x="4" y="-4" font-size="10" font-weight="600" :fill="th.ink">{{ b.heading }}</text>
+      <text :x="LABEL - 6" y="8" text-anchor="end" font-size="9" :fill="th.ink">{{ b.label }}</text>
+      <rect :x="LABEL" y="1" :width="barW" height="9" :fill="th.track" />
       <rect :x="LABEL" y="1" :width="barW * b.frac" height="9" :fill="b.frac >= 1 ? '#009E73' : '#0072B2'" />
-      <text :x="LABEL + barW + 6" y="9" font-size="9" :fill="MUTED">{{ b.text }}</text>
+      <text :x="LABEL + barW + 6" y="9" font-size="9" :fill="th.muted">{{ b.text }}</text>
     </g>
   </svg>
 </template>
@@ -15,7 +15,10 @@
 import { computed, ref } from 'vue'
 import type { ChartSpec, ViewResult } from '@/types/views'
 import { FONT, INK, MUTED, WIDTHS, type WidthPreset } from './chartGeom'
+import { useChartTheme } from './chartGeom'
 import { cellNumber, formatKey } from '../viewFormat'
+
+const th = useChartTheme()
 
 const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; domain?: ViewResult }>()
 const svg = ref<SVGSVGElement | null>(null)
