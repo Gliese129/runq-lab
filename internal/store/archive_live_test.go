@@ -94,34 +94,3 @@ func TestAppendRefusesAStalePlan(t *testing.T) {
 		t.Fatalf("current plan: %v", err)
 	}
 }
-
-// A generation's versions all get its location, also one spelled another
-// way before (an unresolved alias); other generations keep theirs.
-func TestBackfillTaskLocations(t *testing.T) {
-	st, err := Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	ctx := context.Background()
-	if _, err := st.DB().Exec(`INSERT INTO projects(name, config_json) VALUES('p','{}')`); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.InsertJob(ctx, &JobRow{ID: "j1", ProjectName: "p", ConfigJSON: "{}", Status: "done", CreatedAt: time.Now()}); err != nil {
-		t.Fatal(err)
-	}
-	for id, row := range map[string][2]string{"t1": {"g1", ""}, "t2": {"g1", "ssh:@hpc:22"}, "t3": {"g2", "ssh:x@y:22"}} {
-		if err := st.InsertTask(ctx, &TaskRow{ID: id, JobID: "j1", ProjectName: "p", Command: "x", ParamsJSON: "{}", Status: "success",
-			Target: "hpc", TargetGeneration: row[0], Location: row[1], EnqueuedAt: time.Now()}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if n, err := st.BackfillTaskLocations(ctx, "hpc", "g1", "ssh:me@login1:22"); err != nil || n != 2 {
-		t.Fatalf("backfilled %d, %v", n, err)
-	}
-	for id, want := range map[string]string{"t1": "ssh:me@login1:22", "t2": "ssh:me@login1:22", "t3": "ssh:x@y:22"} {
-		if got, _ := st.GetTask(ctx, id); got.Location != want {
-			t.Errorf("%s location = %q, want %q", id, got.Location, want)
-		}
-	}
-}

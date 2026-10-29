@@ -101,8 +101,8 @@ func (s *Store) ListJobBatches(ctx context.Context, jobID string) ([]JobBatch, e
 func (s *Store) DraftBatch(ctx context.Context, draftID string) (*JobBatch, error) {
 	var b JobBatch
 	var at int64
-	err := s.db.QueryRowContext(ctx, `SELECT job_id, seq, submitted_at, task_count FROM job_batches WHERE draft_id = ? ORDER BY job_id, seq LIMIT 1`, draftID).
-		Scan(&b.JobID, &b.Seq, &at, &b.TaskCount)
+	err := s.db.QueryRowContext(ctx, `SELECT job_id, seq, submitted_at, task_count, config_json FROM job_batches WHERE draft_id = ? ORDER BY job_id, seq LIMIT 1`, draftID).
+		Scan(&b.JobID, &b.Seq, &at, &b.TaskCount, &b.ConfigJSON)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

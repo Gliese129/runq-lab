@@ -634,6 +634,19 @@ func sourceColumns(out *Result) {
 	out.Sources = sources
 }
 
+// KeepsAxes reports whether the view's filter keeps a record with these
+// result axes, by the keys a record decides (everything but param.<name>
+// and cell) — KeepsCell's counterpart; the frames' span uses it.
+func (s Spec) KeepsAxes(axes map[string]any) bool {
+	filter := map[string][]any{}
+	for k, options := range s.Filter {
+		if !isCellKey(k) {
+			filter[k] = options
+		}
+	}
+	return matches(axes, filter)
+}
+
 // KeepsCell reports whether the view's filter keeps a cell with these
 // params and name. Only the keys a cell decides (param.<name>, cell)
 // count: filters on result axes apply per record in Render. Curves and

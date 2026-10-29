@@ -169,7 +169,7 @@ def run():
                     # Alignment is based on the complete actual x sequence,
                     # before display decimation. No interpolation or averaging.
                     signature = hashlib.sha256(canonical([p[0] for p in points]).encode()).hexdigest()
-                    if len(points) > count:
+                    if count and len(points) > count:
                         picks = [round(i*(len(points)-1)/(count-1)) for i in range(count)]
                         # Decimation must not bridge a gap: between two kept
                         # points that skip over gaps, keep the first gap too.
@@ -194,16 +194,17 @@ def run():
                 return {"series": series}
             trees = [item.get(axis) for item in index["series"].values() if item.get(axis)]
             if not trees:
-                return {"by": axis, "frames": [], "ranges": {}}
+                return {"by": axis, "frames": [], "ranges": []}
             # each section's own range: a view reading one section frames
             # that section's span, not another section's
-            ranges = {}
-            for key, item in index["series"].items():
+            # each series' own span (its section and identity axes), so a
+            # view's section and axis filters bound the frames
+            ranges = []
+            for key, item in sorted(index["series"].items()):
                 node = item.get(axis)
                 if node:
-                    section = json.loads(key)[0]
-                    r = ranges.setdefault(section, [node["min"], node["max"]])
-                    r[0], r[1] = min(r[0], node["min"]), max(r[1], node["max"])
+                    section, identity = json.loads(key)
+                    ranges.append({"section": section, "axes": identity, "min": node["min"], "max": node["max"]})
             lo, hi = min(t["min"] for t in trees), max(t["max"] for t in trees)
             ats = json.loads(sys.argv[5]) if len(sys.argv)>5 else sorted(set(lo + i*(hi-lo)/(count-1) for i in range(count)))
             frames = []

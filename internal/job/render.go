@@ -15,6 +15,8 @@ import (
 // placeholderRe matches {{name}} style placeholders in command templates.
 var placeholderRe = regexp.MustCompile(`\{\{(\w+)}}`)
 
+var emptyArgsRe = regexp.MustCompile(`[ \t]*\{\{args}}`)
+
 // Render takes a command template and TaskParams, returns the final command string.
 //
 // Two-pass replacement:
@@ -103,12 +105,15 @@ func RenderWithFlags(template string, params TaskParams, exclude, flagParams map
 	}
 	argsStr := strings.Join(parts, " ")
 
-	result = strings.ReplaceAll(result, "{{args}}", argsStr)
-
-	// Clean up extra whitespace (e.g. trailing space when {{args}} is empty).
-	result = strings.Join(strings.Fields(result), " ")
-
-	return result, nil
+	// An empty {{args}} takes the blanks before it along; everything else
+	// is the template as written — whitespace inside quotes is the
+	// command's own ('a  b' stays two spaces).
+	if argsStr == "" {
+		result = emptyArgsRe.ReplaceAllString(result, "")
+	} else {
+		result = strings.ReplaceAll(result, "{{args}}", argsStr)
+	}
+	return strings.TrimSpace(result), nil
 }
 
 // FormatValue is how a parameter value is written into commands, names and

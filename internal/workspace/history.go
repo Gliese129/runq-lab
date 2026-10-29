@@ -85,9 +85,18 @@ type ExactHistory struct {
 	By     string        `json:"by"`
 	Frames []ExactFrame  `json:"frames"`
 	Series []ExactSeries `json:"series"`
-	// Ranges is each results section's [min, max] along By (frames
-	// queries): a view reading one section frames only its span.
-	Ranges map[string][2]float64 `json:"ranges,omitempty"`
+	// Ranges is each results series' span along By (frames queries): a
+	// view's section and axis filters pick the ones its frames cover.
+	Ranges []SeriesRange `json:"ranges,omitempty"`
+}
+
+// SeriesRange is one results series' [Min, Max] along a frames axis: its
+// section and identity axes.
+type SeriesRange struct {
+	Section string         `json:"section"`
+	Axes    map[string]any `json:"axes"`
+	Min     float64        `json:"min"`
+	Max     float64        `json:"max"`
 }
 
 // ProducerResultsStream names the results stream of a producer
@@ -108,7 +117,8 @@ func QueryExactHistory(ctx context.Context, fsys rfs.FS, dir, stream, by string,
 	if by != "step" && by != "time" {
 		return nil, fmt.Errorf("by must be step or time")
 	}
-	if count < 2 || count > 2000 {
+	// 0 = every point, undecimated (a mean is taken over whole curves)
+	if count != 0 && (count < 2 || count > 2000) {
 		return nil, fmt.Errorf("points must be 2..2000")
 	}
 	return queryExactHistory(ctx, fsys, dir, stream, by, count, nil)

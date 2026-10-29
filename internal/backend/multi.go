@@ -267,6 +267,41 @@ func (m *MultiBackend) SetHistoricalLane(name, generation string, be Backend) {
 		m.historical[name] = map[string]Backend{}
 	}
 	m.historical[name][generation] = be
+	// A kept generation on another filesystem than the live lanes' (the
+	// target moved host) scans its own files: nobody else reads them.
+	if lane, ok := be.(*SSHBackend); ok && m.readsElsewhere(name, lane) {
+		lane.StartFileScan(context.Background())
+	}
+}
+
+// readsElsewhere reports whether lane's filesystem is one no live lane of
+// target reads (caller holds m.mu).
+func (m *MultiBackend) readsElsewhere(target string, lane *SSHBackend) bool {
+	if active, ok := m.targets[target].(*SSHBackend); ok && active.Location() == lane.Location() {
+		return false
+	}
+	for _, r := range m.retiring[target] {
+		if rl, ok := r.(*SSHBackend); ok && rl.Location() == lane.Location() {
+			return false
+		}
+	}
+	return true
+}
+
+// scanKeptFilesystems runs one job-files pass on each kept generation of
+// target whose filesystem no live lane reads (forced refresh).
+func (m *MultiBackend) scanKeptFilesystems(ctx context.Context, target string) {
+	m.mu.RLock()
+	var lanes []*SSHBackend
+	for _, be := range m.historical[target] {
+		if lane, ok := be.(*SSHBackend); ok && m.readsElsewhere(target, lane) {
+			lanes = append(lanes, lane)
+		}
+	}
+	m.mu.RUnlock()
+	for _, lane := range lanes {
+		lane.ScanFiles(ctx, true)
+	}
 }
 
 // RemoveHistoricalLane forgets an artifact-only lane, returning it so the
@@ -865,7 +900,7 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 	attachLastOutput(ctx, m.store, detail.Tasks)
 	if batches, err := m.store.ListJobBatches(ctx, jobID); err == nil {
 		attachVersionChanges(detail.Tasks, batches)
-		changed := commandChanged(batches)
+		changed := commandChanged(batches, detail.Tasks)
 		for _, b := range batches {
 			var bc job.JobConfig
 			_ = json.Unmarshal([]byte(b.ConfigJSON), &bc)
@@ -1189,6 +1224,9 @@ func (m *MultiBackend) ForceRefreshTarget(ctx context.Context, target string) (*
 		return nil, fmt.Errorf("refresh: %w: unknown target %q", ErrNotFound, target)
 	}
 
+	// files on a filesystem only a kept generation reads (the target moved
+	// host) are refreshed too
+	m.scanKeptFilesystems(ctx, target)
 	receipt := &RefreshReceipt{Refreshed: true}
 	var reasons []string
 	var refreshErrs []error

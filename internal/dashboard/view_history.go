@@ -53,7 +53,7 @@ func (s *Server) viewSeries(ctx context.Context, scope *store.ViewScope, metrics
 	_, aggregate := chart["aggregate"]
 	fetch := points
 	if aggregate {
-		fetch = 2000 // average the full curves, thin the mean afterwards
+		fetch = 0 // average the whole curves (every point, gaps kept), thin the mean afterwards
 	}
 	groups := map[string]*series{}
 	order := []string{}
@@ -209,8 +209,9 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 		viewError(w, err)
 		return
 	}
-	// The span comes from the sections the view reads (all when it names
-	// none), so another section's longer run does not stretch the frames.
+	// The span comes from the series the view reads — its section and its
+	// axis filters — so a filtered-out series' longer run does not stretch
+	// the frames.
 	lo, hi := math.Inf(1), math.Inf(-1)
 	for _, src := range sources {
 		history, err := h.SourceHistory(r.Context(), src.ID, "results", by, 2)
@@ -218,12 +219,12 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 			viewError(w, err)
 			return
 		}
-		for section, span := range history.Ranges {
-			if v.Spec.Section != "" && section != v.Spec.Section {
+		for _, span := range history.Ranges {
+			if v.Spec.Section != "" && span.Section != v.Spec.Section || !v.Spec.KeepsAxes(span.Axes) {
 				continue
 			}
-			lo = math.Min(lo, span[0])
-			hi = math.Max(hi, span[1])
+			lo = math.Min(lo, span.Min)
+			hi = math.Max(hi, span.Max)
 		}
 	}
 	type frame struct {

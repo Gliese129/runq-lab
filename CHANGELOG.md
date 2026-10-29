@@ -5,8 +5,10 @@
 ### Breaking
 
 - Each version records the filesystem its directory is on (`location`:
-  `ssh:<user>@<host>:<port>` or this controller's disk; earlier versions are
-  filled from their generation's config when its lane starts). Reading and
+  `ssh:<user>@<host>:<port>` as OpenSSH resolves it, or this controller's
+  disk), recorded at submit; earlier versions keep generation ownership.
+  A kept generation on a filesystem no live lane reads (the target moved
+  host) scans its own files, and a forced refresh includes it. Reading and
   writing a version's files follows it, not the lane generation: a config
   edit that moves no file (`max_inflight`) no longer strands late scorer
   results, logs or metrics of the earlier generation's versions; an `--into`
@@ -26,7 +28,8 @@
     recorded)` for its rows. Export keeps `section: unsorted`.
   - The W&B button uses the W&B project the experiment was submitted with.
 - Names runq reads itself are kept apart:
-  - SDK: `runq.result` refuses the axes `cell`, `producer`, `param.<name>`;
+  - SDK: `runq.result` refuses the axes `cell`, `producer`, `param.<name>`
+    (a `Series` index axis too);
     views always use the version's own cell over a record's `cell` axis.
   - A param named `cell`/`run` (job.yaml only, too) and `@` in a cell name
     are plan errors.
@@ -38,17 +41,23 @@
 - One source for what the CLI, the dashboard and the SDK each computed on
   their own:
   - Saved-view curves use the curves tab's line (estimate bands kept);
-    with `aggregate` the mean is taken at the steps every version logged
-    (never by position) and thinned afterwards. The series JSON is now
+    with `aggregate` the mean is taken over whole curves (no per-line
+    decimation first) at the steps every version logged, then thinned —
+    gaps stay gaps. The series JSON is now
     `lines` or `mean` (+ `n`, `warning`), not `aligned`/`per_task`.
-  - Animation frames span only the view's section; along time a frame
+  - Animation frames span only the series the view reads (its section and
+    its axis filter); along time a frame
     shows the record the table showed then (larger step wins).
   - The plan table is laid out by the server (`plan` on job detail and
     drafts); `runq show` / `runq draft` print scheduler-only params on a
     `scheduler:` line, and compare values by type (`1` ≠ `"1"`).
   - Version changes (`changes` per version, `command_changed` per
-    submission) come from the server; commands compare as shell words, so
-    quoted whitespace counts. Export uses the same comparison.
+    submission) come from the server. Two command templates compare as what
+    they run: both rendered with the version's params by the submission's
+    renderer, then compared as written (`'$VAR'` ≠ `"$VAR"`; spacing counts
+    too). The append summary and export use the same comparison.
+  - Rendering keeps the template's whitespace (only an empty `{{args}}`
+    takes its blanks along): `'a  b'` used to run as `'a b'`.
   - The job status and its counts use one rule: a still-running rerun of a
     succeeded cell is counted.
   - job.json lists each version's `cell`; the SDK groups by it.

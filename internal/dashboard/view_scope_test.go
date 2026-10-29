@@ -45,7 +45,10 @@ func (h *scopeHistorian) sources() []string {
 func (h *scopeHistorian) SourceHistory(_ context.Context, id, _, _ string, _ int) (*workspace.ExactHistory, error) {
 	h.read(id)
 	return &workspace.ExactHistory{Frames: []workspace.ExactFrame{{At: 1}, {At: 2}},
-		Ranges: map[string][2]float64{"eval": {1, 2}, "train": {1, 1000000}},
+		Ranges: []workspace.SeriesRange{
+			{Section: "eval", Axes: map[string]any{"data": "dev"}, Min: 1, Max: 2},
+			{Section: "eval", Axes: map[string]any{"data": "test"}, Min: 1, Max: 500},
+			{Section: "train", Axes: map[string]any{}, Min: 1, Max: 1000000}},
 		Series: []workspace.ExactSeries{{Key: "loss", Step: []float64{1, 2}, Value: []float64{.5, .2}, Signature: "same"}}}, nil
 }
 
@@ -53,7 +56,7 @@ func (h *scopeHistorian) SourceFramesAt(_ context.Context, id, _ string, ats []f
 	h.read(id)
 	out := &workspace.ExactHistory{}
 	for _, at := range ats {
-		out.Frames = append(out.Frames, workspace.ExactFrame{At: at, Records: []workspace.ExactRecord{{TS: 1, Section: "eval", Axes: map[string]any{}, Metrics: map[string]any{"acc": .5}}}})
+		out.Frames = append(out.Frames, workspace.ExactFrame{At: at, Records: []workspace.ExactRecord{{TS: 1, Section: "eval", Axes: map[string]any{"data": "dev"}, Metrics: map[string]any{"acc": .5}}}})
 	}
 	return out, nil
 }
@@ -172,7 +175,7 @@ func TestViewCurvesFollowCellFilterAndJobOverride(t *testing.T) {
 }
 
 func framesSpec(filter map[string][]any, producer *string) views.Spec {
-	return views.Spec{Section: "eval", Rows: []string{"cell"}, Filter: filter, Producer: producer,
+	return views.Spec{Section: "eval", Rows: []string{"data", "cell"}, Filter: filter, Producer: producer,
 		Columns: []views.Column{{Name: "acc", Value: "acc"}},
 		Charts:  []map[string]any{{"template": "compare", "x": "cell", "y": "acc", "color": "cell"}}}
 }
@@ -240,8 +243,9 @@ func TestViewFramesFollowFilterAndProducer(t *testing.T) {
 	}
 }
 
-// A view reading one section frames that section's span: another section
-// reaching step 1,000,000 does not stretch it.
+// The frames span the series the view reads: its section, and its axis
+// filter within it — neither another section reaching step 1,000,000 nor a
+// filtered-out series stretches them.
 func TestViewFramesSpanTheViewsSection(t *testing.T) {
 	s, _, st := scopeFixture(t)
 	last := func() float64 {
@@ -256,8 +260,12 @@ func TestViewFramesSpanTheViewsSection(t *testing.T) {
 		return out.Frames[len(out.Frames)-1].At
 	}
 	saveScopeView(t, st, framesSpec(nil, nil))
+	if at := last(); at != 500 {
+		t.Fatalf("eval view ends at %v, want 500", at)
+	}
+	saveScopeView(t, st, framesSpec(map[string][]any{"data": {"dev"}}, nil))
 	if at := last(); at != 2 {
-		t.Fatalf("eval view ends at %v, want 2", at)
+		t.Fatalf("eval data=dev view ends at %v, want 2", at)
 	}
 	every := framesSpec(nil, nil)
 	every.Section = ""

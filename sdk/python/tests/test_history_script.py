@@ -82,8 +82,9 @@ def test_older_index_cache_is_rebuilt(tmp_path):
 
 
 def test_frames_report_each_sections_range(tmp_path, monkeypatch):
-    """The animation frames a view's section, not another section's span:
-    the frames query reports each section's own [min, max]."""
+    """The animation frames what a view reads, not another series' span:
+    the frames query reports each series' own [min, max] with its section
+    and identity axes."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("RUNQ_TASK_DIR", raising=False)
     import runq
@@ -93,8 +94,8 @@ def test_frames_report_each_sections_range(tmp_path, monkeypatch):
     runq.result({"loss": 1.0}, section="train", step=1_000_000)
     (tmp_path / "runq_results.jsonl").rename(tmp_path / "results.jsonl")  # manual mode's name
     out = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path), "results", "2", "step"])
-    ranges = json.loads(out)["ranges"]
-    assert ranges == {"eval": [10, 20], "train": [1_000_000, 1_000_000]}
+    ranges = {(r["section"], json.dumps(r["axes"], sort_keys=True)): [r["min"], r["max"]] for r in json.loads(out)["ranges"]}
+    assert ranges == {("eval", "{}"): [10, 20], ("train", "{}"): [1_000_000, 1_000_000]}
 
 
 def test_time_frames_follow_the_tables_latest(tmp_path, monkeypatch):
@@ -111,3 +112,16 @@ def test_time_frames_follow_the_tables_latest(tmp_path, monkeypatch):
     out = json.loads(subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path), "results", "2", "time"]))
     last = out["frames"][-1]["records"]
     assert [r["metrics"]["acc"] for r in last] == [0.9]
+
+
+def test_zero_count_returns_every_point(tmp_path):
+    """A mean is taken over whole curves: count 0 skips decimation, so a gap
+    in one long curve is still there to break the mean."""
+    events = [{"type": "metric", "key": "loss", "value": (None if i == 1 else float(i)), "step": i, "ts": i}
+              for i in range(3001)]
+    (tmp_path / "metrics.jsonl").write_text("".join(json.dumps(e) + "\n" for e in events))
+    out = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path), "metrics", "0", "step"])
+    series = {s["key"]: s for s in json.loads(out)["series"]}
+    assert len(series["loss"]["step"]) == 3001
+    assert series["loss"]["value"][1] is None
+

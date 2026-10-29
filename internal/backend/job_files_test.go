@@ -352,3 +352,45 @@ func TestLaneGenerationAndLocationOverride(t *testing.T) {
 		t.Fatalf("generation %q location %q", lane.Generation(), lane.Location())
 	}
 }
+
+// After the target moved host, a kept generation's lane is the only reader
+// of the old filesystem: a forced refresh scans it, so a scorer's late
+// results there are still ingested. On the active lane's filesystem it is
+// left to the active lane.
+func TestKeptGenerationScansItsOwnFilesystem(t *testing.T) {
+	ctx := context.Background()
+	f := newJobFilesFixture(t)
+	target := config.TargetConfig{Name: "local", Workspace: t.TempDir(), SubmitTemplate: "true", MaxInflight: 1}
+	old, err := NewSSHBackend(SSHBackendConfig{Target: target, Store: f.st, GlobalCfg: &config.GlobalConfig{}, FS: rfs.NewLocalFS(),
+		ControllerID: "old-host", Generation: "old-gen"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = old.Close() })
+	if _, err := f.st.DB().ExecContext(ctx, `UPDATE tasks SET target_generation = 'old-gen', location = ?`, old.Location()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.taskDir, "results.scorer.jsonl"),
+		[]byte(`{"ts":1,"section":"eval","axes":{},"metrics":{"acc":0.9}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewMultiBackend(map[string]Backend{"local": f.lane}, f.st, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetHistoricalLane("local", "old-gen", old)
+	f.lane.reconcileJobFiles(ctx, true, true) // the active lane is on another filesystem
+	if rows, _ := f.st.ListResultRecords(ctx, "job"); len(rows) != 0 {
+		t.Fatalf("active lane read another filesystem's files: %+v", rows)
+	}
+	m.scanKeptFilesystems(ctx, "local")
+	if rows, err := f.st.ListResultRecords(ctx, "job"); err != nil || len(rows) != 1 {
+		t.Fatalf("late results on the old filesystem: %+v, %v", rows, err)
+	}
+	m.mu.RLock()
+	elsewhere := m.readsElsewhere("local", f.lane)
+	m.mu.RUnlock()
+	if elsewhere {
+		t.Fatal("a lane on the active lane's filesystem must be left to it")
+	}
+}

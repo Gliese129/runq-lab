@@ -65,3 +65,22 @@ func TestThinKeepsEndsAndGaps(t *testing.T) {
 		t.Error("a gap must survive thinning")
 	}
 }
+
+// Two long curves, one with a gap at step 1: averaged whole (no per-line
+// decimation first), the gap stays a gap after thinning.
+func TestMeanLineKeepsAGapOfALongCurve(t *testing.T) {
+	a, b := curveLine{TaskID: "a"}, curveLine{TaskID: "b"}
+	for i := 0; i <= 3000; i++ {
+		v := float64(i)
+		a.Step, b.Step = append(a.Step, v), append(b.Step, v)
+		a.Value, b.Value = append(a.Value, v), append(b.Value, v)
+	}
+	b.Value[1] = math.NaN()
+	mean, _, partial, ok := meanLine([]curveLine{a, b}, 400)
+	if !ok || partial {
+		t.Fatalf("ok=%v partial=%v", ok, partial)
+	}
+	if mean.Step[1] != 1 || !math.IsNaN(mean.Value[1]) {
+		t.Fatalf("step 1 of the mean = %v %v, want a gap", mean.Step[1], mean.Value[1])
+	}
+}

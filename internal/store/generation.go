@@ -250,19 +250,3 @@ func (s *Store) StopPendingTasks(ctx context.Context, target, reason string) ([]
 	}
 	return ids, nil
 }
-
-// BackfillTaskLocations records a generation's filesystem on its versions:
-// every one was submitted with that generation's config, so all are on its
-// filesystem. It also rewrites a location spelled another way (written
-// before the endpoint was resolved through OpenSSH) to this one.
-func (s *Store) BackfillTaskLocations(ctx context.Context, target, generation, location string) (int64, error) {
-	if generation == "" || location == "" {
-		return 0, nil
-	}
-	res, err := s.db.ExecContext(ctx, `UPDATE tasks SET location = ? WHERE location != ? AND target = ? AND target_generation = ?`,
-		location, location, target, generation)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
-}

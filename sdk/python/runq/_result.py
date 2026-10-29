@@ -219,8 +219,11 @@ class _ResultsWriter:
         return self.schemas
 
     def write_values(self, values, section, axes: dict, *, current_step=None, fn: str, stacklevel: int) -> None:
-        check_axis_names(axes, fn)
-        for row, row_axes, index in split_series(values, axes, fn):
+        # every row's axes — a Series' index axis too — before any is written
+        rows = split_series(values, axes, fn)
+        for _, row_axes, _ in rows:
+            check_axis_names(row_axes, fn)
+        for row, row_axes, index in rows:
             self.write(row, section, row_axes, current_step=current_step, index=index, stacklevel=stacklevel + 1)
 
     def write(self, metrics, section, axes: dict, *, current_step=None, index=(), stacklevel: int = 2) -> None:

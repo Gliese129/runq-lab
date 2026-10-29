@@ -248,8 +248,8 @@ func (s *Store) addMissingColumns(ctx context.Context) error {
 	if err := addColumnIfMissing(ctx, s.db, "tasks", "version", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return fmt.Errorf("add tasks.version: %w", err)
 	}
-	// Where a task's files live, recorded at submit; '' for earlier rows
-	// until the daemon backfills them from their generation's config.
+	// Where a task's files live, recorded at submit; '' for earlier rows,
+	// which keep generation ownership (store.LaneScope.ReadsFiles).
 	if err := addColumnIfMissing(ctx, s.db, "tasks", "location", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("add tasks.location: %w", err)
 	}

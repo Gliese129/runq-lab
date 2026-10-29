@@ -102,7 +102,9 @@ type SSHBackend struct {
 
 	loopMu     sync.Mutex
 	loopCancel context.CancelFunc
-	loopWG     sync.WaitGroup
+	// fileScanCancel stops a kept generation's file scan (StartFileScan).
+	fileScanCancel context.CancelFunc
+	loopWG         sync.WaitGroup
 
 	// A returned log follower outlives the routing call that created it.
 	// Close quiesces immediately but defers transport teardown until every
@@ -652,7 +654,47 @@ func (b *SSHBackend) closeTransportIfIdle() error {
 
 // Close quiesces the lane immediately, then releases its transport once all
 // returned log followers have closed. Must be called on daemon shutdown.
+// StartFileScan runs this lane's job-files pass on its own (every
+// idleProducerScanInterval) — for a kept generation on a filesystem no live
+// lane reads (the target moved host): late scorer results written there
+// are still ingested. ScanFiles is the same pass, once, for a forced refresh.
+func (b *SSHBackend) StartFileScan(ctx context.Context) {
+	b.loopMu.Lock()
+	defer b.loopMu.Unlock()
+	if b.fileScanCancel != nil {
+		return
+	}
+	scanCtx, cancel := context.WithCancel(ctx)
+	b.fileScanCancel = cancel
+	go func() {
+		ticker := time.NewTicker(idleProducerScanInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-scanCtx.Done():
+				return
+			case <-ticker.C:
+				b.ScanFiles(scanCtx, false)
+			}
+		}
+	}()
+}
+
+// ScanFiles is one job-files pass (all: every unarchived job, not only
+// recent ones).
+func (b *SSHBackend) ScanFiles(ctx context.Context, all bool) {
+	pass, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	b.reconcileJobFiles(pass, all, true)
+}
+
 func (b *SSHBackend) Close() error {
+	b.loopMu.Lock()
+	if b.fileScanCancel != nil {
+		b.fileScanCancel()
+		b.fileScanCancel = nil
+	}
+	b.loopMu.Unlock()
 	b.QuiesceForHistory()
 	b.artifactMu.Lock()
 	b.closeRequested = true
@@ -846,16 +888,6 @@ func (b *SSHBackend) GPUStatus(ctx context.Context) ([]GPUSlot, error) {
 
 // Location is the filesystem this lane reads (config.FilesystemID).
 func (b *SSHBackend) Location() string { return b.scope.Location }
-
-// BackfillLocation records this lane's filesystem on its generation's
-// versions submitted before locations were recorded.
-func (b *SSHBackend) BackfillLocation(ctx context.Context) error {
-	n, err := b.store.BackfillTaskLocations(ctx, b.scope.Target, b.scope.Generation, b.scope.Location)
-	if n > 0 {
-		b.logger.Info("recorded the filesystem of earlier versions", "versions", n, "location", b.scope.Location)
-	}
-	return err
-}
 
 // loadReadableTask loads a task whose files this lane reads (logs,
 // metrics): any generation's version on this lane's filesystem.

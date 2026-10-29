@@ -297,3 +297,15 @@ def test_result_refuses_runqs_own_names(clean_env, tmp_path, monkeypatch, axes):
         runq.result({"acc": 0.5}, **axes)
     out = tmp_path / "runq_results.jsonl"
     assert not out.exists() or _read_records(out) == []
+
+
+def test_result_refuses_a_series_on_runqs_own_name(clean_env, tmp_path, monkeypatch):
+    """A Series' index axis is an axis too: one named cell is refused before
+    any row is written."""
+    from runq._values import Series
+    monkeypatch.chdir(tmp_path)
+    runq.context()
+    with pytest.raises(ValueError, match="name runq gives each record"):
+        runq.result({"acc": Series("cell", ["a", "b"], [0.5, 0.6])})
+    out = tmp_path / "runq_results.jsonl"
+    assert not out.exists() or _read_records(out) == []

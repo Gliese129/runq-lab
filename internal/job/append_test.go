@@ -21,7 +21,7 @@ func TestClassifyCells(t *testing.T) {
 		{Run: "again", Params: TaskParams{"lr": 4}}, // same params, another name: another cell
 	}
 	exclude := map[string]bool{"h_rt": true}
-	got, err := ClassifyCells(rows, existing, exclude, nil, "python  a.py")
+	got, err := ClassifyCells(rows, existing, exclude, nil, "python a.py")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestClassifyCells(t *testing.T) {
 		}
 	}
 	if got[1].TaskID != "t2" || got[1].CommandChanged {
-		t.Errorf("lr=2: %+v (whitespace is not a command change)", got[1])
+		t.Errorf("lr=2: %+v (the same command)", got[1])
 	}
 
 	got, err = ClassifyCells(rows[:2], existing, exclude, []string{"base"}, "venv/bin/python a.py")

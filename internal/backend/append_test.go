@@ -178,8 +178,9 @@ func TestJobDetailSubmissionNote(t *testing.T) {
 	}
 }
 
-// Command changes are compared as shell words: quoted whitespace counts,
-// spacing between words does not; an unknown (empty) template is no change.
+// Command changes are what runs: the templates rendered with the version's
+// params, compared as written (spacing counts too); an unknown (empty)
+// template is no change.
 func TestVersionChangesCommand(t *testing.T) {
 	batches := []store.JobBatch{
 		{Seq: 1, Command: `printf '%s' 'a  b'`},
@@ -195,10 +196,10 @@ func TestVersionChangesCommand(t *testing.T) {
 	}
 	attachVersionChanges(views, batches)
 	got := []int{len(views[0].Changes), len(views[1].Changes), len(views[2].Changes), len(views[3].Changes)}
-	if got[0] != 0 || got[1] != 0 || got[2] != 1 || views[2].Changes[0].Key != "command" || got[3] != 0 {
+	if got[0] != 0 || got[1] != 1 || got[2] != 1 || views[2].Changes[0].Key != "command" || got[3] != 0 {
 		t.Fatalf("changes per version = %v (%+v)", got, views[2].Changes)
 	}
-	if c := commandChanged(batches); c[2] || !c[3] || c[4] {
+	if c := commandChanged(batches, views); !c[2] || !c[3] || c[4] {
 		t.Fatalf("command changed per submission = %v", c)
 	}
 }
@@ -293,5 +294,31 @@ func TestJobDetailSchedulerParamsFromSubmissions(t *testing.T) {
 	}
 	if len(d.SchedulerParams) != 1 || d.SchedulerParams[0] != "seed" || len(d.Plan.Scheduler) != 1 || d.Plan.Scheduler[0][0] != "seed" {
 		t.Fatalf("scheduler params = %v, plan scheduler = %v", d.SchedulerParams, d.Plan.Scheduler)
+	}
+}
+
+// A submit whose submission landed but whose draft was not yet marked
+// (a crash in between) is finished on the next submit: the draft is frozen
+// as the submission ran, its --into/--rerun included.
+func TestRecoveredDraftKeepsSubmitFlags(t *testing.T) {
+	ctx := context.Background()
+	m, _, st := newDraftBackend(t)
+	seedJob(t, st, "jbcrash001", "success", "failed")
+	noProject := strings.Replace(sweepYAML, "project: kl\n", "", 1)
+	res, err := m.CreateDraft(ctx, DraftRequest{JobYAML: noProject, Into: "jbcrash001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ran := `{"project":"kl","into":"jbcrash001","rerun":["base"],"note":"after a crash"}`
+	if _, err := st.AppendTasks(ctx, store.JobBatch{JobID: "jbcrash001", SubmittedAt: time.Now(), DraftID: res.Draft.ID, ConfigJSON: ran}, nil); err != nil {
+		t.Fatal(err)
+	}
+	out, err := m.SubmitDraft(ctx, res.Draft.ID, DraftSubmitOptions{})
+	if err != nil || !out.AlreadySubmitted || out.JobID != "jbcrash001" {
+		t.Fatalf("recovery: %+v, %v", out, err)
+	}
+	got, err := m.GetDraft(ctx, res.Draft.ID)
+	if err != nil || got.Draft.Status != "submitted" || len(got.Draft.Rerun) != 1 || got.Draft.Rerun[0] != "base" || got.Draft.Note != "after a crash" {
+		t.Fatalf("recovered draft = %+v, %v", got.Draft, err)
 	}
 }

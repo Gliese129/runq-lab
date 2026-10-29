@@ -445,7 +445,9 @@ func (m *MultiBackend) SubmitDraft(ctx context.Context, ref string, opts DraftSu
 	if b, err := m.store.DraftBatch(ctx, d.ID); err != nil {
 		return nil, err
 	} else if b != nil {
-		if err := m.store.MarkDraftSubmitted(ctx, d.ID, b.JobID, ""); err != nil && !errors.Is(err, store.ErrDraftSubmitted) {
+		// freeze it as the submission ran: the batch's config holds the
+		// --into/--rerun its submit added
+		if err := m.store.MarkDraftSubmitted(ctx, d.ID, b.JobID, b.ConfigJSON); err != nil && !errors.Is(err, store.ErrDraftSubmitted) {
 			return nil, err
 		}
 		return &DraftSubmitResult{JobID: b.JobID, TotalTasks: b.TaskCount, DraftID: d.ID, AlreadySubmitted: true}, nil
