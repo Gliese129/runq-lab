@@ -819,5 +819,13 @@
   "curves.n_curves": "{n} 张图",
   "curves.pin": "在这个项目里置顶",
   "curves.unpin": "取消置顶",
-  "curves.unreadable": "读不到 {cells} 的曲线（它们的 target 在这里连不上）。"
+  "curves.unreadable": "读不到 {cells} 的曲线（它们的 target 在这里连不上）。",
+  "task.submission": "提交",
+  "task.copy": "复制",
+  "task.params_split": "脚本 {script} · 调度 {scheduler}",
+  "task.params_both": "调度也用",
+  "task.params_both_hint": "提交模板也读它，命令里也写了它",
+  "task.params_scheduler": "调度",
+  "task.params_scheduler_hint": "只有提交模板读取（walltime、计费组等），不是实验要比较的维度",
+  "task.params_none": "没有脚本参数"
 }

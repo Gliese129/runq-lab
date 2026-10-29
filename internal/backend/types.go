@@ -126,6 +126,10 @@ type TaskView struct {
 	// Changes: what this version changed against its cell's previous one
 	// (job detail only).
 	Changes []VersionChange `json:"changes,omitempty"`
+	// ParamUse says where each param went in this version's submission
+	// (task detail only): "script" (its command, {{args}} or ctx.params),
+	// "scheduler" (only the submit template reads it), or "both".
+	ParamUse map[string]string `json:"param_use,omitempty"`
 	// LastOutputAt is when the task's log last grew (unix seconds), as
 	// last observed; absent before the first observation.
 	LastOutputAt   *int64                        `json:"last_output_at,omitempty"`

@@ -1005,6 +1005,8 @@ func (m *MultiBackend) GetTask(ctx context.Context, taskID string) (*TaskView, e
 		return nil, fmt.Errorf("task %q: %w", taskID, ErrNotFound)
 	}
 	view := m.storedTaskView(ctx, *row)
+	view.Version = row.Version
+	view.ParamUse = m.paramUse(ctx, *row, view.Params)
 	views := []TaskView{view}
 	attachStoredMetrics(ctx, m.store, row.JobID, views)
 	attachTaskLinks(ctx, m.store, views)

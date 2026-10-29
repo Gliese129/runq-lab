@@ -53,7 +53,7 @@
       :job-id="props.jobId"
       :wandb="detail.wandb"
       :metric-keys="detail.metric_keys"
-      :swept-params="sweptParams"
+      :swept-params="comparedParams"
       :last-output="lastOutput"
       @kill-task="onKillTask"
       @click-task="onClickTask"
@@ -421,7 +421,6 @@ function varying(tasks: TaskView[], skip: Set<string> = new Set()): string[] {
   }
   return [...out].filter((k) => !skip.has(k))
 }
-const sweptParams = computed(() => varying(detail.value?.tasks ?? []))
 const comparedParams = computed(() => varying(cells.value.map((c) => c.selected), new Set(detail.value?.scheduler_params ?? [])))
 
 // ── Leaderboard: key selection is declarative; the query re-fetches when

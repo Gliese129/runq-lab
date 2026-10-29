@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"encoding/json"
 	"sort"
 	"strconv"
@@ -159,6 +160,48 @@ func commandChanged(batches []store.JobBatch, views []TaskView) map[int]bool {
 	for i := 1; i < len(batches); i++ {
 		a, b := snaps[batches[i-1].Seq].command, snaps[batches[i].Seq].command
 		out[batches[i].Seq] = a != "" && b != "" && !job.SameCommand(a, b, paramsOf[batches[i].Seq])
+	}
+	return out
+}
+
+// paramUse says where each of a version's params went, by its submission's
+// snapshot: the scheduler-only params it recorded (else today's answer for
+// a submission before they were recorded) and the placeholders of the
+// command template it ran.
+func (m *MultiBackend) paramUse(ctx context.Context, row store.TaskRow, params map[string]any) map[string]string {
+	batches, _ := m.store.ListJobBatches(ctx, row.JobID)
+	seq := row.BatchSeq
+	if seq <= 0 {
+		seq = 1
+	}
+	var command string
+	var sched map[string]bool
+	for _, b := range batches {
+		if b.Seq != seq {
+			continue
+		}
+		snap := submissionSnaps([]store.JobBatch{b})[b.Seq]
+		command = snap.command
+		sched = job.SubmittedSchedulerParams([]string{b.ConfigJSON})
+	}
+	if sched == nil {
+		target := row.Target
+		sched = m.schedulerParams(ctx, row.ProjectName, target)
+	}
+	inCommand := map[string]bool{}
+	for _, name := range job.Placeholders(command) {
+		inCommand[name] = true
+	}
+	out := make(map[string]string, len(params))
+	for k := range params {
+		switch {
+		case sched[k] && inCommand[k]:
+			out[k] = "both"
+		case sched[k]:
+			out[k] = "scheduler"
+		default:
+			out[k] = "script"
+		}
 	}
 	return out
 }

@@ -322,3 +322,24 @@ func TestRecoveredDraftKeepsSubmitFlags(t *testing.T) {
 		t.Fatalf("recovered draft = %+v, %v", got.Draft, err)
 	}
 }
+
+// A version's params are grouped by where its submission sent them: the
+// recorded scheduler-only ones, those its command template names, both.
+func TestTaskParamUse(t *testing.T) {
+	ctx := context.Background()
+	m, _, st := newDraftBackend(t)
+	rows := seedJob(t, st, "jbuse0001", "success")
+	if _, err := st.DB().Exec(`UPDATE job_batches SET command = 'python t.py --seed {{seed}} {{args}}', config_json = '{"scheduler_params":["seed","lr"]}' WHERE job_id = 'jbuse0001'`); err != nil {
+		t.Fatal(err)
+	}
+	v, err := m.GetTask(ctx, rows[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"seed": "both", "lr": "scheduler", "kl": "script"}
+	for k, w := range want {
+		if v.ParamUse[k] != w {
+			t.Errorf("%s: %q, want %q (%v)", k, v.ParamUse[k], w, v.ParamUse)
+		}
+	}
+}

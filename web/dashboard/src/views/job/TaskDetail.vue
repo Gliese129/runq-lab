@@ -3,9 +3,11 @@
     <!-- Header -->
     <v-card class="mb-4 pa-4">
       <div class="d-flex align-center justify-space-between mb-3">
-        <div class="d-flex align-center ga-2">
-          <code class="text-h6">{{ task.id.slice(0, 8) }}</code>
+        <div class="d-flex align-center ga-2 flex-wrap">
+          <span class="text-h6">{{ task.run_name || task.id.slice(0, 8) }}</span>
+          <span v-if="task.version" class="text-body-2 text-on-surface-variant">v{{ task.version }}</span>
           <TaskStatusBadge :status="displayStatus" />
+          <code class="text-caption text-on-surface-variant">{{ task.id.slice(0, 10) }}</code>
         </div>
         <div class="d-flex ga-1">
           <!-- unknown (RQ-74): kill is the user's escape hatch for a
@@ -37,11 +39,8 @@
           <div class="text-body-2 font-weight-medium">{{ task.current_step ?? '—' }}</div>
         </v-col>
         <v-col cols="6" sm="3">
-          <div class="text-caption text-on-surface-variant">{{ t('task.retries') }}</div>
-          <!-- -1 = unlimited (explicit opt-in); 0 legitimately means "no retries" -->
-          <div class="text-body-2 font-weight-medium">
-            {{ task.retry_count || 0 }} / {{ task.max_retry < 0 ? '∞' : task.max_retry }}
-          </div>
+          <div class="text-caption text-on-surface-variant">{{ t('task.submission') }}</div>
+          <div class="text-body-2 font-weight-medium">s{{ task.batch_seq ?? 1 }}</div>
         </v-col>
         <v-col cols="6" sm="3">
           <div class="text-caption text-on-surface-variant">{{ t('task.gpus') }}</div>
@@ -72,18 +71,6 @@
           </div>
         </div>
       </details>
-      <!-- The swept params ARE the identity of a task — above the fold on
-           both tabs. Fixed ones are the same for every task of the job;
-           they live in the folded Parameters panel. -->
-      <div v-if="sweptParams.size" class="d-flex ga-1 flex-wrap mt-3">
-        <v-chip
-          v-for="key in sweptParams" :key="key"
-          size="x-small"
-          variant="tonal"
-          color="secondary"
-          class="font-mono"
-        >{{ key }} = {{ task.params?.[key] }}</v-chip>
-      </div>
       <!-- HPC-specific stats (poll-model only) -->
       <v-row v-if="task.external_id" dense class="mt-1">
         <v-col cols="6" sm="3">
@@ -129,7 +116,13 @@
     </v-tabs>
 
     <!-- ── Run tab ── -->
-    <div v-if="tab === 'run'" class="run-grid">
+    <div v-if="tab === 'run'" class="run-stack">
+      <!-- One column, full width: what the run is about (its script
+           params), how it is going (metrics), then how it ran (folded). -->
+      <v-card class="pa-4">
+        <TaskParams :params="task.params ?? {}" :use="task.param_use" :swept="sweptParams" />
+      </v-card>
+
       <v-card class="pa-0">
         <div class="d-flex align-center ga-1 px-3 py-2 border-b">
           <v-icon size="16">mdi-chart-line</v-icon>
@@ -149,36 +142,44 @@
         </div>
         <div class="pa-3">
           <MetricsChart :points="metricPoints" />
+          <template v-if="latestMetrics.length">
+            <div class="text-subtitle-2 mt-3 mb-2">
+              {{ t('task.latest_metrics') }}
+              <span class="text-caption text-on-surface-variant ml-1">{{ t('job.step') }} {{ task.current_step ?? '—' }}</span>
+            </div>
+            <LatestMetrics :metrics="task.metrics ?? {}" />
+          </template>
         </div>
       </v-card>
 
-      <v-card class="pa-4">
-        <!-- Parameters: swept vs fixed is a property of the JOB — a param
-             is an axis only if sibling tasks disagree about it. -->
-        <TaskParams :params="task.params ?? {}" :swept="sweptParams" class="mb-3" />
-
-        <template v-if="latestMetrics.length">
-          <div class="text-subtitle-2 mb-2">
-            {{ t('task.latest_metrics') }}
-            <span class="text-caption text-on-surface-variant ml-1">{{ t('job.step') }} {{ task.current_step ?? '—' }}</span>
+      <v-card class="pa-0">
+        <details class="exec">
+          <summary class="exec-summary">
+            <span class="text-subtitle-2">{{ t('task.execution') }}</span>
+            <span class="text-caption text-on-surface-variant">
+              {{ [jobTarget, t('job.data_as_of', { time: task.refreshed_at ? relativeTime(task.refreshed_at) : '—' }), task.exit_code != null ? `${t('job.exit_code')} ${task.exit_code}` : ''].filter(Boolean).join(' · ') }}
+            </span>
+            <v-chip v-if="task.stale" size="x-small" color="warning">{{ t('job.snapshot_stale') }}</v-chip>
+          </summary>
+          <div class="exec-body">
+            <div v-if="task.command" class="mb-3">
+              <div class="d-flex align-center mb-1">
+                <span class="kv-key">{{ t('task.exec_command') }}</span>
+                <v-spacer />
+                <v-btn size="x-small" variant="text" @click="copyCommand">{{ commandCopied ? t('task.copied') : t('task.copy') }}</v-btn>
+              </div>
+              <pre class="exec-command">{{ task.command }}</pre>
+            </div>
+            <div class="kv-row"><span class="kv-key">{{ t('task.exec_job') }}</span><code>{{ props.jobId }}</code></div>
+            <div v-if="task.working_dir" class="kv-row"><span class="kv-key">{{ t('task.exec_working_dir') }}</span><code>{{ task.working_dir }}</code></div>
+            <div v-if="task.task_dir" class="kv-row"><span class="kv-key">{{ t('task.exec_task_dir') }}</span><code>{{ task.task_dir }}</code></div>
+            <div v-for="d in taskDirs" :key="d.label" class="kv-row"><span class="kv-key">{{ d.label }}</span><code>{{ d.path }}</code></div>
+            <div class="kv-row">
+              <span class="kv-key">{{ t('job.elapsed') }}</span>
+              <code>{{ formatTaskDuration(task.elapsed_seconds, task.time_estimated) }}</code>
+            </div>
           </div>
-          <LatestMetrics :metrics="task.metrics ?? {}" class="mb-4" />
-        </template>
-
-        <div class="text-subtitle-2 mb-2">{{ t('task.execution') }}</div>
-        <div class="text-caption text-on-surface-variant">{{ t('job.data_as_of', { time: task.refreshed_at ? relativeTime(task.refreshed_at) : '—' }) }}</div>
-        <v-chip v-if="task.stale" size="x-small" color="warning">{{ t('job.snapshot_stale') }}</v-chip>
-        <div class="kv-row"><span class="kv-key">{{ t('task.exec_job') }}</span><code>{{ props.jobId.slice(0, 10) }}</code></div>
-        <div v-if="jobTarget" class="kv-row"><span class="kv-key">{{ t('task.exec_target') }}</span><code>{{ jobTarget }}</code></div>
-        <div v-if="task.command" class="kv-row"><span class="kv-key">{{ t('task.exec_command') }}</span><code>{{ task.command }}</code></div>
-        <div v-if="task.working_dir" class="kv-row"><span class="kv-key">{{ t('task.exec_working_dir') }}</span><code>{{ task.working_dir }}</code></div>
-        <div v-if="task.task_dir" class="kv-row"><span class="kv-key">{{ t('task.exec_task_dir') }}</span><code>{{ task.task_dir }}</code></div>
-        <div v-for="[label, dir] in [['RUNQ_OUTPUT_DIR', task.output_dir], ['RUNQ_CHECKPOINT_DIR', task.checkpoint_dir], ['WANDB_DIR', task.wandb_dir]]" :key="label" class="kv-row"><span class="kv-key">{{ label }}</span><code>{{ dir || '—' }}</code></div>
-        <div class="kv-row"><span class="kv-key">{{ t('job.exit_code') }}</span><code>{{ task.exit_code ?? '—' }}</code></div>
-        <div class="kv-row">
-          <span class="kv-key">{{ t('job.elapsed') }}</span>
-          <code>{{ formatTaskDuration(task.elapsed_seconds, task.time_estimated) }}</code>
-        </div>
+        </details>
       </v-card>
     </div>
 
@@ -467,15 +468,49 @@ const taskCaps = computed(() => task.value?.capabilities ?? config.capabilitiesF
 
 // Swept vs fixed is a property of the JOB, not the task: a param is an
 // axis only if sibling tasks disagree about it.
+// Only the script's params count: a walltime that differs between cells
+// is not what the experiment compares.
 const sweptParams = computed(() => {
   const s = new Set<string>()
   const siblings = jobDetail.value?.tasks ?? []
   if (siblings.length < 2 || !task.value) return s
   for (const k of Object.keys(task.value.params || {})) {
+    const use = task.value.param_use?.[k] ?? 'script'
+    if (use !== 'script') continue // scheduler-scoped (also a time budget the command reads)
     if (new Set(siblings.map(sb => String((sb.params || {})[k]))).size > 1) s.add(k)
   }
   return s
 })
+
+// The runq directories inside the version dir, named relative to it
+// (outputs/, checkpoints/, ./) — the long prefix is written once above.
+const taskDirs = computed(() => {
+  const view = task.value
+  if (!view) return []
+  const base = (view.task_dir ?? '').replace(/\/+$/, '')
+  const rel = (p?: string) => {
+    if (!p) return '—'
+    if (base && p === base) return './'
+    return base && p.startsWith(base + '/') ? p.slice(base.length + 1) + '/' : p
+  }
+  return [
+    { label: 'RUNQ_OUTPUT_DIR', path: rel(view.output_dir) },
+    { label: 'RUNQ_CHECKPOINT_DIR', path: rel(view.checkpoint_dir) },
+    { label: 'WANDB_DIR', path: rel(view.wandb_dir) },
+  ]
+})
+
+const commandCopied = ref(false)
+async function copyCommand() {
+  if (!task.value?.command) return
+  try {
+    await navigator.clipboard.writeText(task.value.command)
+    commandCopied.value = true
+    setTimeout(() => { commandCopied.value = false }, 1500)
+  } catch {
+    snack.error(t('common.error'))
+  }
+}
 
 const latestMetrics = computed(() => Object.keys(task.value?.metrics ?? {}))
 
@@ -1087,14 +1122,32 @@ onUnmounted(() => {
 .cursor-pointer { cursor: pointer; }
 
 /* Run tab: chart takes the room, the identity column stays readable. */
-.run-grid {
-  display: grid;
-  grid-template-columns: minmax(320px, 1.5fr) minmax(260px, 320px);
+.run-stack {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  align-items: start;
 }
-@media (max-width: 959px) {
-  .run-grid { grid-template-columns: 1fr; }
+.exec-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+.exec-summary::-webkit-details-marker { display: none; }
+.exec-summary::before { content: '▸'; font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.exec[open] .exec-summary::before { content: '▾'; }
+.exec-body { padding: 0 16px 14px; }
+.exec-command {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgb(var(--v-theme-on-surface), 0.04);
 }
 
 .kv-row {
@@ -1105,7 +1158,7 @@ onUnmounted(() => {
 }
 .kv-row code { word-break: break-all; }
 .kv-key {
-  width: 100px;
+  width: 150px;
   flex-shrink: 0;
   color: rgb(var(--v-theme-on-surface-variant));
   font-size: 12px;

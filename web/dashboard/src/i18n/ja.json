@@ -819,5 +819,13 @@
   "curves.n_curves": "{n} 個のグラフ",
   "curves.pin": "このプロジェクトでピン留め",
   "curves.unpin": "ピン留めを外す",
-  "curves.unreadable": "{cells} の曲線を読み込めません（その target にここから接続できません）。"
+  "curves.unreadable": "{cells} の曲線を読み込めません（その target にここから接続できません）。",
+  "task.submission": "提出",
+  "task.copy": "コピー",
+  "task.params_split": "スクリプト {script} · スケジューラ {scheduler}",
+  "task.params_both": "スケジューラも使用",
+  "task.params_both_hint": "投入テンプレートも読み、コマンドにも書かれている",
+  "task.params_scheduler": "スケジューラ",
+  "task.params_scheduler_hint": "投入テンプレートだけが読む（walltime、グループなど）。実験で比べる軸ではない",
+  "task.params_none": "スクリプトのパラメータなし"
 }

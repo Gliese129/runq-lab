@@ -35,9 +35,10 @@
             <!-- Sortable headers: th keeps columnheader semantics (+ aria-sort);
                  the inner <button> gives keyboard access — dynamic param/metric
                  columns included. Same pattern as ProjectJobs. -->
-            <th :aria-sort="ariaSort('id')">
-              <button type="button" class="th-sort-btn" @click="setSort('id')">
-                ID {{ sortIndicator('id') }}
+            <!-- the cell first (what the row is), its version and id last -->
+            <th :aria-sort="ariaSort('cell')">
+              <button type="button" class="th-sort-btn" @click="setSort('cell')">
+                {{ t('plan.run') }} {{ sortIndicator('cell') }}
               </button>
             </th>
             <th v-if="hasHPC" :aria-sort="ariaSort('ext_id')">
@@ -74,6 +75,11 @@
                 QUEUE {{ sortIndicator('queue') }}
               </button>
             </th>
+            <th :aria-sort="ariaSort('version')">
+              <button type="button" class="th-sort-btn" @click="setSort('version')">
+                {{ t('cells.version') }} {{ sortIndicator('version') }}
+              </button>
+            </th>
             <th v-if="hasWandb" style="width:36px"></th>
             <th style="width:70px"></th>
           </tr>
@@ -92,9 +98,8 @@
             <td>
               <StatusDot :status="task.status" :size="14" />
             </td>
-            <td>
-              <code>{{ task.id.slice(0, 8) }}</code>
-              <span v-if="task.version" class="text-caption text-on-surface-variant ms-1">{{ task.run_name }} v{{ task.version }}</span>
+            <td class="cell-name">
+              {{ task.run_name || task.id.slice(0, 8) }}
               <span v-if="task.superseded_by" class="text-caption text-on-surface-variant ms-1" :title="t('task.superseded_hint')">· {{ t('task.superseded') }}</span>
             </td>
             <td v-if="hasHPC" class="text-on-surface-variant"><code>{{ task.external_id || '—' }}</code></td>
@@ -110,6 +115,10 @@
             </td>
             <td v-if="hasHPC" class="text-on-surface-variant">{{ task.native_state || '—' }}</td>
             <td v-if="hasHPC" class="text-on-surface-variant">{{ task.queue || '—' }}</td>
+            <td class="text-on-surface-variant">
+              <span v-if="task.version">v{{ task.version }}</span>
+              <code class="ms-1">{{ task.id.slice(0, 8) }}</code>
+            </td>
             <td v-if="hasWandb">
               <v-btn v-if="wandbHref(task)" size="x-small" variant="text" icon
                 :href="wandbHref(task)" target="_blank" rel="noopener" @click.stop
@@ -253,7 +262,8 @@ const sortedTasks = computed(() => {
   const key = sortKey.value
   return [...props.tasks].sort((a, b) => {
     let va: any, vb: any
-    if (key === 'id') { va = a.id; vb = b.id }
+    if (key === 'cell') { va = a.run_name || a.id; vb = b.run_name || b.id }
+    else if (key === 'version') { va = a.version ?? 0; vb = b.version ?? 0 }
     else if (key === 'ext_id') { va = a.external_id ?? ''; vb = b.external_id ?? '' }
     else if (key === 'step') { va = a.current_step ?? -1; vb = b.current_step ?? -1 }
     else if (key === 'elapsed') { va = a.elapsed_seconds; vb = b.elapsed_seconds }
@@ -287,6 +297,7 @@ function wandbHref(task: TaskView): string | undefined {
 </script>
 
 <style scoped>
+.cell-name { white-space: nowrap; font-weight: 500; }
 .swept-col { color: rgb(var(--v-theme-primary)); font-weight: 500; }
 .metric-col { color: rgb(var(--v-theme-success)); font-weight: 500; }
 </style>

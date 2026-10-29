@@ -109,6 +109,12 @@
 
 ### Added
 
+- Version page in one column: the cell and version as its title, the
+  params grouped by where the submission sent them (script / scheduler /
+  both, from the server's `param_use`), values in full; execution folded,
+  the full command with a copy button, runq's directories relative to the
+  version dir. The versions table leads with the cell and ends with the
+  version and id; scheduler-only params are no longer highlighted as swept.
 - Saved-view page redesigned: the project's views in a side list, one
   header with the title, actions and each experiment's status and data age,
   the table and charts using the rest of the width. Charts show the full

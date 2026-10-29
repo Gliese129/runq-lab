@@ -113,6 +113,9 @@ export interface TaskView {
   superseded_by?: string
   /** what this version changed against its cell's previous one (job detail) */
   changes?: VersionChange[]
+  /** where each param went in its submission (task detail): script |
+   *  scheduler | both */
+  param_use?: Record<string, string>
   status: string
   params: Record<string, any>
   metrics?: Record<string, number>

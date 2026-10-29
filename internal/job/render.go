@@ -15,6 +15,20 @@ import (
 // placeholderRe matches {{name}} style placeholders in command templates.
 var placeholderRe = regexp.MustCompile(`\{\{(\w+)}}`)
 
+// Placeholders lists the {{name}} params a command template names
+// ({{args}} left out), in order of first use.
+func Placeholders(template string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range placeholderRe.FindAllStringSubmatch(template, -1) {
+		if name := m[1]; name != "args" && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 var emptyArgsRe = regexp.MustCompile(`[ \t]*\{\{args}}`)
 
 // Render takes a command template and TaskParams, returns the final command string.

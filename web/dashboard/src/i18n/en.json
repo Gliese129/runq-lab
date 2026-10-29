@@ -819,5 +819,13 @@
   "curves.n_curves": "{n} charts",
   "curves.pin": "Pin on top for this project",
   "curves.unpin": "Unpin",
-  "curves.unreadable": "Curves of {cells} could not be read (their target is not reachable from here)."
+  "curves.unreadable": "Curves of {cells} could not be read (their target is not reachable from here).",
+  "task.submission": "Submission",
+  "task.copy": "Copy",
+  "task.params_split": "{script} script · {scheduler} scheduler",
+  "task.params_both": "also scheduler",
+  "task.params_both_hint": "The scheduler reads it too (submit template), and the command names it",
+  "task.params_scheduler": "Scheduler",
+  "task.params_scheduler_hint": "Read by the submit template only (walltime, group …): not what the experiment compares",
+  "task.params_none": "No script params"
 }
