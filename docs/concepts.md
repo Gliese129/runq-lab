@@ -39,7 +39,10 @@ and the experiment's status, counts, results and views follow that one.
 A **submission** is one `runq submit dr…`: the first creates the experiment,
 each `--into` adds versions. It carries its own target, command, overrides and
 scheduler parameters, so a fix that moves the run elsewhere or changes the
-command stays in the same experiment.
+command stays in the same experiment, and its draft's `note:` — why it was
+made. The dashboard shows, for each version, its submission, that note and what
+changed against the cell's previous version; a submitted draft stays readable
+(`runq show dr…`).
 
 ```
 project "resnet50"

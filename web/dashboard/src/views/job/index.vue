@@ -83,7 +83,8 @@
         :statuses="cells.map((c) => c.selected.status)"
         :row-links="cells.map(() => true)"
         :tags="cellTags"
-        :accent="cells.map((c) => commandVaries(c, batches))"
+        :accent="cellAccent"
+        :dim="cellDim"
         :extra-header="t('cells.version')"
         :scheduler-params="detail.scheduler_params"
         @open="(i) => onClickTask(cells[i].selected.id)"
@@ -96,22 +97,28 @@
             @change="pin(cells[index], ($event.target as HTMLSelectElement).value)"
           >
             <option :value="LATEST">{{ t('cells.latest', { v: latestOf(cells[index]) }) }}</option>
-            <template v-for="(o, k) in versionOptions(cells[index])" :key="o.id">
-              <option v-if="o.divider && k > 0" disabled>{{ t('cells.command_changed') }}</option>
-              <option :value="o.id">{{ o.label }}</option>
-            </template>
+            <option v-for="o in versionOptions(cells[index])" :key="o.id" :value="o.id">{{ o.label }}</option>
           </select>
+          <div v-if="whyOf(cells[index])" class="ver-why" :title="whyOf(cells[index])">{{ whyOf(cells[index]) }}</div>
         </template>
       </PlanTable>
       <div v-if="batches.length" class="batches mt-4">
         <div class="text-caption font-weight-medium mb-1">{{ t('plan.batches') }}</div>
-        <div v-for="b in batches" :key="b.seq" class="batch">
-          <span class="mono">s{{ b.seq }}</span>
+        <div v-for="b in batches" :key="b.seq" class="batch" :class="{ on: focusSeq === b.seq }">
+          <button
+            type="button" class="seq mono" :aria-pressed="focusSeq === b.seq" :title="t('plan.batch_focus')"
+            @click="focusSeq = focusSeq === b.seq ? 0 : b.seq"
+          >s{{ b.seq }}</button>
           <span>{{ t('plan.batch_tasks', { n: b.task_count }) }}</span>
           <span class="text-on-surface-variant">{{ new Date(b.submitted_at * 1000).toLocaleString() }}</span>
-          <span v-if="b.name" class="text-truncate">{{ b.name }}</span>
+          <span v-if="b.note" class="note text-truncate" :title="b.note">{{ b.note }}</span>
+          <span v-else-if="b.name" class="text-truncate">{{ b.name }}</span>
           <code v-if="b.command" class="cmd text-truncate" :class="{ changed: b.seq > 1 && commandOf(b.seq) !== commandOf(b.seq - 1) }" :title="b.command">{{ b.command }}</code>
-          <code v-if="b.draft_id" class="text-on-surface-variant">{{ b.draft_id }}</code>
+          <router-link v-if="b.draft_id" class="draft mono" :to="{ name: 'draft', params: { draftId: b.draft_id } }" :title="t('plan.batch_draft')">{{ b.draft_id }}</router-link>
+        </div>
+        <div v-if="focusSeq" class="focus-hint text-caption text-on-surface-variant">
+          {{ t('plan.batch_focused', { seq: focusSeq, n: cellDim.filter((d) => !d).length }) }}
+          <button type="button" class="link" @click="focusSeq = 0">{{ t('plan.batch_unfocus') }}</button>
         </div>
       </div>
     </div>
@@ -196,7 +203,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useCancelling } from '@/composables/useCancelling'
 import { useJobDetailQuery, useCompareQuery, useJobResultsQuery, useJobActions, useJobActivityQuery, useJobDefaultViewsQuery } from '@/queries/useJobQueries'
 import { lastOutputTs } from '@/utils/lastOutput'
-import { jobCells, versionCommand, commandVaries, type CellView } from '@/utils/jobCells'
+import { jobCells, commandVaries, versionChanges, changesLine, previousVersion, type CellView } from '@/utils/jobCells'
 import { useQueryClient } from '@tanstack/vue-query'
 import { qk } from '@/queries/keys'
 import { useTaskActions } from '@/queries/useTaskQueries'
@@ -285,7 +292,15 @@ const TABS = new Set(['tasks', 'plan', 'results', 'curves', 'data'])
 // version's params and status.
 const batches = computed(() => detail.value?.batches ?? [])
 const cells = computed(() => jobCells(detail.value?.tasks ?? [], detail.value?.pinned))
+// A focused submission (its sN clicked) fades the cells it did not touch
+// and tags the others with the version it made.
+const focusSeq = ref(0)
+const madeBy = (c: CellView) => c.versions.find((v) => (v.batch_seq ?? 1) === focusSeq.value)
+const cellDim = computed(() => cells.value.map((c) => !!focusSeq.value && !madeBy(c)))
+const cellAccent = computed(() => cells.value.map((c) => (focusSeq.value ? !!madeBy(c) : commandVaries(c, batches.value))))
 const cellTags = computed(() => cells.value.map((c) => {
+  const made = focusSeq.value ? madeBy(c) : undefined
+  if (made) return `s${focusSeq.value} → v${made.version ?? 1}`
   const parts: string[] = []
   if (c.versions.length > 1) parts.push(`v${c.selected.version ?? c.versions.length}/${c.versions.length}`)
   if (commandVaries(c, batches.value)) parts.push(t('cells.commands_differ'))
@@ -302,8 +317,10 @@ const planRows = computed<PlanRow[]>(() => {
   }))
 })
 
-// ── Version picker: latest follows the default rule; a number pins. In the
-// list (newest first) a divider marks where the command changed. ──
+// ── Version picker: latest follows the default rule; a number pins. Each
+// version (newest first) says its submission and what it changed against
+// the cell's previous version; under the picker, the shown version's
+// submission note and changes. ──
 const LATEST = '__latest__'
 const qc = useQueryClient()
 const pinning = ref('')
@@ -317,11 +334,16 @@ function latestOf(c: CellView): string {
 }
 function versionOptions(c: CellView) {
   const newest = c.versions.map((_, i, a) => a[a.length - 1 - i])
-  return newest.map((v, k) => ({
-    id: v.id,
-    label: `v${v.version ?? ''} · ${t('status.task.' + v.status)}`,
-    divider: k > 0 && versionCommand(v, batches.value).split(/\s+/).join(' ') !== versionCommand(newest[k - 1], batches.value).split(/\s+/).join(' '),
-  }))
+  return newest.map((v) => {
+    const changed = changesLine(versionChanges(previousVersion(c, v), v, batches.value))
+    return { id: v.id, label: [`v${v.version ?? ''}`, t('status.task.' + v.status), `s${v.batch_seq ?? 1}`, changed].filter(Boolean).join(' · ') }
+  })
+}
+function whyOf(c: CellView): string {
+  if (c.versions.length < 2) return ''
+  const v = c.selected
+  const note = batches.value.find((b) => b.seq === (v.batch_seq ?? 1))?.note
+  return [`s${v.batch_seq ?? 1}`, note, changesLine(versionChanges(previousVersion(c, v), v, batches.value))].filter(Boolean).join(' · ')
 }
 async function pin(c: CellView, value: string) {
   pinning.value = c.name
@@ -510,6 +532,20 @@ function onClickTask(id: string) {
 .batch .mono { font-family: var(--font-mono); }
 .batch .cmd { font-size: 11px; max-width: 420px; color: rgb(var(--v-theme-on-surface-variant)); background: none; }
 .batch .cmd.changed { color: rgb(var(--v-theme-warning)); }
+.batch .seq {
+  font-size: 12px; padding: 0 6px; border-radius: 6px; cursor: pointer; background: none; color: inherit;
+  border: 0.5px solid rgb(var(--v-theme-outline-variant));
+}
+.batch.on .seq { background: rgb(var(--v-theme-primary)); border-color: rgb(var(--v-theme-primary)); color: rgb(var(--v-theme-on-primary)); }
+.batch .note { max-width: 360px; }
+.batch .draft { font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.batch .draft:hover { color: rgb(var(--v-theme-primary)); }
+.focus-hint { margin-top: 4px; }
+.focus-hint .link { background: none; border: none; padding: 0 0 0 6px; cursor: pointer; color: rgb(var(--v-theme-primary)); font-size: inherit; }
+.ver-why {
+  font-size: 11px; line-height: 1.3; margin-top: 2px; max-width: 280px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: rgb(var(--v-theme-on-surface-variant));
+}
 .version-pick {
   font-size: 12px; padding: 1px 6px; border-radius: 6px; cursor: pointer; font-family: inherit;
   color: rgb(var(--v-theme-on-surface)); background: rgb(var(--v-theme-surface));

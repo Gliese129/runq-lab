@@ -139,7 +139,9 @@ Cross-target preview reports pending code sync; it checks destination files as t
 project: resnet50
 description: "LR × optimizer sweep with tied batch/worker configs"
 name: lr × optimizer           # display name, free text; `runq rename` changes it
-                                # (pre-rc6 `note:` is read as name, with a warning)
+note: first run                 # optional: why this submission — for --into, what
+                                # it fixes ("OOM: timeout 2h → 4h"); shown next to
+                                # the versions it made
 section: lr ablation            # optional; an existing section (`runq section ls`).
                                 # Omitted: the project's rules decide, else unsorted
 

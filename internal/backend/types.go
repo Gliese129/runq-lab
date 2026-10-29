@@ -183,6 +183,11 @@ type JobBatchView struct {
 	Target      string `json:"target"`
 	TaskCount   int    `json:"task_count"`
 	DraftID     string `json:"draft_id,omitempty"`
+	// Note is the submission's reason (job.yaml note:); Overrides its
+	// resource overrides — with Command and Target, what a version of a
+	// cell changed against the cell's previous one.
+	Note      string         `json:"note,omitempty"`
+	Overrides *job.Overrides `json:"overrides,omitempty"`
 }
 
 type MetricPoint struct {

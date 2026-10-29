@@ -847,8 +847,11 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 	attachLastOutput(ctx, m.store, detail.Tasks)
 	if batches, err := m.store.ListJobBatches(ctx, jobID); err == nil {
 		for _, b := range batches {
+			var bc job.JobConfig
+			_ = json.Unmarshal([]byte(b.ConfigJSON), &bc)
 			detail.Batches = append(detail.Batches, JobBatchView{Seq: b.Seq, SubmittedAt: b.SubmittedAt.Unix(), Name: b.Name,
-				Description: b.Description, Command: b.Command, Target: b.Target, TaskCount: b.TaskCount, DraftID: b.DraftID})
+				Description: b.Description, Command: b.Command, Target: b.Target, TaskCount: b.TaskCount, DraftID: b.DraftID,
+				Note: bc.Note, Overrides: bc.Overrides})
 		}
 	}
 	if len(detail.Tasks) > 0 {

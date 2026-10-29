@@ -4,6 +4,11 @@
 
 ### Breaking
 
+- job.yaml `note:` is the submission's note (why it was made — for `--into`,
+  what it fixes), not the pre-rc6 key for `name:`; files still using it for the
+  name need `name:`. It is kept with the submission and shown on the Cells tab
+  next to the versions it made; `runq show ex…` prints it in `submissions:`
+  (was `batches:`).
 - Version numbers are stored with each version and never reused: `clean`
   no longer renumbers a cell's remaining versions, and `ex…/<cell>@vN` of a
   cleaned version is an error instead of another version. Existing versions
@@ -34,6 +39,11 @@
 
 ### Added
 
+- Cells tab: each version in the picker says its submission (`s2`) and what
+  it changed against the cell's previous version (scheduler params, command,
+  target, overrides); under the picker, the shown version's submission note and
+  changes. A submission's `sN` shows the cells it touched; its draft id opens
+  the submitted draft.
 - `runq.stats` (needs numpy; `import runq` does not): `est()` (mean with std,
   stderr, n, CI95 — normal or bootstrap), `pass_at_k()` (unbiased, per problem,
   stderr across problems) and `maj_at_k()` (exact over k-subsets, Monte Carlo

@@ -71,19 +71,19 @@ func TestDraftIntoJob(t *testing.T) {
 	seedJob(t, st, "jb11112222", "success", "failed", "success")
 	noProject := strings.Replace(sweepYAML, "project: kl\n", "", 1)
 
-	res, err := m.CreateDraft(ctx, DraftRequest{JobYAML: noProject, Into: "jb1111"})
+	res, err := m.CreateDraft(ctx, DraftRequest{JobYAML: noProject + "note: retry the failed seed\n", Into: "jb1111"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Draft.Project != "kl" || res.Draft.Target != "a" || res.Draft.Into != "jb11112222" {
+	if res.Draft.Project != "kl" || res.Draft.Target != "a" || res.Draft.Into != "jb11112222" || res.Draft.Note != "retry the failed seed" {
 		t.Fatalf("draft = %+v", res.Draft)
 	}
 	a := res.Append
 	if a == nil || a.New != 1 || a.Skipped != 2 || a.NewVersion != 1 || a.Batch != 2 {
 		t.Fatalf("append = %+v", a)
 	}
-	if y, _ := m.DraftYAML(ctx, res.Draft.ID); !strings.Contains(string(y), "into: jb11112222") {
-		t.Errorf("draft yaml lacks into:\n%s", y)
+	if y, _ := m.DraftYAML(ctx, res.Draft.ID); !strings.Contains(string(y), "into: jb11112222") || !strings.Contains(string(y), "note: retry the failed seed") {
+		t.Errorf("draft yaml lacks into: or note:\n%s", y)
 	}
 
 	// Another target is the submission's choice now; here the project does
@@ -138,6 +138,30 @@ func TestGetJobAndTaskByPrefix(t *testing.T) {
 }
 
 func ptr64(v int64) *int64 { return &v }
+
+// Each submission carries its own note and overrides on the job detail:
+// what a cell's later version changed and why.
+func TestJobDetailSubmissionNote(t *testing.T) {
+	ctx := context.Background()
+	m, _, st := newDraftBackend(t)
+	rows := seedJob(t, st, "jbnote0001", "failed")
+	retry := store.TaskRow{ID: "tknote2", JobID: "jbnote0001", ProjectName: "kl", RunName: rows[0].RunName, Target: "a", Command: "x", ParamsJSON: rows[0].ParamsJSON, Status: "pending", EnqueuedAt: time.Now()}
+	if _, err := st.AppendTasks(ctx, store.JobBatch{JobID: "jbnote0001", Name: "fix", Target: "a", SubmittedAt: time.Now(), DraftID: "drnote",
+		ConfigJSON: `{"note":"OOM: timeout 2h → 4h","overrides":{"timeout":"4h"}}`}, []store.TaskRow{retry}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := m.GetJob(ctx, "jbnote0001")
+	if err != nil || len(d.Batches) != 2 {
+		t.Fatalf("detail: %+v %v", d, err)
+	}
+	b := d.Batches[1]
+	if b.Note != "OOM: timeout 2h → 4h" || b.Overrides == nil || b.Overrides.Timeout == nil || *b.Overrides.Timeout != "4h" || b.DraftID != "drnote" {
+		t.Fatalf("submission 2 = %+v", b)
+	}
+	if d.Batches[0].Note != "" || d.Batches[0].Overrides != nil {
+		t.Fatalf("submission 1 = %+v", d.Batches[0])
+	}
+}
 
 // A finished job's activity is read once; an append (the job reopens)
 // reads it again.

@@ -30,6 +30,7 @@
         <span v-if="res.draft.source_path">· {{ res.draft.source_path }}</span>
       </div>
       <div v-if="res.draft.description" class="text-body-2 mb-3">{{ res.draft.description }}</div>
+      <div v-if="res.draft.note" class="draft-note text-body-2 mb-3"><span class="text-on-surface-variant">{{ t('drafts.note') }}</span>{{ res.draft.note }}</div>
 
       <div v-if="res.append" class="append mb-2">
         <div>{{ t('drafts.append_summary', { batch: res.append.batch, new: res.append.new, version: res.append.new_version, skipped: res.append.skipped, rerun: res.append.rerun }) }}</div>
@@ -188,6 +189,7 @@ async function discard() {
 </script>
 
 <style scoped>
+.draft-note { display: flex; gap: 8px; }
 .draft-page { max-width: 1240px; margin: 0 auto; }
 .meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
 .meta code { font-family: var(--font-mono); background: none; padding: 0; }

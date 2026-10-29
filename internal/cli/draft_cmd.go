@@ -96,6 +96,9 @@ flagged.`,
 			}
 			printDraftLine(res.Draft)
 			printDashboardLink(os.Stdout, dashboard.DraftURL(dashboardBase(cmd.Context(), d.(backend.Backend)), res.Draft.ID))
+			if res.Draft.Into != "" && res.Draft.Note == "" {
+				fmt.Println("tip: add note: to the job file to say why (shown next to the new versions)")
+			}
 			fmt.Printf("next: runq submit %s\n", res.Draft.ID)
 			return nil
 		})
@@ -217,6 +220,9 @@ func showDraft(cmd *cobra.Command, args []string) error {
 		}
 		if res.Draft.Description != "" {
 			fmt.Println(res.Draft.Description)
+		}
+		if res.Draft.Note != "" {
+			fmt.Printf("note: %s\n", res.Draft.Note)
 		}
 		fmt.Println()
 		fmt.Print(res.Table)

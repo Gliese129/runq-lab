@@ -21,6 +21,7 @@ type ExportInput struct {
 	Rev            int
 	Into           string   // a draft's append target
 	Rerun          []string // a draft's succeeded cells to run again
+	Note           string   // a draft's reason for its submission
 	ExportedAt     time.Time
 	DefaultCommand string
 	Project        string
@@ -83,6 +84,9 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 	}
 	if in.Description != "" {
 		add("description", str(in.Description))
+	}
+	if in.DraftID != "" && in.Note != "" {
+		add("note", str(in.Note))
 	}
 	if in.Section != "" && in.Section != "unsorted" {
 		add("section", str(in.Section))

@@ -231,6 +231,10 @@ export interface JobBatch {
   target: string
   task_count: number
   draft_id?: string
+  /** why this submission was made (job.yaml note:) */
+  note?: string
+  /** its resource overrides (job.yaml overrides:) */
+  overrides?: { gpus_per_task?: number; timeout?: string; env?: Record<string, string> }
 }
 
 export interface CompareRow {
@@ -508,6 +512,8 @@ export interface DraftView {
   project: string
   name: string
   description?: string
+  /** why this submission is made (job.yaml note:) */
+  note?: string
   section?: string
   target: string
   /** set: the draft appends to this job */

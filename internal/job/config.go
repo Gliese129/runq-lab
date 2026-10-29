@@ -30,7 +30,8 @@ type JobConfig struct {
 	// SourcePath is the job file as passed to submit (for path rules).
 	SectionID  string `yaml:"-" json:"section_id,omitempty"`
 	SourcePath string `yaml:"-" json:"source_path,omitempty"`
-	// Note is the pre-rc6 key for Name; NormalizeLegacy folds it in.
+	// Note says why this submission was made ("OOM: walltime 2h → 4h"):
+	// kept with the submission and shown next to the versions it made.
 	Note        string         `yaml:"note,omitempty" json:"note,omitempty"`
 	FixedParams map[string]any `yaml:"fixed_params,omitempty" json:"fixed_params,omitempty"` // params with fixed values (not swept)
 	Sweep       []SweepBlock   `yaml:"sweep" json:"sweep"`

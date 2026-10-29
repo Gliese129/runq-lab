@@ -36,7 +36,7 @@ func TestSubmitResolvesSection(t *testing.T) {
 		want string
 	}{
 		{job.JobConfig{Project: "kl", Name: "A1 原始基线", Section: "main"}, mainID},
-		{job.JobConfig{Project: "kl", Note: "a1 launch smoke"}, smokeID}, // default rule, legacy key
+		{job.JobConfig{Project: "kl", Name: "a1 launch smoke"}, smokeID}, // default rule
 		{job.JobConfig{Project: "kl", Name: "A1 原始基线"}, ""},
 	} {
 		if _, _, err := m.SubmitJob(ctx, c.cfg, SubmitOptions{}); err != nil {

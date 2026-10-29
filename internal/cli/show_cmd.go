@@ -105,8 +105,11 @@ func showJob(cmd *cobra.Command, be backend.Backend, ref string, jsonOut bool) e
 			if b.DraftID != "" {
 				parts[i] += " from " + b.DraftID
 			}
+			if b.Note != "" {
+				parts[i] += fmt.Sprintf(" (%s)", b.Note)
+			}
 		}
-		fmt.Printf("batches: %s\n", strings.Join(parts, " · "))
+		fmt.Printf("submissions: %s\n", strings.Join(parts, " · "))
 	}
 	reruns := 0
 	for _, t := range detail.Tasks {

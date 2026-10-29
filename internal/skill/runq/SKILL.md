@@ -84,7 +84,6 @@ Older names you may remember, and what replaced them in v0.6:
 | `job archive`, `project archive` | `runq archive <id> [--restore]` |
 | `submit --dry` | `runq draft <job.yaml>` |
 | `open`, `version`, `target use`, `config set` | `runq dashboard`, `runq --version`, `-t`, edit ~/.runq/config.yaml |
-| experiment `note:` | `name:` (free text, renamable with `runq rename`) |
 | target `workspace:` | target `data_path:` |
 | `init`, `project edit`, `target edit` | write the YAML directly, then `--project-file` / `runq target check` |
 
@@ -144,7 +143,9 @@ each later step goes `--into` that experiment:
    a new version by default; `--rerun <cell>` runs a succeeded one again. Only
    scheduler params (walltime, reservation id) and the command may change — mark
    time-budget params such as `runtime_seconds` `scope: scheduler` in project.yaml
-   so recomputing them keeps the cell the same.
+   so recomputing them keeps the cell the same. Say why in the job file's `note:`
+   (`note: "OOM at step 3k: timeout 2h → 4h"`); it stays with the submission and
+   shows next to the versions it made.
 2. **A new row of the same table** (another seed, a missing baseline, a second
    benchmark, a 补评 or 续评): a new cell name, `--into` the experiment.
 3. **A different table** (another question, metric or protocol): a new experiment,
@@ -239,7 +240,7 @@ mention it in your report so the researcher knows where that logic lives.
 
 For scoring alongside an experiment, run a script yourself (login node, or your own iqrsh/tmux session) that reads it with `runq.experiment("<experiment_dir>")` and writes results per cell (`cell.selected.result(...)`, with `runq.stats` for pass@k and errors); see `references/views.md`.
 
-A version runs once. On failure: inspect the error, fix it, then run the cell again with `runq draft job.yaml --into <ex…>` (same cell name) — it becomes the cell's next version; preview before submitting.
+A version runs once. On failure: inspect the error, fix it, then run the cell again with `runq draft job.yaml --into <ex…>` (same cell name) and a `note:` saying what you fixed — it becomes the cell's next version; preview before submitting.
 
 ## 4. Status: what runq knows vs. what is true
 

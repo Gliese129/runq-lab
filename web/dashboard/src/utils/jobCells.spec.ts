@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { JobBatch, TaskView } from '@/types/api'
-import { commandVaries, jobCells } from './jobCells'
+import { changesLine, commandVaries, jobCells, previousVersion, versionChanges } from './jobCells'
 
 const task = (id: string, run: string, version: number, status: string, superseded_by?: string, batch_seq = version) =>
   ({ id, run_name: run, version, status, params: {}, superseded_by, batch_seq }) as unknown as TaskView
@@ -29,5 +29,19 @@ describe('jobCells', () => {
     const [diff] = jobCells([task('b1', 'b', 1, 'failed', 'b2', 1), task('b2', 'b', 2, 'success', undefined, 3)])
     expect(commandVaries(same, batches)).toBe(false)
     expect(commandVaries(diff, batches)).toBe(true)
+  })
+  it('lists what a version changed against the previous one', () => {
+    const batches = [
+      { seq: 1, command: 'python a.py', target: 'tsubame' },
+      { seq: 2, command: 'python  a.py', target: 'abci', overrides: { timeout: '4h', env: { NCCL_DEBUG: 'INFO' } } },
+      { seq: 3, command: 'python b.py', target: 'abci', overrides: { timeout: '4h', env: { NCCL_DEBUG: 'INFO' } } },
+    ] as JobBatch[]
+    const v1 = { ...task('a1', 'a', 1, 'failed', 'a3', 1), params: { lr: 0.001, walltime: '2h' } } as TaskView
+    const v2 = { ...task('a2', 'a', 2, 'failed', 'a3', 2), params: { lr: 0.001, walltime: '4h' } } as TaskView
+    const v3 = { ...task('a3', 'a', 3, 'success', undefined, 3), params: { lr: 0.001, walltime: '4h' } } as TaskView
+    const [cell] = jobCells([v1, v2, v3])
+    expect(versionChanges(undefined, v1, batches)).toEqual([])
+    expect(changesLine(versionChanges(previousVersion(cell, v2), v2, batches))).toBe('walltime 2h → 4h · target tsubame → abci · env.NCCL_DEBUG ∅ → INFO · timeout ∅ → 4h')
+    expect(changesLine(versionChanges(previousVersion(cell, v3), v3, batches))).toBe('command')
   })
 })

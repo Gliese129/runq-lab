@@ -64,6 +64,7 @@ type DraftView struct {
 	Project     string   `json:"project"`
 	Name        string   `json:"name"`
 	Description string   `json:"description,omitempty"`
+	Note        string   `json:"note,omitempty"`
 	Section     string   `json:"section,omitempty"`
 	Target      string   `json:"target"`
 	Into        string   `json:"into,omitempty"`
@@ -265,7 +266,7 @@ func (m *MultiBackend) draftResult(ctx context.Context, d *store.DraftRow) (*Dra
 }
 
 func draftView(d *store.DraftRow, cfg job.JobConfig, rows []job.Row) DraftView {
-	v := DraftView{ID: d.ID, Project: d.Project, Name: cfg.Name, Description: cfg.Description, Section: cfg.Section,
+	v := DraftView{ID: d.ID, Project: d.Project, Name: cfg.Name, Description: cfg.Description, Note: cfg.Note, Section: cfg.Section,
 		Target: d.Target, Into: cfg.Into, Rerun: cfg.Rerun, Rows: len(rows), Rev: d.Rev, Edited: d.Rev > 1, Status: d.Status, JobID: d.JobID,
 		SourcePath: d.SourcePath, CreatedAt: d.CreatedAt.Unix(), UpdatedAt: d.UpdatedAt.Unix()}
 	for _, r := range rows {
@@ -354,7 +355,7 @@ func (m *MultiBackend) DraftYAML(ctx context.Context, ref string) ([]byte, error
 }
 
 func (m *MultiBackend) draftYAML(ctx context.Context, d *store.DraftRow, cfg job.JobConfig, rows []job.Row) ([]byte, error) {
-	in := job.ExportInput{DraftID: d.ID, Rev: d.Rev, Into: cfg.Into, Rerun: cfg.Rerun, Project: d.Project, Name: cfg.Name, Description: cfg.Description,
+	in := job.ExportInput{DraftID: d.ID, Rev: d.Rev, Into: cfg.Into, Rerun: cfg.Rerun, Note: cfg.Note, Project: d.Project, Name: cfg.Name, Description: cfg.Description,
 		Section: cfg.Section, Target: d.Target, Command: cfg.Command, Overrides: cfg.Overrides,
 		Baseline: cfg.Baseline, Rows: rows}
 	if proj, err := m.registry.GetCached(ctx, d.Project); err == nil {
