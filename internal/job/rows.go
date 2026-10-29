@@ -42,7 +42,7 @@ func (r *TaskRow) fromMap(m map[string]any) error {
 	r.Params = TaskParams{}
 	if c, ok := m["cell"]; ok && c != nil {
 		if run, ok := m["run"]; ok && run != nil && fmt.Sprint(run) != fmt.Sprint(c) {
-			return fmt.Errorf("a row names its cell twice (cell: %v, run: %v); keep cell:", c, run)
+			return fmt.Errorf("a row names its cell twice (cell: %v, run: %v); keep only cell", c, run)
 		}
 	}
 	for k, v := range m {

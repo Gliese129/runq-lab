@@ -121,18 +121,6 @@ func newCLIFixture(t *testing.T) cliFixture {
 	return cliFixture{t: t, bin: bin, root: root, dataDir: dataDir, runqdSocket: runqdSocket, env: env}
 }
 
-func (fx cliFixture) run(args ...string) string {
-	fx.t.Helper()
-	cmd := exec.Command(fx.bin, args...)
-	cmd.Dir = fx.root
-	cmd.Env = fx.env
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		fx.t.Fatalf("runq %s failed: %v\n%s", strings.Join(args, " "), err, out)
-	}
-	return string(out)
-}
-
 func (fx cliFixture) configPath() string {
 	return filepath.Join(fx.dataDir, "config.yaml")
 }

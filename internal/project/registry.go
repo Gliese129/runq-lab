@@ -30,16 +30,6 @@ func (r *Registry) WithFSRouter(fn func(target string) rfs.FS) *Registry {
 	return r
 }
 
-// fs resolves the filesystem owning a project with the given home target.
-func (r *Registry) fs(target string) rfs.FS {
-	if r.fsFor != nil {
-		if fsys := r.fsFor(target); fsys != nil {
-			return fsys
-		}
-	}
-	return rfs.NewLocalFS()
-}
-
 func NewRegistry(db *sql.DB) *Registry {
 	return &Registry{db: db}
 }

@@ -415,6 +415,8 @@
 
 ### Fixes
 
+- Database migrations run without a deadline: an upgrade of a large
+  database no longer stops half-way after 5 s and leaves the service down.
 - `runq submit dr…`: an edit or discard racing a submit waits for it (the
   stored draft is the rev that ran), and a submit whose caller went away after
   the job landed is finished on retry instead of submitted twice.

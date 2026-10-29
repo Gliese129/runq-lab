@@ -15,8 +15,6 @@ type generationTestLane struct {
 	refreshErrByJob map[string]error
 	recordedSyncErr error
 	refreshCalls    int
-	pauseCalls      int
-	resumeCalls     int
 	reconcileCalls  int
 	listCalls       int
 	listedJobs      []JobSummary

@@ -17,10 +17,11 @@ var schemaSQL string
 // versions (CREATE TABLE IF NOT EXISTS does NOT add columns to pre-existing
 // tables, so each new column needs explicit handling here).
 //
-// All steps are safe to run repeatedly.
+// All steps are safe to run repeatedly. They run without a deadline: an
+// upgrade of a large database (or a slow machine) must finish its
+// migration, never stop half-way on a timeout and leave the service down.
 func (s *Store) Migrate() error {
-	ctx, cancel := defaultCtx()
-	defer cancel()
+	ctx := context.Background()
 	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
 		return err
 	}

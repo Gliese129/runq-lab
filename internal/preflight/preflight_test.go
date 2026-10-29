@@ -109,12 +109,18 @@ func TestInterpreterAndEnvActivationVenv(t *testing.T) {
 }
 
 func TestEnvActivationCondaNotInNonInteractiveShell(t *testing.T) {
+	// A conda the non-interactive shell cannot initialize. The stub stands
+	// in for whatever conda the host has (CI images ship one, which would
+	// really run): the check must not depend on the machine.
+	bin := t.TempDir()
+	write(t, filepath.Join(bin, "conda"), "#!/bin/sh\necho 'conda: shell hook not initialized' >&2\nexit 1\n", 0o755)
+	env := map[string]string{"PATH": bin + ":" + cleanPath["PATH"]}
 	proj := &project.Config{WorkingDir: t.TempDir(), CmdTemplate: "python x.py", PythonEnv: project.PythonEnvConfig{Type: "conda", Name: "torch"}}
-	got := run(t, Preflight{Env: cleanPath}, proj, nil)
+	got := run(t, Preflight{Env: env}, proj, nil)
 	want(t, got, "env_activation", "warning", "conda registered only in ~/.bashrc")
 	want(t, got, "interpreter", "skipped", "did not activate")
 
-	got = run(t, Preflight{Env: cleanPath, DisableLocal: true}, proj, nil)
+	got = run(t, Preflight{Env: env, DisableLocal: true}, proj, nil)
 	want(t, got, "env_activation", "skipped", "preflight_local")
 }
 

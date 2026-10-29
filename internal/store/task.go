@@ -433,19 +433,6 @@ func (s *Store) UpdateTaskStatus(ctx context.Context, taskID string, status stri
 	return nil
 }
 
-func intField(value any) (int, bool) {
-	switch v := value.(type) {
-	case int:
-		return v, true
-	case int32:
-		return int(v), true
-	case int64:
-		return int(v), true
-	default:
-		return 0, false
-	}
-}
-
 // ── Orphan marking ─────────────────────────────────────────────────────────
 //
 // A task is "orphaned" when its task_dir has been confirmed missing (deleted

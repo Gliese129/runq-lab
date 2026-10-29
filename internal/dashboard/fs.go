@@ -130,12 +130,3 @@ func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
 	env.RefreshedAt, env.Stale = &now, &stale
 	writeJSON(w, http.StatusOK, env)
 }
-
-// Glob resolution bounds. The default keeps a careless `**` from filling a
-// picker with thousands of chips; the max is the hard ceiling a caller may
-// ask for. Truncation is REPORTED (see the response's truncated flag) — a
-// partial list presented as complete would silently shrink a sweep.
-const (
-	defaultGlobLimit = 500
-	maxGlobLimit     = 2000
-)

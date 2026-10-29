@@ -161,7 +161,7 @@ func (c *JobConfig) UnmarshalYAML(n *yaml.Node) error {
 	*c = JobConfig(p)
 	if len(c.LegacyTasks) > 0 {
 		if len(c.Tasks) > 0 {
-			return fmt.Errorf("cells: and tasks: are the same list; keep cells:")
+			return fmt.Errorf("cells: and tasks: are the same list; keep only cells")
 		}
 		c.Tasks, c.LegacyTasks, c.legacyTasksKey = c.LegacyTasks, nil, true
 	}

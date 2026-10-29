@@ -73,16 +73,6 @@ func HPCTemplateParamRefs(tmpl string) []string {
 
 // ── Template constants ───────────────────────────────────────────────────
 
-const hpcConfigHeader = `# runq config — global settings + HPC cluster templates.
-# Regenerate for a specific scheduler with: runq hpc init --scheduler slurm|pbs|sge
-
-# ── Global (read by daemon + HPC) ──────────────────────────────────────────
-# data_path: optional physical storage root for task workspaces. When set,
-#   <working_dir>/.runq is a symlink to <data_path>/<project>/. When empty,
-#   <working_dir>/.runq/ is the real storage location.
-# data_path: "/scratch/user/runq"
-`
-
 const hpcSectionHeader = `
 # ── HPC cluster templates ──────────────────────────────────────────────────
 # runq does NOT parse scheduler dialects; it only interpolates these templates
@@ -271,17 +261,6 @@ hpc:
   # This server's GPUs feed the client's aggregated (local + remote) panel.
   gpu_template: "runqd gpu --json"
 `
-
-// Full templates = global header + hpc header + hpc body (for new files).
-var hpcTemplates = map[string]string{
-	"":        hpcConfigHeader + hpcSectionHeader + genericHPCBody,
-	"slurm":   hpcConfigHeader + hpcSectionHeader + slurmHPCBody,
-	"pbs":     hpcConfigHeader + hpcSectionHeader + pbsHPCBody,
-	"sge":     hpcConfigHeader + hpcSectionHeader + sgeHPCBody,
-	"tsubame": hpcConfigHeader + hpcSectionHeader + tsubameHPCBody,
-	"abci":    hpcConfigHeader + hpcSectionHeader + abciHPCBody,
-	"runq":    hpcConfigHeader + hpcSectionHeader + runqHPCBody,
-}
 
 // hpcSnippets maps a scheduler name to its hpc-only section (for appending).
 var hpcSnippets = map[string]string{

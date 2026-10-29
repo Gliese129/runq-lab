@@ -137,9 +137,6 @@ func (c *sshConn) beginOp() {
 	c.mu.Unlock()
 }
 
-// endOp is endOpErr for paths without an error to classify.
-func (c *sshConn) endOp() { c.endOpErr(nil) }
-
 // endOpErr marks an operation finished. lastUsed is refreshed only when the
 // outcome proves the transport worked: success, or a REMOTE verdict like
 // not-exist/permission (the server answered — that IS a live round trip).

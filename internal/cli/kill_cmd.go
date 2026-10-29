@@ -143,13 +143,6 @@ func killOnTarget(ctx context.Context, be backend.Backend, id, target string, js
 	return done(fmt.Sprintf("experiment %s killed", d.Job.ID))
 }
 
-func prefixOf(id string) string {
-	if len(id) < 2 {
-		return ""
-	}
-	return id[:2]
-}
-
 func init() {
 	killCmd.Flags().Bool("json", false, "output raw JSON")
 	killCmd.Flags().StringP("target", "t", "", "Only kill on this target: refuse a version elsewhere, kill only an experiment's versions here")
