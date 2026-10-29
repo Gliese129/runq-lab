@@ -91,8 +91,8 @@ jobs:
       - name: Verify stamped version
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
         run: |
-          test "$(./runq-${{ matrix.goos }}-${{ matrix.goarch }} version)" = "${GITHUB_REF_NAME}"
-          test "$(./runq-dashboard-${{ matrix.goos }}-${{ matrix.goarch }} version)" = "${GITHUB_REF_NAME}"
+          test "$(./runq-${{ matrix.goos }}-${{ matrix.goarch }} --version)" = "${GITHUB_REF_NAME}"
+          test "$(./runq-dashboard-${{ matrix.goos }}-${{ matrix.goarch }} --version)" = "${GITHUB_REF_NAME}"
 
       - name: Build checksums
         run: |
