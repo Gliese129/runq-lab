@@ -1,10 +1,8 @@
 package store
 
 import (
-	"context"
 	"database/sql"
 	"sync"
-	"time"
 
 	_ "modernc.org/sqlite" // register "sqlite" driver
 )
@@ -44,9 +42,4 @@ func (s *Store) Close() error {
 // DB returns the underlying *sql.DB for use by other packages (e.g. Registry).
 func (s *Store) DB() *sql.DB {
 	return s.db
-}
-
-// defaultCtx returns a context with a 5-second timeout for DB operations.
-func defaultCtx() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 5*time.Second)
 }
