@@ -109,6 +109,11 @@
 
 ### Added
 
+- Saved-view page redesigned: the project's views in a side list, one
+  header with the title, actions and each experiment's status and data age,
+  the table and charts using the rest of the width. Charts show the full
+  value on hover and highlight the series across chart and table; a legend
+  click hides a series (exports follow).
 - Cells tab: each version in the picker says its submission (`s2`) and what
   it changed against the cell's previous version (scheduler params, command,
   target, overrides); under the picker, the shown version's submission note and
