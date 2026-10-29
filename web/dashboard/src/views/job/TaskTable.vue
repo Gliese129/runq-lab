@@ -20,7 +20,7 @@
           >
             <template #label>
               <v-icon v-if="availableMetricCols.includes(col)" size="12" class="mr-1">mdi-chart-line</v-icon>
-              <span :class="paramColClass(col)" class="text-body-2">{{ col }}</span>
+              <span :class="paramColClass(col)" class="text-body-2">{{ colName(col) }}</span>
             </template>
           </v-checkbox>
         </v-card>
@@ -47,7 +47,7 @@
             </th>
             <th v-for="col in shownCols" :key="col" :aria-sort="ariaSort(col)">
               <button type="button" class="th-sort-btn" @click="setSort(col)">
-                {{ col }} {{ sortIndicator(col) }}
+                {{ colName(col) }} {{ sortIndicator(col) }}
               </button>
             </th>
             <th :aria-sort="ariaSort('step')">
@@ -99,7 +99,7 @@
             </td>
             <td v-if="hasHPC" class="text-on-surface-variant"><code>{{ task.external_id || '—' }}</code></td>
             <td v-for="col in shownCols" :key="col" :class="paramColClass(col)">
-              {{ task.params[col] ?? task.metrics?.[col] ?? '—' }}
+              {{ colValue(task, col) ?? '—' }}
             </td>
             <td>{{ task.current_step ?? '—' }}</td>
             <td class="text-on-surface-variant">{{ formatTaskDuration(task.queue_seconds, task.queue_estimated) }}</td>
@@ -175,6 +175,15 @@ const hasHPC = computed(() => props.tasks.some(task => !!task.external_id))
 // ── Column visibility (persisted per job) ──
 const visibleCols = ref(new Set<string>())
 
+// A column id says what it reads: "p:lr" a param, "m:lr" a metric — a
+// param and a logged metric of the same name are two columns, and neither
+// is mistaken for a built-in column (id, step, queue …) when sorting.
+const P = 'p:', M = 'm:'
+const colName = (col: string) => col.slice(2)
+function colValue(task: TaskView, col: string): unknown {
+  return col.startsWith(P) ? task.params?.[colName(col)] : task.metrics?.[colName(col)]
+}
+
 const availableParamCols = computed(() => {
   if (props.tasks.length === 0) return []
   const all = new Set<string>()
@@ -182,17 +191,19 @@ const availableParamCols = computed(() => {
     for (const k of Object.keys(task.params || {})) all.add(k)
   }
   const swept = props.sweptParams || []
-  return [...swept, ...[...all].filter(k => !swept.includes(k))]
+  return [...swept, ...[...all].filter(k => !swept.includes(k))].map((k) => P + k)
 })
 
-const availableMetricCols = computed(() => props.metricKeys || [])
+const availableMetricCols = computed(() => (props.metricKeys || []).map((k) => M + k))
 
-// Load saved cols or default to swept params
+// Load saved cols or default to swept params. Saved names from before the
+// p:/m: ids read as params when the experiment has one, else as metrics.
 const saved = prefs.getJobVisibleCols(props.jobId)
 if (saved) {
-  visibleCols.value = new Set(saved)
+  const params = new Set(props.tasks.flatMap((task) => Object.keys(task.params || {})))
+  visibleCols.value = new Set(saved.map((c) => (c.startsWith(P) || c.startsWith(M) ? c : (params.has(c) ? P : M) + c)))
 } else if (props.sweptParams?.length) {
-  for (const p of props.sweptParams) visibleCols.value.add(p)
+  for (const p of props.sweptParams) visibleCols.value.add(P + p)
 }
 
 // Persist on change
@@ -212,8 +223,8 @@ function toggleCol(col: string) {
 }
 
 function paramColClass(col: string): string {
-  if (props.sweptParams?.includes(col)) return 'swept-col'
-  if (availableMetricCols.value.includes(col)) return 'metric-col'
+  if (col.startsWith(P) && props.sweptParams?.includes(colName(col))) return 'swept-col'
+  if (col.startsWith(M)) return 'metric-col'
   return 'text-on-surface-variant'
 }
 
@@ -250,9 +261,9 @@ const sortedTasks = computed(() => {
     else if (key === 'native_state') { va = a.native_state ?? ''; vb = b.native_state ?? '' }
     else if (key === 'queue') { va = a.queue ?? ''; vb = b.queue ?? '' }
     else {
-      // Param or metric column
-      va = a.params?.[key] ?? a.metrics?.[key] ?? ''
-      vb = b.params?.[key] ?? b.metrics?.[key] ?? ''
+      // a param (p:) or metric (m:) column
+      va = colValue(a, key) ?? ''
+      vb = colValue(b, key) ?? ''
     }
     if (va == null || vb == null) return va == null ? (vb == null ? 0 : 1) : -1
     // Numeric comparison if both are numbers

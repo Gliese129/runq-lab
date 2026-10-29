@@ -209,13 +209,13 @@ func assertTaskRunsNestInGroups(t *testing.T, res *JobResults) {
 }
 
 func TestResultsCrossTaskSeriesMonotonicX(t *testing.T) {
-	// Codex r1 finding 1 fixture: one model spans two tasks and the
-	// LEXICALLY LAST task holds the SMALLER steps. The group must order
-	// by x (the series is the curve; last = latest), not cluster by task.
+	// Two cells logging the same model are two series (a series never
+	// spans versions; it once merged them into one "latest" row). Each
+	// orders by x, and its last record is its true max step.
 	st := seedResultsStore(t, "t1", "t2")
 	insertRecords(t, st, "t1", [][2]string{
-		{`{"model":"shared","step":100}`, `{"m":3}`},
 		{`{"model":"shared","step":200}`, `{"m":4}`},
+		{`{"model":"shared","step":100}`, `{"m":3}`},
 	}, 100)
 	insertRecords(t, st, "t2", [][2]string{
 		{`{"model":"shared","step":10}`, `{"m":1}`},
@@ -226,22 +226,16 @@ func TestResultsCrossTaskSeriesMonotonicX(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jobResultsFromDB: %v", err)
 	}
+	if len(res.Schema.Groups) != 2 {
+		t.Fatalf("groups = %+v, want one series per version", res.Schema.Groups)
+	}
 	col := res.Cols.Axes["step"]
-	want := []any{20.0, 200.0}
-	for i := range want {
-		if col[i] != want[i] {
-			t.Fatalf("step column = %v, want %v (monotonic within the group)", col, want)
+	for _, g := range res.Schema.Groups {
+		for i := g.Offset + 1; i < g.Offset+g.Count; i++ {
+			if col[i].(float64) < col[i-1].(float64) {
+				t.Fatalf("step column = %v: group %+v not monotonic", col, g)
+			}
 		}
-	}
-	// Latest slice (group's last record) must be the true max step.
-	g := res.Schema.Groups[0]
-	if last := col[g.Offset+g.Count-1]; last != 200.0 {
-		t.Errorf("group last x = %v, want 200", last)
-	}
-	// The task runs split by x interleave: t2 then t1, nested in the group.
-	wantTasks := []ResultRange{{ID: "t2", Offset: 0, Count: 1}, {ID: "t1", Offset: 1, Count: 1}}
-	if len(res.Schema.Tasks) != 2 || res.Schema.Tasks[0] != wantTasks[0] || res.Schema.Tasks[1] != wantTasks[1] {
-		t.Errorf("tasks = %+v, want %+v", res.Schema.Tasks, wantTasks)
 	}
 	assertTaskRunsNestInGroups(t, res)
 }

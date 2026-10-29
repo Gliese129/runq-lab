@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -32,26 +33,27 @@ func (s *Server) viewSeries(ctx context.Context, scope *store.ViewScope, metrics
 	if !ok {
 		return nil, fmt.Errorf("history queries unavailable")
 	}
-	// Value/Mean/Std: a gap (null value, NaN in memory) stays a gap — a
-	// mean over a step where any line has a gap is a gap too.
-	type line struct {
-		TaskID    string                `json:"task_id"`
-		Step      []float64             `json:"step"`
-		Value     workspace.CurveValues `json:"value"`
-		signature string
-	}
+	// One series per (metric, color/facet key): each version's line as
+	// logged (curveLine, the curves tab's type, estimate band included),
+	// or with aggregate the mean over its versions (meanLine).
 	type series struct {
-		Key     map[string]any        `json:"key"`
-		Metric  string                `json:"metric"`
-		Tasks   []string              `json:"tasks"`
-		Aligned bool                  `json:"aligned"`
-		Step    []float64             `json:"step,omitempty"`
-		Mean    workspace.CurveValues `json:"mean,omitempty"`
-		Std     workspace.CurveValues `json:"std,omitempty"`
-		N       []int                 `json:"n,omitempty"`
-		PerTask []line                `json:"per_task,omitempty"`
-		Warning string                `json:"warning,omitempty"`
-		lines   []line
+		Key    map[string]any `json:"key"`
+		Metric string         `json:"metric"`
+		Tasks  []string       `json:"tasks"`
+		// Lines: each version's curve; with aggregate only when the
+		// versions share too few steps to average (Warning says so).
+		Lines []curveLine `json:"lines,omitempty"`
+		// Mean: the mean at the steps every version logged, lo/hi = ±std
+		// where N ≥ 2; N is the versions averaged per step.
+		Mean    *curveLine `json:"mean,omitempty"`
+		N       []int      `json:"n,omitempty"`
+		Warning string     `json:"warning,omitempty"` // no_common_steps | common_steps_only
+		lines   []curveLine
+	}
+	_, aggregate := chart["aggregate"]
+	fetch := points
+	if aggregate {
+		fetch = 2000 // average the full curves, thin the mean afterwards
 	}
 	groups := map[string]*series{}
 	order := []string{}
@@ -66,38 +68,29 @@ func (s *Server) viewSeries(ctx context.Context, scope *store.ViewScope, metrics
 				key[name] = params[name[6:]]
 			}
 		}
-		history, err := h.SourceHistory(ctx, t.ID, "metrics", "step", points)
+		history, err := h.SourceHistory(ctx, t.ID, "metrics", "step", fetch)
 		if err != nil {
 			return nil, err
 		}
+		cell := t.RunName
+		if cell == "" {
+			cell = t.ID
+		}
 		for _, raw := range history.Series {
-			selected := false
-			for _, m := range metrics {
-				if m == raw.Key {
-					selected = true
-				}
-			}
-			if !selected {
+			if !slices.Contains(metrics, raw.Key) {
 				continue
 			}
 			identity, _ := json.Marshal([]any{raw.Key, key})
 			id := string(identity)
 			g := groups[id]
 			if g == nil {
-				g = &series{Key: key, Metric: raw.Key, Aligned: true}
+				g = &series{Key: key, Metric: raw.Key}
 				groups[id] = g
 				order = append(order, id)
 			}
-			l := line{TaskID: t.ID, Step: raw.Step, Value: raw.Value, signature: raw.Signature}
+			l := lineOf(t.ID, cell, raw)
 			if maxStep, ok := chart["max_step"].(float64); ok {
-				l.Step = nil
-				l.Value = nil
-				for i, step := range raw.Step {
-					if step <= maxStep {
-						l.Step = append(l.Step, step)
-						l.Value = append(l.Value, raw.Value[i])
-					}
-				}
+				l = l.upTo(maxStep)
 			}
 			g.lines = append(g.lines, l)
 			g.Tasks = append(g.Tasks, t.ID)
@@ -106,41 +99,21 @@ func (s *Server) viewSeries(ctx context.Context, scope *store.ViewScope, metrics
 	out := []*series{}
 	for _, id := range order {
 		g := groups[id]
-		first := g.lines[0]
-		for _, l := range g.lines[1:] {
-			if l.signature != first.signature || len(l.Step) != len(first.Step) {
-				g.Aligned = false
-			}
-		}
-		_, aggregate := chart["aggregate"]
 		if !aggregate {
-			g.PerTask = g.lines
+			g.Lines = g.lines
 			out = append(out, g)
 			continue
 		}
-		if g.Aligned {
-			g.Step = first.Step
-			for i := range first.Step {
-				mean := 0.
-				for _, l := range g.lines {
-					mean += l.Value[i]
-				}
-				n := len(g.lines)
-				mean /= float64(n)
-				std := 0.
-				for _, l := range g.lines {
-					std += (l.Value[i] - mean) * (l.Value[i] - mean)
-				}
-				if n > 1 {
-					std = math.Sqrt(std / float64(n-1))
-				}
-				g.Mean = append(g.Mean, mean)
-				g.Std = append(g.Std, std)
-				g.N = append(g.N, n)
-			}
-		} else {
-			g.PerTask = g.lines
-			g.Warning = "steps differ; showing exact recorded points without interpolation"
+		mean, n, partial, ok := meanLine(g.lines, points)
+		switch {
+		case !ok:
+			g.Lines = g.lines
+			g.Warning = "no_common_steps"
+		case partial:
+			g.Mean, g.N = &mean, n
+			g.Warning = "common_steps_only"
+		default:
+			g.Mean, g.N = &mean, n
 		}
 		out = append(out, g)
 	}
@@ -236,6 +209,8 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 		viewError(w, err)
 		return
 	}
+	// The span comes from the sections the view reads (all when it names
+	// none), so another section's longer run does not stretch the frames.
 	lo, hi := math.Inf(1), math.Inf(-1)
 	for _, src := range sources {
 		history, err := h.SourceHistory(r.Context(), src.ID, "results", by, 2)
@@ -243,9 +218,12 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 			viewError(w, err)
 			return
 		}
-		for _, frame := range history.Frames {
-			lo = math.Min(lo, frame.At)
-			hi = math.Max(hi, frame.At)
+		for section, span := range history.Ranges {
+			if v.Spec.Section != "" && section != v.Spec.Section {
+				continue
+			}
+			lo = math.Min(lo, span[0])
+			hi = math.Max(hi, span[1])
 		}
 	}
 	type frame struct {

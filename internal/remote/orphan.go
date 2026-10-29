@@ -35,7 +35,7 @@ func (b *Backend) DetectOrphans(ctx context.Context, immediate bool) error {
 	// below still does (mis-mounted external disks look the same locally).
 	_, localObservation := b.FS.(*rfs.LocalFS)
 
-	root := b.Cfg.Workspace
+	root := b.Cfg.StorageRoot() // data_path, or the pre-rc6 workspace
 	if !localObservation {
 		if root == "" {
 			return nil // no workspace root configured — cannot apply guardrail 2

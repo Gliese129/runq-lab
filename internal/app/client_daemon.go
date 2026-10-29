@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -51,10 +52,10 @@ func newClientDaemon(dataDir string, paths utils.DataDirPaths, logger *slog.Logg
 	// Active and historical lanes share one constructor. Historical lanes are
 	// cold filesystem readers, so they must not require a live local runqd
 	// endpoint merely to expose terminal artifacts.
-	buildLaneFor := func(tc config.TargetConfig, cfg *config.GlobalConfig, requireLocalEndpoint bool) (backend.Backend, error) {
+	buildLaneBackend := func(tc config.TargetConfig, cfg *config.GlobalConfig, requireLocalEndpoint bool) (backend.Backend, error) {
 		if tc.Type() == config.TargetTypeRemote {
 			return backend.NewSSHBackend(backend.SSHBackendConfig{
-				Target: tc, Store: st, GlobalCfg: cfg, Logger: logger,
+				Target: tc, Store: st, GlobalCfg: cfg, Logger: logger, ControllerID: controllerID,
 			})
 		}
 		// Local-GPUs target: synthesize a localhost-runqd lane. Same
@@ -71,8 +72,25 @@ func newClientDaemon(dataDir string, paths utils.DataDirPaths, logger *slog.Logg
 		}
 		return backend.NewSSHBackend(backend.SSHBackendConfig{
 			Target: synth, Store: st, GlobalCfg: cfg, Logger: logger,
-			FS: rfs.NewLocalFS(),
+			FS: rfs.NewLocalFS(), ControllerID: controllerID,
+			// the generation the reconciler compares: the user's config,
+			// not the synthesized one (preset, binary path)
+			Generation: tc.SemanticGeneration(),
 		})
+	}
+	buildLaneFor := func(tc config.TargetConfig, cfg *config.GlobalConfig, requireLocalEndpoint bool) (backend.Backend, error) {
+		be, err := buildLaneBackend(tc, cfg, requireLocalEndpoint)
+		if err != nil {
+			return nil, err
+		}
+		// Every lane — active or a kept generation's — records its
+		// filesystem on its generation's earlier versions.
+		if lane, ok := be.(*backend.SSHBackend); ok {
+			if lerr := lane.BackfillLocation(context.Background()); lerr != nil {
+				logger.Warn("record versions' filesystem", "target", tc.Name, "error", lerr)
+			}
+		}
+		return be, nil
 	}
 	// buildLane is THE active lane constructor — boot and hot reconcile use
 	// the same readiness contract.

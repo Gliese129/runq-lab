@@ -58,10 +58,13 @@ func (b *Backend) loadAppendTarget(ctx context.Context, jobID, project string) (
 	// New versions live next to the experiment's earlier ones on this
 	// target; a submission to a target it has not run on gets a fresh
 	// directory there (named by the experiment id, like the first).
+	// Only a directory on this lane's filesystem counts: the same target
+	// name after a host move is another disk (a fresh directory there).
 	t := &appendTarget{job: j, tasks: tasks}
 	for _, task := range tasks {
 		onLane := task.Target == b.Cfg.Name || task.Target == "" && j.Target == b.Cfg.Name
-		if task.TaskDir != "" && onLane {
+		sameFS := task.Location == "" || b.Location == "" || task.Location == b.Location
+		if task.TaskDir != "" && onLane && sameFS {
 			t.root = path.Dir(task.TaskDir)
 			break
 		}
@@ -84,18 +87,18 @@ func (b *Backend) loadAppendTarget(ctx context.Context, jobID, project string) (
 	return t, nil
 }
 
-// ExistingCells describes a job's cells by their selected versions.
-// projectCmd stands in for a submission that ran the project's command.
-func ExistingCells(tasks []store.TaskRow, picks map[string]string, batches []store.JobBatch, projectCmd string) []job.ExistingCell {
+// ExistingCells describes a job's cells by their selected versions. A
+// submission whose snapshot does not say its command (one from before the
+// template was stored ran "the project's command then") has none: it is
+// never compared with today's project command.
+func ExistingCells(tasks []store.TaskRow, picks map[string]string, batches []store.JobBatch) []job.ExistingCell {
 	commands := make(map[int]string, len(batches))
 	for _, b := range batches {
 		cmd := b.Command
 		if cmd == "" {
 			var cfg job.JobConfig
 			_ = json.Unmarshal([]byte(b.ConfigJSON), &cfg)
-			if cmd = cfg.Command; cmd == "" {
-				cmd = projectCmd
-			}
+			cmd = cfg.Command
 		}
 		commands[b.Seq] = cmd
 	}
@@ -122,16 +125,21 @@ func ExistingCells(tasks []store.TaskRow, picks map[string]string, batches []sto
 
 // classifyAppend sorts the plan's rows against the job's cells and keeps only
 // the rows to submit: new cells and new versions of existing ones.
-func classifyAppend(plan *submitplan.Plan, t *appendTarget, rerun []string, projectCmd string) (job.AppendSummary, error) {
+func classifyAppend(plan *submitplan.Plan, t *appendTarget, rerun []string) (job.AppendSummary, error) {
+	// Scheduler-only now, or when an existing version ran: a param that
+	// was scheduler-only for a cell may still differ in its next version.
 	exclude := make(map[string]bool, len(plan.SchedulerParams))
 	for _, name := range plan.SchedulerParams {
+		exclude[name] = true
+	}
+	for name := range job.SubmittedSchedulerParams(batchConfigs(t.batches)) {
 		exclude[name] = true
 	}
 	rows := make([]job.Row, len(plan.Tasks))
 	for i, task := range plan.Tasks {
 		rows[i] = job.Row{Run: task.RunName, Params: task.Params}
 	}
-	existing := ExistingCells(t.tasks, t.picks, t.batches, projectCmd)
+	existing := ExistingCells(t.tasks, t.picks, t.batches)
 	cells, err := job.ClassifyCells(rows, existing, exclude, rerun, plan.CommandTemplate)
 	if err != nil {
 		return job.AppendSummary{}, fmt.Errorf("--into %s: %w", t.job.ID, err)
@@ -150,4 +158,12 @@ func classifyAppend(plan *submitplan.Plan, t *appendTarget, rerun []string, proj
 	}
 	plan.Tasks = kept
 	return job.SummarizeCells(t.job.ID, t.seq, cells), nil
+}
+
+func batchConfigs(batches []store.JobBatch) []string {
+	out := make([]string, len(batches))
+	for i, b := range batches {
+		out[i] = b.ConfigJSON
+	}
+	return out
 }

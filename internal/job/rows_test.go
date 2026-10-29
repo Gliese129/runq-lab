@@ -208,3 +208,21 @@ sweep:
 		t.Fatalf("rows = %+v, err = %v", rows, err)
 	}
 }
+
+// Names runq reads itself are refused at plan time: a param named like a
+// row key, and "@" in a cell name.
+func TestPlanRowsRefusesRunqsNames(t *testing.T) {
+	for _, c := range []struct{ yaml, want string }{
+		{"project: p\nsweep:\n  - method: grid\n    parameters: {run: [1, 2]}\n", `param "run"`},
+		{"project: p\nfixed_params: {cell: x}\ncells:\n  - {cell: a, lr: 1}\n", `param "cell"`},
+		{"project: p\ncells:\n  - {cell: ckpt@v3, lr: 1}\n", "cannot contain @"},
+	} {
+		var cfg JobConfig
+		if err := yaml.Unmarshal([]byte(c.yaml), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Rows(&cfg); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: %v, want %s", c.yaml, err, c.want)
+		}
+	}
+}

@@ -28,7 +28,21 @@ import (
 type LaneScope struct {
 	Target     string
 	Generation string
-	retiring   atomic.Bool
+	// Location is the filesystem this lane reads (config.FilesystemID).
+	Location string
+	retiring atomic.Bool
+}
+
+// ReadsFiles reports whether this lane reads and writes the task's files
+// (results, job.json, appends beside it): a task of its target on its
+// filesystem, whatever generation submitted it — a config edit that moves
+// no file leaves them readable. A task without a recorded location falls
+// back to generation ownership.
+func (s *LaneScope) ReadsFiles(t TaskRow) bool {
+	if t.Location == "" || s.Location == "" {
+		return s.Owns(t.Target, t.TargetGeneration)
+	}
+	return t.Target == s.Target && t.Location == s.Location
 }
 
 // NewLaneScope builds a scope; retiring lanes call MarkRetiring.
@@ -235,4 +249,20 @@ func (s *Store) StopPendingTasks(ctx context.Context, target, reason string) ([]
 		}
 	}
 	return ids, nil
+}
+
+// BackfillTaskLocations records a generation's filesystem on its versions:
+// every one was submitted with that generation's config, so all are on its
+// filesystem. It also rewrites a location spelled another way (written
+// before the endpoint was resolved through OpenSSH) to this one.
+func (s *Store) BackfillTaskLocations(ctx context.Context, target, generation, location string) (int64, error) {
+	if generation == "" || location == "" {
+		return 0, nil
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE tasks SET location = ? WHERE location != ? AND target = ? AND target_generation = ?`,
+		location, location, target, generation)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }

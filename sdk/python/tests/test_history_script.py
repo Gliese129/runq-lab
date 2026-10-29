@@ -79,3 +79,35 @@ def test_older_index_cache_is_rebuilt(tmp_path):
     cache.write_text(json.dumps(index))
     out = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path), "metrics", "400", "step"])
     assert json.loads(out)["series"][0]["value"] == [1, None]
+
+
+def test_frames_report_each_sections_range(tmp_path, monkeypatch):
+    """The animation frames a view's section, not another section's span:
+    the frames query reports each section's own [min, max]."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("RUNQ_TASK_DIR", raising=False)
+    import runq
+    runq.context()
+    for step in (10, 20):
+        runq.result({"acc": 0.5}, section="eval", step=step)
+    runq.result({"loss": 1.0}, section="train", step=1_000_000)
+    (tmp_path / "runq_results.jsonl").rename(tmp_path / "results.jsonl")  # manual mode's name
+    out = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path), "results", "2", "step"])
+    ranges = json.loads(out)["ranges"]
+    assert ranges == {"eval": [10, 20], "train": [1_000_000, 1_000_000]}
+
+
+def test_time_frames_follow_the_tables_latest(tmp_path, monkeypatch):
+    """Along time, a frame shows what the results table showed then: a
+    later re-evaluation of an older checkpoint (smaller step) does not
+    replace the larger step's result."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("RUNQ_TASK_DIR", raising=False)
+    import runq
+    runq.context()
+    runq.result({"acc": 0.9}, section="eval", step=200)
+    runq.result({"acc": 0.6}, section="eval", step=100)
+    (tmp_path / "runq_results.jsonl").rename(tmp_path / "results.jsonl")
+    out = json.loads(subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path), "results", "2", "time"]))
+    last = out["frames"][-1]["records"]
+    assert [r["metrics"]["acc"] for r in last] == [0.9]

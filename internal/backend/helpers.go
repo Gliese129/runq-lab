@@ -30,12 +30,12 @@ import (
 func BuildJobSummary(job store.JobRow, tasks []store.TaskRow) JobSummary {
 	counts := TaskCountGroup{}
 	for _, task := range tasks {
-		if task.SupersededBy != "" {
-			continue // a rerun replaced it
+		if !task.Counts() {
+			continue // history: another version of its cell is shown
 		}
 		counts.Total++
 		switch task.Status {
-		case "pending":
+		case "pending", "paused":
 			counts.Pending++
 		case "running", "submitting":
 			counts.Running++

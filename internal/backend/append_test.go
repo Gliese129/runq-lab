@@ -109,6 +109,11 @@ func TestDraftIntoJob(t *testing.T) {
 	if lane.received.Into != "jb11112222" || len(lane.received.Rerun) != 1 || lane.received.Rerun[0] != base {
 		t.Fatalf("lane got into=%q rerun=%v", lane.received.Into, lane.received.Rerun)
 	}
+	// the frozen draft reads as what was submitted: --rerun included
+	got, err := m.GetDraft(ctx, res.Draft.ID)
+	if err != nil || got.Draft.Status != "submitted" || len(got.Draft.Rerun) != 1 || got.Draft.Rerun[0] != base || got.Draft.Into != "jb11112222" {
+		t.Fatalf("submitted draft = %+v, %v", got.Draft, err)
+	}
 }
 
 func TestGetJobAndTaskByPrefix(t *testing.T) {
@@ -161,6 +166,41 @@ func TestJobDetailSubmissionNote(t *testing.T) {
 	if d.Batches[0].Note != "" || d.Batches[0].Overrides != nil {
 		t.Fatalf("submission 1 = %+v", d.Batches[0])
 	}
+	// the backend says what the retry changed against the cell's first version
+	var retried *TaskView
+	for i := range d.Tasks {
+		if d.Tasks[i].ID == "tknote2" {
+			retried = &d.Tasks[i]
+		}
+	}
+	if retried == nil || len(retried.Changes) != 1 || retried.Changes[0] != (VersionChange{Key: "timeout", From: "∅", To: "4h"}) {
+		t.Fatalf("changes = %+v", retried)
+	}
+}
+
+// Command changes are compared as shell words: quoted whitespace counts,
+// spacing between words does not; an unknown (empty) template is no change.
+func TestVersionChangesCommand(t *testing.T) {
+	batches := []store.JobBatch{
+		{Seq: 1, Command: `printf '%s' 'a  b'`},
+		{Seq: 2, Command: `printf  '%s' 'a  b'`},
+		{Seq: 3, Command: `printf '%s' 'a b'`},
+		{Seq: 4},
+	}
+	views := []TaskView{
+		{ID: "v1", RunName: "c", Version: 1, BatchSeq: 1},
+		{ID: "v2", RunName: "c", Version: 2, BatchSeq: 2},
+		{ID: "v3", RunName: "c", Version: 3, BatchSeq: 3},
+		{ID: "v4", RunName: "c", Version: 4, BatchSeq: 4},
+	}
+	attachVersionChanges(views, batches)
+	got := []int{len(views[0].Changes), len(views[1].Changes), len(views[2].Changes), len(views[3].Changes)}
+	if got[0] != 0 || got[1] != 0 || got[2] != 1 || views[2].Changes[0].Key != "command" || got[3] != 0 {
+		t.Fatalf("changes per version = %v (%+v)", got, views[2].Changes)
+	}
+	if c := commandChanged(batches); c[2] || !c[3] || c[4] {
+		t.Fatalf("command changed per submission = %v", c)
+	}
 }
 
 // A finished job's activity is read once; an append (the job reopens)
@@ -196,6 +236,14 @@ func TestJobSummaryCountsLiveTasks(t *testing.T) {
 	if s.Tasks.Total != 2 || s.Tasks.Failed != 0 || s.Tasks.Running != 1 {
 		t.Fatalf("counts = %+v", s.Tasks)
 	}
+	// A rerun of a succeeded cell runs while the success stays selected:
+	// the job is running, and its counts say so.
+	tasks := []store.TaskRow{{ID: "v1", Status: "success"}, {ID: "v2", Status: "running", SupersededBy: "v1"}}
+	status, err := store.ProjectJobStatus(tasks)
+	s = BuildJobSummary(store.JobRow{ID: "jb2", Status: status}, tasks)
+	if err != nil || status != "running" || s.Tasks.Running != 1 || s.Tasks.Completed != 1 {
+		t.Fatalf("status %s counts %+v", status, s.Tasks)
+	}
 }
 
 // Export writes each cell's selected version; a row whose version ran
@@ -226,5 +274,24 @@ func TestExportWritesSelectedVersions(t *testing.T) {
 	out := string(raw)
 	if strings.Count(out, "- {cell:") != 2 || !strings.Contains(out, "command: python first.py") || !strings.Contains(out, "# command: python second.py") {
 		t.Fatalf("export:\n%s", out)
+	}
+}
+
+// Which params are scheduler-only is the submissions' recorded answer: a
+// later change of the project (here: it declares none) does not regroup
+// the experiment's cells.
+func TestJobDetailSchedulerParamsFromSubmissions(t *testing.T) {
+	ctx := context.Background()
+	m, _, st := newDraftBackend(t)
+	seedJob(t, st, "jbsched001", "success")
+	if _, err := st.DB().Exec(`UPDATE job_batches SET config_json = '{"scheduler_params":["seed"]}' WHERE job_id = 'jbsched001'`); err != nil {
+		t.Fatal(err)
+	}
+	d, err := m.GetJob(ctx, "jbsched001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.SchedulerParams) != 1 || d.SchedulerParams[0] != "seed" || len(d.Plan.Scheduler) != 1 || d.Plan.Scheduler[0][0] != "seed" {
+		t.Fatalf("scheduler params = %v, plan scheduler = %v", d.SchedulerParams, d.Plan.Scheduler)
 	}
 }

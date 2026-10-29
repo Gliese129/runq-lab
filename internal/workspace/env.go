@@ -81,8 +81,14 @@ func BaseEnv(id Identity) map[string]string {
 // project/job env may not redirect them.
 var RunqDirVars = []string{"RUNQ_OUTPUT_DIR", "RUNQ_CHECKPOINT_DIR", "WANDB_DIR"}
 
+// wandbDefaults are W&B settings runq only suggests (the experiment as
+// the run group, the sweep keys as tags): a value the project or job sets
+// in environment: is the researcher's choice and wins.
+var wandbDefaults = map[string]bool{"WANDB_RUN_GROUP": true, "WANDB_TAGS": true}
+
 // TaskEnv is the single resolver for preview, persistence and run.sh: the
-// caller's env plus runq's own variables, which always win.
+// caller's env plus runq's own variables, which win — except the W&B
+// defaults above, where the caller's value stays.
 func TaskEnv(id Identity, overrides map[string]string, workingDir string) map[string]string {
 	env := make(map[string]string, len(overrides)+16)
 	for key, value := range overrides {
@@ -90,6 +96,9 @@ func TaskEnv(id Identity, overrides map[string]string, workingDir string) map[st
 	}
 	delete(env, "RUNQ_WANDB_CONFIG_FILE")
 	for key, value := range BaseEnv(id) {
+		if _, set := overrides[key]; set && wandbDefaults[key] {
+			continue
+		}
 		env[key] = value
 	}
 	return env

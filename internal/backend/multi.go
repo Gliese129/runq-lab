@@ -456,6 +456,14 @@ func (m *MultiBackend) resolveTaskRow(t *store.TaskRow) (Backend, error) {
 			if generation, hasGeneration := active.(interface{ Generation() string }); !hasGeneration || generation.Generation() == t.TargetGeneration {
 				return active, nil
 			}
+			// another generation's version on the active lane's filesystem:
+			// the active lane reads its files (a scheduler action on it is
+			// refused there, by generation)
+			if loc, ok := active.(interface{ Location() string }); ok && t.Location != "" && loc.Location() == t.Location {
+				if _, live := m.historicalLane(t.Target, t.TargetGeneration); !live {
+					return active, nil
+				}
+			}
 		}
 		if be, ok := m.historicalLane(t.Target, t.TargetGeneration); ok {
 			return be, nil
@@ -839,19 +847,31 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 			targets = append(targets, t.Target)
 		}
 	}
-	for name := range m.schedulerParams(ctx, j.ProjectName, targets...) {
+	// What the submissions recorded as scheduler-only, so a later change
+	// of the project or target does not regroup old cells; the current
+	// answer only for an experiment submitted before runq kept it.
+	batches, _ := m.store.ListJobBatches(ctx, jobID)
+	schedParams := job.SubmittedSchedulerParams(batchConfigJSON(batches))
+	if schedParams == nil {
+		schedParams = m.schedulerParams(ctx, j.ProjectName, targets...)
+	}
+	for name := range schedParams {
 		detail.SchedulerParams = append(detail.SchedulerParams, name)
 	}
 	sort.Strings(detail.SchedulerParams)
 	fillLegacyRunNames(j.ConfigJSON, detail.Tasks)
+	plan := m.jobPlan(ctx, *j, detail.Tasks, schedParams)
+	detail.Plan = &plan
 	attachLastOutput(ctx, m.store, detail.Tasks)
 	if batches, err := m.store.ListJobBatches(ctx, jobID); err == nil {
+		attachVersionChanges(detail.Tasks, batches)
+		changed := commandChanged(batches)
 		for _, b := range batches {
 			var bc job.JobConfig
 			_ = json.Unmarshal([]byte(b.ConfigJSON), &bc)
 			detail.Batches = append(detail.Batches, JobBatchView{Seq: b.Seq, SubmittedAt: b.SubmittedAt.Unix(), Name: b.Name,
 				Description: b.Description, Command: b.Command, Target: b.Target, TaskCount: b.TaskCount, DraftID: b.DraftID,
-				Note: bc.Note, Overrides: bc.Overrides})
+				Note: bc.Note, Overrides: bc.Overrides, CommandChanged: changed[b.Seq]})
 		}
 	}
 	if len(detail.Tasks) > 0 {
@@ -864,12 +884,20 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 	}
 	attachStoredMetrics(ctx, m.store, jobID, detail.Tasks)
 	attachTaskLinks(ctx, m.store, detail.Tasks)
-	if cfg, err := m.registry.GetCached(ctx, j.ProjectName); err == nil && cfg.Wandb != nil {
-		detail.Wandb = &WandbInfo{
-			Entity:  cfg.Wandb.Entity,
-			Project: cfg.Wandb.Project,
-			BaseURL: WandbBaseURL(cfg.Wandb.Entity, cfg.Wandb.Project),
+	// The W&B project the experiment logged to: the one its submission ran
+	// with (the project snapshot), else today's project config.
+	var w *project.WandbConfig
+	var snap job.JobConfig
+	if json.Unmarshal([]byte(j.ConfigJSON), &snap) == nil && snap.EffectiveConfig != nil {
+		w = snap.EffectiveConfig.Wandb
+	}
+	if w == nil {
+		if cfg, err := m.registry.GetCached(ctx, j.ProjectName); err == nil {
+			w = cfg.Wandb
 		}
+	}
+	if w != nil {
+		detail.Wandb = &WandbInfo{Entity: w.Entity, Project: w.Project, BaseURL: WandbBaseURL(w.Entity, w.Project)}
 	}
 	return &detail, nil
 }
@@ -1909,24 +1937,16 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 	}
 	var cfg job.JobConfig
 	_ = json.Unmarshal([]byte(j.ConfigJSON), &cfg)
-	projCmd := ""
-	if proj, err := m.registry.GetCached(ctx, j.ProjectName); err == nil {
-		projCmd = proj.CmdTemplate
-	}
-	effective := func(c string) string {
-		if c == "" {
-			return projCmd
-		}
-		return c
-	}
-	// One snapshot per submission; a job from before batches has only its own.
+	// One snapshot per submission; a job from before batches has only its
+	// own. A command the snapshot does not record stays unknown (""), never
+	// today's project command.
 	type submission struct {
 		command, target string
 		overrides       *job.Overrides
 		needs           map[string][]string
 	}
 	snapshot := func(c job.JobConfig, target string) submission {
-		sub := submission{command: effective(c.Command), target: target, overrides: c.Overrides, needs: map[string][]string{}}
+		sub := submission{command: c.Command, target: target, overrides: c.Overrides, needs: map[string][]string{}}
 		for _, tr := range c.Tasks {
 			sub.needs[tr.Run] = tr.NeedsCode
 		}
@@ -1940,6 +1960,9 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 			if b.ConfigJSON != "" {
 				bc = job.JobConfig{}
 				_ = json.Unmarshal([]byte(b.ConfigJSON), &bc)
+			}
+			if b.Command != "" {
+				bc.Command = b.Command
 			}
 			subs[b.Seq] = snapshot(bc, b.Target)
 			latest = max(latest, b.Seq)
@@ -1971,6 +1994,9 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 		sub := subs[p.seq]
 		r := p.row
 		r.NeedsCode, r.Command = sub.needs[r.Run], sub.command
+		if r.Command == "" && file.command != "" {
+			r.Command = "(not recorded)" // say so rather than guess today's
+		}
 		if sub.target != file.target {
 			r.Target = sub.target
 		}
@@ -1994,7 +2020,7 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 	job.NameRows(rows)
 	in := job.ExportInput{
 		JobID: j.ID, ExportedAt: time.Now(), Project: j.ProjectName,
-		Name: j.Name, Description: j.Description, Section: j.Section,
+		Name: j.Name, Description: j.Description, Section: exportSection(*j),
 		Overrides: file.overrides, Baseline: cfg.Baseline, Rows: rows,
 		Command: file.command,
 	}
@@ -2092,4 +2118,47 @@ func sameParams(a, b []job.Row) bool {
 		}
 	}
 	return true
+}
+
+// jobPlan lays out an experiment's cells — each its shown version (the
+// selected one) — as the plan table `runq show` prints and the Cells tab
+// draws. A cell is named by its run name (a pre-rc6 version by its id).
+func (m *MultiBackend) jobPlan(ctx context.Context, j store.JobRow, views []TaskView, scheduler map[string]bool) job.PlanModel {
+	var cfg job.JobConfig
+	_ = json.Unmarshal([]byte(j.ConfigJSON), &cfg)
+	needs := map[string][]string{}
+	for _, r := range cfg.Tasks {
+		if len(r.NeedsCode) > 0 {
+			needs[r.Run] = r.NeedsCode
+		}
+	}
+	var rows []job.Row
+	seen := map[string]bool{}
+	for _, v := range views {
+		cell := v.RunName
+		if cell == "" {
+			cell = v.ID
+		}
+		if v.SupersededBy != "" || seen[cell] {
+			continue
+		}
+		seen[cell] = true
+		rows = append(rows, job.Row{Run: cell, Params: job.TaskParams(v.Params), NeedsCode: needs[v.RunName]})
+	}
+	var declared []string
+	if proj, err := m.registry.GetCached(ctx, j.ProjectName); err == nil {
+		for _, p := range proj.Params {
+			declared = append(declared, p.Name)
+		}
+	}
+	return job.BuildPlan(rows, cfg.Baseline, declared, scheduler)
+}
+
+// exportSection is the section an exported file names: the experiment's,
+// or unsorted — written too, so the rules do not re-sort it on submit.
+func exportSection(j store.JobRow) string {
+	if j.SectionID == "" {
+		return store.SectionUnsorted
+	}
+	return j.Section
 }

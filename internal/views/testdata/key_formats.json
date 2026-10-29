@@ -1,0 +1,18 @@
+[
+  {"value": 0.001, "format": "", "text": "0.001"},
+  {"value": 12345678, "format": "", "text": "12345678"},
+  {"value": 0.000001, "format": "", "text": "0.000001"},
+  {"value": 0.001, "format": "float2", "text": "0.00"},
+  {"value": 0.1234, "format": "float3", "text": "0.123"},
+  {"value": 2.6, "format": "int", "text": "3"},
+  {"value": 0.000012, "format": "sci1", "text": "1.2e-5"},
+  {"value": 123000, "format": "sci0", "text": "1e5"},
+  {"value": 0.4567, "format": "pct1", "text": "45.7%"},
+  {"value": 59, "format": "duration", "text": "59s"},
+  {"value": 3725, "format": "duration", "text": "1h 2m"},
+  {"value": 90061, "format": "duration", "text": "1d 1h"},
+  {"value": 125, "format": "duration", "text": "2m 5s"},
+  {"value": 1000, "format": "ago", "now": 4600, "text": "1h 0m ago"},
+  {"value": "llama-8b", "format": "", "text": "llama-8b"},
+  {"value": true, "format": "", "text": "true"}
+]

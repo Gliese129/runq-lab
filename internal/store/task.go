@@ -89,6 +89,12 @@ type TaskRow struct {
 	// generation keeps tracking its tasks on the old endpoint). '' = legacy
 	// row, adopted by the active lane.
 	TargetGeneration string
+	// Location is the filesystem the task's directory lives on, recorded
+	// at submit: "ssh:<user>@<host>:<port>" or "local:<controller id>".
+	// Who reads or writes its files (results, job.json, appends next to
+	// it) follows it, not the lane generation — which a config edit that
+	// moves no file (max_inflight) also changes. '' = not recorded.
+	Location string
 }
 
 // TaskFilter holds optional filter criteria for ListTasks.
@@ -117,7 +123,7 @@ const allTaskColumns = `id, job_id, project_name, command, params_json,
 	pid, start_time, log_path, working_dir, env_json,
 	resumable, extra_args, uid, timeout,
 	enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-	native_state, queue, failure_detail, target_generation, timing_json, run_name, batch_seq, superseded_by, version`
+	native_state, queue, failure_detail, target_generation, timing_json, run_name, batch_seq, superseded_by, version, location`
 
 // scanTask reads one result row into a TaskRow.
 // Column order must match allTaskColumns.
@@ -150,6 +156,7 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 		batchSeq      sql.NullInt64
 		supersededBy  sql.NullString
 		version       sql.NullInt64
+		location      sql.NullString
 	)
 
 	var target sql.NullString
@@ -160,7 +167,7 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 		&resumable, &extraArgs, &uid, &timeout, &enqueuedAt, &startedAt, &finishedAt,
 		&taskDir, &target, &externalID, &statusSource, &killRequested,
 		&nativeState, &queue, &failureDetail, &targetGen, &timingJSON, &runName,
-		&batchSeq, &supersededBy, &version,
+		&batchSeq, &supersededBy, &version, &location,
 	)
 	if err != nil {
 		return nil, err
@@ -195,6 +202,7 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (*TaskRow, error) {
 	t.Queue = queue.String
 	t.FailureDetail = failureDetail.String
 	t.TargetGeneration = targetGen.String
+	t.Location = location.String
 	t.TimingJSON = timingJSON.String
 
 	return &t, nil
@@ -229,8 +237,8 @@ func (s *Store) InsertTaskTx(ctx context.Context, tx *sql.Tx, t *TaskRow) error 
 		pid, start_time, log_path, working_dir, env_json,
 		resumable, extra_args, uid, timeout,
 		enqueued_at, started_at, finished_at, task_dir, target, external_id, status_source, kill_requested,
-		native_state, queue, failure_detail, target_generation, timing_json, run_name, batch_seq, version
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		native_state, queue, failure_detail, target_generation, timing_json, run_name, batch_seq, version, location
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	resumable := 0
 	if t.Resumable {
@@ -251,7 +259,7 @@ func (s *Store) InsertTaskTx(ctx context.Context, tx *sql.Tx, t *TaskRow) error 
 		nullTimeToUnix(t.StartedAt), nullTimeToUnix(t.FinishedAt),
 		nullString(t.TaskDir), targetOrDefault(t.Target), nullString(t.ExternalID), nullString(t.StatusSource), killRequested,
 		nullString(t.NativeState), nullString(t.Queue), nullString(t.FailureDetail),
-		t.TargetGeneration, nullString(t.TimingJSON), nullString(t.RunName), batchSeqOrFirst(t.BatchSeq), t.Version,
+		t.TargetGeneration, nullString(t.TimingJSON), nullString(t.RunName), batchSeqOrFirst(t.BatchSeq), t.Version, t.Location,
 	)
 	return err
 }

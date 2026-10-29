@@ -99,6 +99,20 @@ def _coerce_metric(value):
     return True, None if v is None else float(v)
 
 
+# Names runq gives a record itself: an axis of the same name would take
+# the place of the version's cell, the scoring script, or a param.
+RESERVED_AXES = ("cell", "producer")
+
+
+def check_axis_names(axes: dict, fn: str) -> None:
+    for name in axes:
+        if name in RESERVED_AXES or name.startswith("param."):
+            raise ValueError(
+                f"{fn}: axis {name!r} is a name runq gives each record itself "
+                f"(the version's cell, the scoring script, its params); name the axis differently, e.g. {name.replace('.', '_')}_name"
+            )
+
+
 def split_series(values, axes: dict, fn: str):
     """``values`` → [(row values, row axes, index)], one per index value of
     its series (or the call itself when it holds none)."""
@@ -205,6 +219,7 @@ class _ResultsWriter:
         return self.schemas
 
     def write_values(self, values, section, axes: dict, *, current_step=None, fn: str, stacklevel: int) -> None:
+        check_axis_names(axes, fn)
         for row, row_axes, index in split_series(values, axes, fn):
             self.write(row, section, row_axes, current_step=current_step, index=index, stacklevel=stacklevel + 1)
 

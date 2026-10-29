@@ -4,6 +4,56 @@
 
 ### Breaking
 
+- Each version records the filesystem its directory is on (`location`:
+  `ssh:<user>@<host>:<port>` or this controller's disk; earlier versions are
+  filled from their generation's config when its lane starts). Reading and
+  writing a version's files follows it, not the lane generation: a config
+  edit that moves no file (`max_inflight`) no longer strands late scorer
+  results, logs or metrics of the earlier generation's versions; an `--into`
+  after a host or `data_path` move starts a fresh directory; job.json is
+  written into every experiment directory the target reads and names its
+  `location` (the SDK decides locality by it). Done markers and orphan
+  detection use the storage root (`data_path`, not only the pre-rc6
+  `workspace`); a local target's generation is its own config's, so a runq
+  upgrade no longer orphans its versions.
+- History reads the submission's snapshot, never today's config:
+  - A submitted draft is frozen as submitted, `--into`/`--rerun` included.
+  - Which params are scheduler-only is what each submission recorded
+    (`scheduler_params` in its config); an append also lets such a param
+    differ. Experiments submitted before keep today's answer.
+  - A submission whose command was not recorded is never compared with
+    today's project command; `runq export` writes `command: (not
+    recorded)` for its rows. Export keeps `section: unsorted`.
+  - The W&B button uses the W&B project the experiment was submitted with.
+- Names runq reads itself are kept apart:
+  - SDK: `runq.result` refuses the axes `cell`, `producer`, `param.<name>`;
+    views always use the version's own cell over a record's `cell` axis.
+  - A param named `cell`/`run` (job.yaml only, too) and `@` in a cell name
+    are plan errors.
+  - The raw results table keeps each version its own series (`model=`
+    separates series within a version, never merges cells).
+  - The task table keeps a param and a metric of the same name apart.
+  - `environment:` / `overrides.env` values for `WANDB_RUN_GROUP` and
+    `WANDB_TAGS` win over runq's defaults.
+- One source for what the CLI, the dashboard and the SDK each computed on
+  their own:
+  - Saved-view curves use the curves tab's line (estimate bands kept);
+    with `aggregate` the mean is taken at the steps every version logged
+    (never by position) and thinned afterwards. The series JSON is now
+    `lines` or `mean` (+ `n`, `warning`), not `aligned`/`per_task`.
+  - Animation frames span only the view's section; along time a frame
+    shows the record the table showed then (larger step wins).
+  - The plan table is laid out by the server (`plan` on job detail and
+    drafts); `runq show` / `runq draft` print scheduler-only params on a
+    `scheduler:` line, and compare values by type (`1` ≠ `"1"`).
+  - Version changes (`changes` per version, `command_changed` per
+    submission) come from the server; commands compare as shell words, so
+    quoted whitespace counts. Export uses the same comparison.
+  - The job status and its counts use one rule: a still-running rerun of a
+    succeeded cell is counted.
+  - job.json lists each version's `cell`; the SDK groups by it.
+  - The dashboard applies every `key_formats` format, as exports do.
+  - Id prefixes match with their case.
 - A version's terminal status is *settled* once the wrapper, runq or the
   scheduler reported it, or a guessed one (inferred, submit failure) stood
   for 24 h. Settled never goes back to running; `runq clean` (also

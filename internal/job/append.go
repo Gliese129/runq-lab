@@ -3,6 +3,7 @@ package job
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -64,9 +65,77 @@ func (s AppendSummary) Line() string {
 	return line
 }
 
-// SameCommand compares two command templates ignoring whitespace runs.
+// SameCommand reports whether two command templates run the same words: it
+// compares them as the shell splits them, so spacing and quoting style
+// between words do not matter, but anything inside quotes does ('a  b' is
+// not 'a b'). A template the splitter cannot read (an open quote) is
+// compared as written.
 func SameCommand(a, b string) bool {
-	return strings.Join(strings.Fields(a), " ") == strings.Join(strings.Fields(b), " ")
+	wa, okA := ShellWords(a)
+	wb, okB := ShellWords(b)
+	if !okA || !okB {
+		return a == b
+	}
+	return slices.Equal(wa, wb)
+}
+
+// ShellWords splits s as a POSIX shell splits words: blanks separate words
+// outside quotes, single quotes keep everything literally, double quotes
+// keep everything but \" \\ \$ \` escapes, a backslash outside quotes
+// escapes the next character and a backslash-newline joins lines. ok is
+// false for an unterminated quote. Expansions ($x, {{param}}) stay text.
+func ShellWords(s string) (words []string, ok bool) {
+	var cur strings.Builder
+	inWord := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\\':
+			if i+1 < len(s) {
+				i++
+				if s[i] != '\n' {
+					cur.WriteByte(s[i])
+					inWord = true
+				}
+			}
+		case c == '\'':
+			j := strings.IndexByte(s[i+1:], '\'')
+			if j < 0 {
+				return nil, false
+			}
+			cur.WriteString(s[i+1 : i+1+j])
+			i += j + 1
+			inWord = true
+		case c == '"':
+			i++
+			for ; i < len(s) && s[i] != '"'; i++ {
+				if s[i] == '\\' && i+1 < len(s) && strings.IndexByte("\"\\$`\n", s[i+1]) >= 0 {
+					i++
+					if s[i] == '\n' {
+						continue
+					}
+				}
+				cur.WriteByte(s[i])
+			}
+			if i >= len(s) {
+				return nil, false
+			}
+			inWord = true
+		case c == ' ' || c == '\t' || c == '\n':
+			if inWord {
+				words = append(words, cur.String())
+				cur.Reset()
+				inWord = false
+			}
+		default:
+			cur.WriteByte(c)
+			inWord = true
+		}
+	}
+	if inWord {
+		words = append(words, cur.String())
+	}
+	return words, true
 }
 
 // paramDiff lists the params (scheduler-only ones left out) whose values

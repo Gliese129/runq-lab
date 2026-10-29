@@ -193,10 +193,13 @@ func (s *Store) draftConflict(ctx context.Context, id string) error {
 	return fmt.Errorf("%w (now rev %d)", ErrDraftChanged, cur)
 }
 
-// MarkDraftSubmitted freezes an open draft and records its job.
-func (s *Store) MarkDraftSubmitted(ctx context.Context, id, jobID string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE drafts SET status = 'submitted', job_id = ?, updated_at = ? WHERE id = ? AND status = 'open'`,
-		jobID, time.Now().UnixNano(), id)
+// MarkDraftSubmitted freezes an open draft and records its job. configJSON,
+// when set, is the config as submitted (what submit's flags added, such as
+// --into and --rerun): the frozen draft then reads as what ran.
+func (s *Store) MarkDraftSubmitted(ctx context.Context, id, jobID, configJSON string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE drafts SET status = 'submitted', job_id = ?, updated_at = ?,
+		config_json = CASE WHEN ? = '' THEN config_json ELSE ? END WHERE id = ? AND status = 'open'`,
+		jobID, time.Now().UnixNano(), configJSON, configJSON, id)
 	if err != nil {
 		return err
 	}

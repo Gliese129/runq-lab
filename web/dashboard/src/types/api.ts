@@ -111,6 +111,8 @@ export interface TaskView {
   version?: number
   /** set on every version but the cell's selected one (names it): history */
   superseded_by?: string
+  /** what this version changed against its cell's previous one (job detail) */
+  changes?: VersionChange[]
   status: string
   params: Record<string, any>
   metrics?: Record<string, number>
@@ -220,6 +222,16 @@ export interface JobDetail {
   pinned?: Record<string, string>
   /** params only the scheduler reads (walltime, reservation …): not compared */
   scheduler_params?: string[]
+  /** the cells (each its shown version) as the one plan table */
+  plan?: PlanModel
+}
+
+/** One thing a version changed against its cell's previous version. */
+export interface VersionChange {
+  key: string
+  /** absent for the command (compare the submissions' templates) */
+  from?: string
+  to?: string
 }
 
 export interface JobBatch {
@@ -231,6 +243,8 @@ export interface JobBatch {
   target: string
   task_count: number
   draft_id?: string
+  /** ran another command than the submission before (as shell words) */
+  command_changed?: boolean
   /** why this submission was made (job.yaml note:) */
   note?: string
   /** its resource overrides (job.yaml overrides:) */
@@ -507,6 +521,17 @@ export interface PlanRow {
   needs_code?: string[]
 }
 
+/** A plan laid out by the backend (job.PlanModel) — the same table
+ *  `runq draft` / `runq show` print: a column per param that varies, a cell
+ *  equal to the baseline's blank (same), scheduler-only params apart. */
+export interface PlanModel {
+  columns: string[]
+  fixed: [string, string][]
+  scheduler: [string, string][]
+  baseline_index: number
+  rows: { run: string; baseline: boolean; needs_code: string[]; cells: { text: string; same: boolean; missing: boolean }[] }[]
+}
+
 export interface DraftView {
   id: string
   project: string
@@ -534,6 +559,8 @@ export interface DraftView {
 export interface DraftResult {
   draft: DraftView
   table: string
+  /** the same table as a model */
+  plan: PlanModel
   rows: PlanRow[]
   baseline: string
   /** full rendered preview: after create/edit, and on GET ?preview=1 */

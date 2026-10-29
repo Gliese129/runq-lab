@@ -30,7 +30,7 @@
             </td>
             <td v-if="$slots.extra" class="extra" @click.stop><slot name="extra" :index="i" /></td>
             <td v-if="hasNotes" class="note">
-              <span v-if="r.needsCode.length">{{ t('plan.needs_code', { params: r.needsCode.join(', ') }) }}</span>
+              <span v-if="r.needs_code.length">{{ t('plan.needs_code', { params: r.needs_code.join(', ') }) }}</span>
             </td>
           </tr>
         </tbody>
@@ -50,17 +50,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { PlanRow } from '@/types/api'
-import { planTable } from '@/utils/planTable'
+import type { PlanModel } from '@/types/api'
 import StatusDot from './StatusDot.vue'
 
 const props = defineProps<{
-  rows: PlanRow[]
-  baseline?: string
-  /** project param order (columns follow it, others sorted) */
-  order?: string[]
-  /** params only the scheduler reads: shown apart, never as plan columns */
-  schedulerParams?: string[]
+  /** the plan as the backend lays it out (rows in its order) */
+  plan: PlanModel
   /** per-row task status, when the plan has run */
   statuses?: string[]
   /** per-row: whether the row opens something (a task page) */
@@ -77,8 +72,8 @@ const props = defineProps<{
 const emit = defineEmits<{ open: [index: number] }>()
 const { t } = useI18n()
 
-const model = computed(() => planTable(props.rows, props.baseline ?? '', props.order ?? [], props.schedulerParams ?? []))
-const hasNotes = computed(() => model.value.rows.some((r) => r.needsCode.length > 0))
+const model = computed(() => props.plan)
+const hasNotes = computed(() => model.value.rows.some((r) => r.needs_code.length > 0))
 </script>
 
 <style scoped>

@@ -77,6 +77,8 @@ class Version:
     # for another target's version: its paths are that target's, unread here.
     local: bool = True
     generation: str = ""  # the target configuration generation that ran it
+    cell: str = ""  # the cell it is a version of, as the server groups them
+    location: str = ""  # the filesystem its directory is on (ssh:user@host:port | local:…)
 
     @property
     def results_file(self) -> Path:
@@ -93,10 +95,11 @@ class Version:
 
     def _writer(self):
         if not self.local:
+            where = f" ({self.location})" if self.location else ""
             raise FileNotFoundError(
-                f"version {self.id} ({self.run_name}) ran on target {self.target}; its directory "
-                f"{self.task_dir} is not on this filesystem — run this script on {self.target} "
-                "with the experiment directory there"
+                f"version {self.id} ({self.run_name}) ran on target {self.target}{where}; its directory "
+                f"{self.task_dir} is not on this filesystem — run this script where that directory "
+                "is, with the experiment directory there"
             )
         return _writer(self.results_file)
 
@@ -153,7 +156,9 @@ class Experiment:
         """The cells in order of first appearance."""
         by_name: dict[str, list[Version]] = {}
         for t in self.versions:
-            by_name.setdefault(t.run_name or t.id, []).append(t)
+            # the server names each version's cell (job.json "cell"); an
+            # older snapshot has only the run name
+            by_name.setdefault(t.cell or t.run_name or t.id, []).append(t)
         out = []
         for name, versions in by_name.items():
             versions = sorted(versions, key=lambda v: v.version)
@@ -218,10 +223,11 @@ def job(ref: str | os.PathLike | None = None, *, producer: str | None = None) ->
 def _locality(job_dir: Path, tasks: list, default: str, published_for: dict):
     """Which versions live in job_dir, as ``is_local(task) -> bool``.
 
-    job.json names the lane its copy was published for: a version is local
-    when its target matches and its generation does too, or (another
-    generation of the same target, e.g. before a config change on the same
-    machine) its directory is here. A path recorded under job_dir proves
+    job.json names the filesystem its copy was written on (``location``): a
+    version recorded on the same filesystem is local. Without locations
+    (older runq) a version is local when its target matches and its
+    generation does too, or (another generation of the same target) its
+    directory is here. A path recorded under job_dir proves
     nothing: two machines may use the same absolute path. A snapshot without
     ``published_for`` (older runq) falls back to the targets with a version
     directory present here, else the experiment's target."""
@@ -235,8 +241,11 @@ def _locality(job_dir: Path, tasks: list, default: str, published_for: dict):
 
     if published_for.get("target"):
         target, generation = published_for["target"], published_for.get("generation", "")
+        location = published_for.get("location", "")
 
         def is_local(t: dict) -> bool:
+            if location and t.get("location"):
+                return t["location"] == location
             if (t.get("target") or default) != target:
                 return False
             return t.get("generation", "") == generation or name(t) in present
@@ -255,6 +264,10 @@ def _task(job_dir: Path, t: dict, producer: str, default_target: str = "",
     local = is_local is None or is_local(t)
     recorded = t.get("task_dir") or t["id"]
     task_dir = job_dir / Path(recorded).name if local else Path(recorded)
+    if local and not task_dir.exists() and Path(recorded).is_absolute() and t.get("location"):
+        # on this filesystem but not under this directory (an earlier
+        # data_path): the recorded path is right here
+        task_dir = Path(recorded)
 
     def under(key: str, default: str) -> Path:
         raw = t.get(key)
@@ -268,6 +281,8 @@ def _task(job_dir: Path, t: dict, producer: str, default_target: str = "",
     return Version(
         id=t["id"],
         run_name=t.get("run_name", ""),
+        cell=t.get("cell", ""),
+        location=t.get("location", ""),
         status=t.get("status", ""),
         params=dict(t.get("params") or {}),
         task_dir=task_dir,

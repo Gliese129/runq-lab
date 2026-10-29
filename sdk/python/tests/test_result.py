@@ -284,3 +284,16 @@ def test_record_does_not_touch_current_step(clean_env, tmp_path, monkeypatch):
 def test_record_requires_context():
     with pytest.raises(RuntimeError, match="context"):
         runq.result({"acc": 0.9})
+
+
+@pytest.mark.parametrize("axes", [{"cell": "test"}, {"producer": "judge"}, {"param.lr": 0.1}])
+def test_result_refuses_runqs_own_names(clean_env, tmp_path, monkeypatch, axes):
+    """An axis named like what runq gives each record (its cell, scoring
+    script, params) would take that one's place; it is refused, nothing is
+    written."""
+    monkeypatch.chdir(tmp_path)
+    runq.context()
+    with pytest.raises(ValueError, match="name runq gives each record"):
+        runq.result({"acc": 0.5}, **axes)
+    out = tmp_path / "runq_results.jsonl"
+    assert not out.exists() or _read_records(out) == []

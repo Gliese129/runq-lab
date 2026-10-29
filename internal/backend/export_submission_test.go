@@ -16,6 +16,9 @@ func seedSecondSubmission(t *testing.T, st *store.Store, rows []store.TaskRow, i
 	t.Helper()
 	ctx := context.Background()
 	jobID := rows[0].JobID
+	if _, err := st.DB().Exec(`UPDATE job_batches SET command = 'python t.py {{args}}' WHERE job_id = ? AND seq = 1`, jobID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.DB().Exec(`INSERT INTO job_batches (job_id, seq, submitted_at, name, command, target, task_count, config_json)
 		VALUES (?, 2, 1, 'kl sweep', 'python b.py', 'b', 1, '{"target":"b","command":"python b.py","overrides":{"timeout":"3h"}}')`, jobID); err != nil {
 		t.Fatal(err)
@@ -93,5 +96,25 @@ func TestExportDoesNotMixSubmissions(t *testing.T) {
 		if !strings.Contains(line, "command: python t.py {{args}}") || !strings.Contains(line, "target: a") {
 			t.Fatalf("row %s = %q, want submission 1's command and target:\n%s", r.RunName, line, raw)
 		}
+	}
+}
+
+// A submission whose command was never recorded (before runq stored the
+// template) is exported as such — not as today's project command.
+func TestExportSaysAnUnrecordedCommand(t *testing.T) {
+	m, _, st := newDraftBackend(t)
+	rows := seedJob(t, st, "ex33334444", "success", "failed")
+	seedSecondSubmission(t, st, rows, 1, "success")
+	if _, err := st.DB().Exec(`UPDATE job_batches SET command = '', config_json = '{}' WHERE job_id = 'ex33334444' AND seq = 1`); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := exportDoc(t, m, "ex33334444")
+	if first := cellLine(raw, rows[0].RunName); !strings.Contains(first, "command: (not recorded)") {
+		t.Fatalf("row from the unrecorded submission = %q:\n%s", first, raw)
+	}
+	// an unsorted experiment stays unsorted when the file is submitted
+	// again (the section rules would otherwise re-sort it)
+	if !strings.Contains(raw, "section: unsorted") {
+		t.Fatalf("export drops section unsorted:\n%s", raw)
 	}
 }

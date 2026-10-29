@@ -127,17 +127,17 @@ export interface SavedView {
   updated_at: number
 }
 
+/** A saved view's curves series: one (metric, color/facet key). With
+ *  aggregate, the mean over its versions (lo/hi = ±std where n ≥ 2) at the
+ *  steps every version logged; else each version as logged. */
 export interface CurveSeries {
   key: Record<string, unknown>
   metric: string
   tasks: string[]
-  aligned: boolean
-  step?: number[]
-  /** null: a gap (some line has no value at that step) */
-  mean?: (number | null)[]
-  std?: (number | null)[]
+  lines?: CurveLine[]
+  mean?: CurveLine
   n?: number[]
-  per_task?: { task_id: string; step: number[]; value: (number | null)[] }[]
+  warning?: 'no_common_steps' | 'common_steps_only'
 }
 export interface SeriesResult {
   metric: string
@@ -160,6 +160,7 @@ export interface JobDefaultViews {
  *  versions, plus the project's pinned keys. */
 export interface CurveLine {
   task_id: string
+  /** the version's cell ("" on a mean) */
   cell: string
   /** a step, or for a point logged without one its write-order position */
   step: number[]

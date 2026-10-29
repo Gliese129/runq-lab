@@ -35,7 +35,7 @@
       <div v-if="res.append" class="append mb-2">
         <div>{{ t('drafts.append_summary', { batch: res.append.batch, new: res.append.new, version: res.append.new_version, skipped: res.append.skipped, rerun: res.append.rerun }) }}</div>
       </div>
-      <PlanTable :rows="res.rows" :baseline="res.baseline" :tags="cellTags" :accent="cellAccent" :dim="cellDim" />
+      <PlanTable :plan="res.plan" :tags="cellTags" :accent="cellAccent" :dim="cellDim" />
 
       <!-- Edit: the same YAML as `runq show dr… --yaml`, saved through the
            same rev-checked PUT the CLI uses. -->

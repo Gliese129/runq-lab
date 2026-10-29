@@ -186,6 +186,28 @@ func (t *TargetConfig) Type() string {
 	return TargetTypeLocal
 }
 
+// FilesystemID names the filesystem this target's files live on: the SSH
+// endpoint (user@host:port, default port 22), or this controller's own
+// disk. Two configs with one FilesystemID see the same files, whatever
+// else (templates, limits, keys) differs. resolve, when given, maps the
+// configured endpoint to the one OpenSSH really uses (rfs.EffectiveSSH),
+// so an alias or an omitted user names the same filesystem.
+func (t TargetConfig) FilesystemID(controllerID string, resolve func(host string, port int, user, jump string) (string, string, int, bool)) string {
+	if t.SSH == nil {
+		return "local:" + controllerID
+	}
+	user, host, port := t.SSH.User, t.SSH.Host, t.SSH.Port
+	if resolve != nil {
+		if u, h, p, ok := resolve(host, port, user, t.SSH.ProxyJump); ok {
+			user, host, port = u, h, p
+		}
+	}
+	if port == 0 {
+		port = 22
+	}
+	return fmt.Sprintf("ssh:%s@%s:%d", user, host, port)
+}
+
 // IsRemote reports whether this target uses SSH (remote filesystem).
 func (t *TargetConfig) IsRemote() bool {
 	return t.SSH != nil

@@ -94,6 +94,9 @@ type JobDetail struct {
 	// reservation …): they may differ between a cell's versions and are not
 	// part of what the experiment compares.
 	SchedulerParams []string `json:"scheduler_params,omitempty"`
+	// Plan lays out the cells (each its shown version) as the one plan
+	// table: `runq show` prints it, the Cells tab draws it.
+	Plan *job.PlanModel `json:"plan,omitempty"`
 	// DataDir is the job's workspace directory (RQ2-1 §F: the Data tab's
 	// fs/list root). ABSOLUTE path with TARGET semantics — it only means
 	// something on the filesystem of job.target; pair it with that target
@@ -120,6 +123,9 @@ type TaskView struct {
 	// one and names it: such a version is history and no longer counts.
 	Version      int    `json:"version,omitempty"`
 	SupersededBy string `json:"superseded_by,omitempty"`
+	// Changes: what this version changed against its cell's previous one
+	// (job detail only).
+	Changes []VersionChange `json:"changes,omitempty"`
 	// LastOutputAt is when the task's log last grew (unix seconds), as
 	// last observed; absent before the first observation.
 	LastOutputAt   *int64                        `json:"last_output_at,omitempty"`
@@ -183,6 +189,9 @@ type JobBatchView struct {
 	Target      string `json:"target"`
 	TaskCount   int    `json:"task_count"`
 	DraftID     string `json:"draft_id,omitempty"`
+	// CommandChanged: this submission ran another command than the one
+	// before it (compared as shell words; false when either is unknown).
+	CommandChanged bool `json:"command_changed,omitempty"`
 	// Note is the submission's reason (job.yaml note:); Overrides its
 	// resource overrides — with Command and Target, what a version of a
 	// cell changed against the cell's previous one.

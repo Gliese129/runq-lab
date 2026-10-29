@@ -215,7 +215,9 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	jobRoot := path.Join(projRoot, jobID)
 	if into != nil {
 		jobID, jobRoot = into.job.ID, path.Join(projRoot, into.job.ID)
-		if into.root != "" {
+		// next to the earlier versions while they are under today's
+		// storage root; after a data_path move, the fresh directory
+		if into.root != "" && strings.HasPrefix(into.root+"/", projRoot+"/") {
 			jobRoot = into.root
 		}
 	}
@@ -234,7 +236,7 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	}
 
 	if into != nil {
-		summary, err := classifyAppend(&plan, into, jobCfg.Rerun, proj.CmdTemplate)
+		summary, err := classifyAppend(&plan, into, jobCfg.Rerun)
 		if err != nil {
 			return "", nil, err
 		}
@@ -274,6 +276,7 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	jobCfg.Command = plan.CommandTemplate
 	jobCfg.Target = b.Cfg.Name
 	jobCfg.EffectiveConfig = plan.EffectiveConfig
+	jobCfg.SchedulerParams = append([]string{}, plan.SchedulerParams...)
 	cfgJSON, err := json.Marshal(jobCfg)
 	if err != nil {
 		return "", nil, fmt.Errorf("marshal job config: %w", err)
@@ -290,7 +293,7 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 	if err := b.FS.MkdirAll(jobRoot, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create job directory: %w", err)
 	}
-	if into == nil || into.root == "" { // a new experiment, or its first submission to this target
+	if into == nil || jobRoot != into.root { // a new experiment, or its first submission to this directory
 		_ = workspace.WriteMarker(ctx, b.FS, jobRoot, plan.Name)
 	}
 
@@ -322,7 +325,8 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 
 		// Build the complete ledger image in memory. No external submission can
 		// happen until the job and every pending task commit together below.
-		row := planToTaskRow(t, plan, now, "", b.Cfg.Name, b.Cfg.SemanticGeneration())
+		row := planToTaskRow(t, plan, now, "", b.Cfg.Name, b.generation())
+		row.Location = b.Location
 		rows = append(rows, row)
 	}
 

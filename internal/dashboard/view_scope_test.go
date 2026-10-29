@@ -45,6 +45,7 @@ func (h *scopeHistorian) sources() []string {
 func (h *scopeHistorian) SourceHistory(_ context.Context, id, _, _ string, _ int) (*workspace.ExactHistory, error) {
 	h.read(id)
 	return &workspace.ExactHistory{Frames: []workspace.ExactFrame{{At: 1}, {At: 2}},
+		Ranges: map[string][2]float64{"eval": {1, 2}, "train": {1, 1000000}},
 		Series: []workspace.ExactSeries{{Key: "loss", Step: []float64{1, 2}, Value: []float64{.5, .2}, Signature: "same"}}}, nil
 }
 
@@ -236,5 +237,32 @@ func TestViewFramesFollowFilterAndProducer(t *testing.T) {
 	// frame rows name their version as the table's do
 	if !strings.Contains(body, `"version":2`) {
 		t.Fatalf("frame contributors lack the version: %s", body)
+	}
+}
+
+// A view reading one section frames that section's span: another section
+// reaching step 1,000,000 does not stretch it.
+func TestViewFramesSpanTheViewsSection(t *testing.T) {
+	s, _, st := scopeFixture(t)
+	last := func() float64 {
+		var out struct {
+			Frames []struct {
+				At float64 `json:"at"`
+			} `json:"frames"`
+		}
+		if err := json.Unmarshal([]byte(serveView(t, s, "/api/v1/projects/p/views/v/frames?count=5")), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Frames[len(out.Frames)-1].At
+	}
+	saveScopeView(t, st, framesSpec(nil, nil))
+	if at := last(); at != 2 {
+		t.Fatalf("eval view ends at %v, want 2", at)
+	}
+	every := framesSpec(nil, nil)
+	every.Section = ""
+	saveScopeView(t, st, every)
+	if at := last(); at != 1000000 {
+		t.Fatalf("a view of every section ends at %v, want 1000000", at)
 	}
 }

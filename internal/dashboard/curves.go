@@ -9,20 +9,7 @@ import (
 
 	"github.com/gliese129/runq-lab/internal/backend"
 	"github.com/gliese129/runq-lab/internal/store"
-	"github.com/gliese129/runq-lab/internal/workspace"
 )
-
-// curveLine is one cell's curve: its selected version's points as logged
-// (no interpolation), with the estimate band where runq.log wrote one.
-type curveLine struct {
-	TaskID string                 `json:"task_id"`
-	Cell   string                 `json:"cell"`
-	Step   []float64              `json:"step"`
-	Value  workspace.CurveValues  `json:"value"` // null = a gap
-	Lo     []*float64             `json:"lo,omitempty"`
-	Hi     []*float64             `json:"hi,omitempty"`
-	Series *workspace.CurveSeries `json:"series,omitempty"`
-}
 
 type curve struct {
 	Key   string      `json:"key"`
@@ -116,8 +103,7 @@ func (s *Server) handleJobCurves(w http.ResponseWriter, r *http.Request) {
 				at[sr.Key] = i
 				out.Curves = append(out.Curves, curve{Key: sr.Key})
 			}
-			out.Curves[i].Lines = append(out.Curves[i].Lines, curveLine{TaskID: t.ID, Cell: cell,
-				Step: sr.Step, Value: sr.Value, Lo: sr.Lo, Hi: sr.Hi, Series: sr.Series})
+			out.Curves[i].Lines = append(out.Curves[i].Lines, lineOf(t.ID, cell, sr))
 		}
 	}
 	writeJSON(w, http.StatusOK, out)

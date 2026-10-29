@@ -121,6 +121,27 @@ func Rows(cfg *JobConfig) ([]Row, error) { return PlanRows(cfg, nil) }
 // not make another cell. Sweep rows that then differ only in scheduler
 // params would be one cell twice, which is an error naming them.
 func PlanRows(cfg *JobConfig, scheduler map[string]bool) ([]Row, error) {
+	rows, err := planRows(cfg, scheduler)
+	if err != nil {
+		return nil, err
+	}
+	// Names runq reads itself: a param named like a row key would collide
+	// with it in cells: rows (and in export), and "@" in a cell name is
+	// where an address ex…/<cell>@vN names a version.
+	for _, r := range rows {
+		for _, k := range ReservedRowKeys {
+			if _, ok := r.Params[k]; ok {
+				return nil, fmt.Errorf("param %q clashes with the job.yaml row key %q; rename the param", k, k)
+			}
+		}
+		if strings.Contains(r.Run, "@") {
+			return nil, fmt.Errorf("cell %q: a cell name cannot contain @ (ex…/<cell>@vN names a version); rename it", r.Run)
+		}
+	}
+	return rows, nil
+}
+
+func planRows(cfg *JobConfig, scheduler map[string]bool) ([]Row, error) {
 	if len(cfg.Tasks) > 0 && len(cfg.Sweep) > 0 {
 		return nil, fmt.Errorf("job has both sweep: and cells: — use one (sweep generates rows, cells lists them)")
 	}

@@ -85,6 +85,9 @@ type ExactHistory struct {
 	By     string        `json:"by"`
 	Frames []ExactFrame  `json:"frames"`
 	Series []ExactSeries `json:"series"`
+	// Ranges is each results section's [min, max] along By (frames
+	// queries): a view reading one section frames only its span.
+	Ranges map[string][2]float64 `json:"ranges,omitempty"`
 }
 
 // ProducerResultsStream names the results stream of a producer

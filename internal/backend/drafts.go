@@ -81,11 +81,13 @@ type DraftView struct {
 }
 
 type DraftResult struct {
-	Draft    DraftView `json:"draft"`
-	Table    string    `json:"table"` // plan table (run × varying params)
-	Rows     []job.Row `json:"rows"`  // the same plan, structured (dashboard)
-	Baseline string    `json:"baseline"`
-	Preview  string    `json:"preview,omitempty"` // full rendered preview (create/edit, GetDraftPreview)
+	Draft DraftView `json:"draft"`
+	Table string    `json:"table"` // plan table (run × varying params)
+	// Plan is the same table as a model (the dashboard draws it).
+	Plan     job.PlanModel `json:"plan"`
+	Rows     []job.Row     `json:"rows"` // the same plan, structured (dashboard)
+	Baseline string        `json:"baseline"`
+	Preview  string        `json:"preview,omitempty"` // full rendered preview (create/edit, GetDraftPreview)
 	// YAML is the editable form (`runq show dr… --yaml`) of this same rev,
 	// so a page never pairs a table with another rev's text.
 	YAML     string   `json:"yaml"`
@@ -253,7 +255,8 @@ func (m *MultiBackend) draftResult(ctx context.Context, d *store.DraftRow) (*Dra
 	if err != nil {
 		return nil, err
 	}
-	res := &DraftResult{Draft: view, Table: job.PlanTable(rows, cfg.Baseline, order), Rows: rows, YAML: string(text)}
+	plan := job.BuildPlan(rows, cfg.Baseline, order, m.schedulerParams(ctx, d.Project, d.Target))
+	res := &DraftResult{Draft: view, Table: job.RenderPlan(plan), Plan: plan, Rows: rows, YAML: string(text)}
 	if len(rows) > 0 {
 		res.Baseline = rows[job.BaselineIndex(rows, cfg.Baseline)].Run
 	}
@@ -442,7 +445,7 @@ func (m *MultiBackend) SubmitDraft(ctx context.Context, ref string, opts DraftSu
 	if b, err := m.store.DraftBatch(ctx, d.ID); err != nil {
 		return nil, err
 	} else if b != nil {
-		if err := m.store.MarkDraftSubmitted(ctx, d.ID, b.JobID); err != nil && !errors.Is(err, store.ErrDraftSubmitted) {
+		if err := m.store.MarkDraftSubmitted(ctx, d.ID, b.JobID, ""); err != nil && !errors.Is(err, store.ErrDraftSubmitted) {
 			return nil, err
 		}
 		return &DraftSubmitResult{JobID: b.JobID, TotalTasks: b.TaskCount, DraftID: d.ID, AlreadySubmitted: true}, nil
@@ -481,7 +484,9 @@ func (m *MultiBackend) SubmitDraft(ctx context.Context, ref string, opts DraftSu
 		return nil, err
 	}
 	// The job exists now: record that even if the caller has gone away.
-	if err := m.store.MarkDraftSubmitted(context.WithoutCancel(ctx), d.ID, jobID); err != nil && !errors.Is(err, store.ErrDraftSubmitted) {
+	// The frozen draft reads as what was submitted, flags included.
+	submitted, _ := json.Marshal(cfg)
+	if err := m.store.MarkDraftSubmitted(context.WithoutCancel(ctx), d.ID, jobID, string(submitted)); err != nil && !errors.Is(err, store.ErrDraftSubmitted) {
 		return nil, err
 	}
 	out := &DraftSubmitResult{JobID: jobID, TotalTasks: n, DraftID: d.ID, PreflightWarnings: report.Warnings()}
@@ -537,6 +542,9 @@ func (m *MultiBackend) storedAppendSummary(ctx context.Context, cfg job.JobConfi
 		return nil, err
 	}
 	exclude := m.schedulerParams(ctx, cfg.Project, target)
+	for name := range job.SubmittedSchedulerParams(batchConfigJSON(batches)) {
+		exclude[name] = true
+	}
 	projectCmd := ""
 	if proj, err := m.registry.GetCached(ctx, cfg.Project); err == nil {
 		projectCmd = proj.CmdTemplate
@@ -545,7 +553,7 @@ func (m *MultiBackend) storedAppendSummary(ctx context.Context, cfg job.JobConfi
 	if command == "" {
 		command = projectCmd
 	}
-	cells, err := job.ClassifyCells(rows, remote.ExistingCells(tasks, picks, batches, projectCmd), exclude, cfg.Rerun, command)
+	cells, err := job.ClassifyCells(rows, remote.ExistingCells(tasks, picks, batches), exclude, cfg.Rerun, command)
 	if err != nil {
 		return nil, err
 	}
@@ -573,6 +581,14 @@ func (m *MultiBackend) schedulerParams(ctx context.Context, project string, targ
 				}
 			}
 		}
+	}
+	return out
+}
+
+func batchConfigJSON(batches []store.JobBatch) []string {
+	out := make([]string, len(batches))
+	for i, b := range batches {
+		out[i] = b.ConfigJSON
 	}
 	return out
 }

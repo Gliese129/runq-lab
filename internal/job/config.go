@@ -1,6 +1,7 @@
 package job
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/gliese129/runq-lab/internal/project"
@@ -46,6 +47,11 @@ type JobConfig struct {
 	Baseline string `yaml:"baseline,omitempty" json:"baseline,omitempty"`
 	// DraftID is set by the service when a draft is submitted (provenance).
 	DraftID string `yaml:"-" json:"draft_id,omitempty"`
+	// SchedulerParams are the params only the scheduler read when this was
+	// submitted (scope: scheduler, submit_template refs) — the submission's
+	// own answer, kept when the project or target changes later. nil: not
+	// recorded (a submission before it was).
+	SchedulerParams []string `yaml:"-" json:"scheduler_params"`
 	// Draft and Rev head a draft's editable YAML: `runq draft edit` checks
 	// them; as input to `runq draft` they are ignored.
 	Draft string `yaml:"draft,omitempty" json:"-"`
@@ -160,4 +166,26 @@ func (c *JobConfig) UnmarshalYAML(n *yaml.Node) error {
 		c.Tasks, c.LegacyTasks, c.legacyTasksKey = c.LegacyTasks, nil, true
 	}
 	return nil
+}
+
+// SubmittedSchedulerParams is the union of the scheduler-only params the
+// given submission configs (JobConfig JSON) recorded; nil when none of them
+// recorded any (all submitted before runq kept them).
+func SubmittedSchedulerParams(configs []string) map[string]bool {
+	var out map[string]bool
+	for _, raw := range configs {
+		var c struct {
+			SchedulerParams []string `json:"scheduler_params"`
+		}
+		if json.Unmarshal([]byte(raw), &c) != nil || c.SchedulerParams == nil {
+			continue
+		}
+		if out == nil {
+			out = map[string]bool{}
+		}
+		for _, name := range c.SchedulerParams {
+			out[name] = true
+		}
+	}
+	return out
 }

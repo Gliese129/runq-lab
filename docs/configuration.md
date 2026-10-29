@@ -163,7 +163,8 @@ sweep:                          # a LIST of blocks; blocks combine via
 overrides:                      # optional per-job overrides of project defaults
   gpus_per_task: 4
   env:
-    WANDB_RUN_GROUP: sweep-v2
+    WANDB_RUN_GROUP: sweep-v2   # runq's default group (the experiment's name)
+                                # and WANDB_TAGS (the sweep keys) yield to yours
 ```
 
 ### Named cells: `cells:` instead of `sweep:`

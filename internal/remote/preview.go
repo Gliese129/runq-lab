@@ -45,7 +45,9 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 	jobRoot := path.Join(root, deps.JobID)
 	if into != nil {
 		deps.JobID, jobRoot = into.job.ID, path.Join(root, into.job.ID)
-		if into.root != "" {
+		// next to the earlier versions while they are under today's
+		// storage root; after a data_path move, the fresh directory
+		if into.root != "" && strings.HasPrefix(into.root+"/", root+"/") {
 			jobRoot = into.root
 		}
 	}
@@ -58,7 +60,7 @@ func (b *Backend) CompilePreview(ctx context.Context, jobCfg job.JobConfig, proj
 
 	var s strings.Builder
 	if into != nil {
-		summary, err := classifyAppend(&plan, into, jobCfg.Rerun, proj.CmdTemplate)
+		summary, err := classifyAppend(&plan, into, jobCfg.Rerun)
 		if err != nil {
 			return "", submitplan.Plan{}, err
 		}

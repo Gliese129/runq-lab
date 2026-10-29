@@ -75,6 +75,11 @@ type TaskFinisher interface {
 // wraps FS.Exec("sh", "-c", ...).
 type Backend struct {
 	Cfg *config.TargetConfig
+	// Generation stamps the tasks this lane submits (its config's semantic
+	// hash, or the user config's for a synthesized local lane); Location
+	// is the filesystem they land on (config.FilesystemID).
+	Generation string
+	Location   string
 	// Scope is this lane's generation-ownership predicate (RQ-75): EVERY
 	// lifecycle query (probe candidates, marker reconcile, heartbeat,
 	// orphan detection) filters by it, so active and retiring lanes never
@@ -255,8 +260,9 @@ const (
 )
 
 // doneDir returns the target-level done-marker directory: explicit done_dir
-// wins, then <workspace>/.runq-done, else "" (marker detection disabled; the
-// probe path still works). Shared across projects on purpose: one readdir
+// wins, then <storage root>/.runq-done (data_path, or the pre-rc6
+// workspace), else "" (marker detection disabled; the probe path still
+// works). Shared across projects on purpose: one readdir
 // covers every in-flight task on this target.
 func (b *Backend) doneDir() string {
 	if b.Cfg == nil {
@@ -265,10 +271,11 @@ func (b *Backend) doneDir() string {
 	if b.Cfg.DoneDir != "" {
 		return b.Cfg.DoneDir
 	}
-	if b.Cfg.Workspace == "" {
+	root := b.Cfg.StorageRoot()
+	if root == "" {
 		return ""
 	}
-	return path.Join(b.Cfg.Workspace, doneDirName)
+	return path.Join(root, doneDirName)
 }
 
 // rowToTask builds the minimal scheduler.Task that FinishTask needs from a
@@ -314,3 +321,11 @@ func (b *Backend) refreshJobStatus(ctx context.Context, jobID string) error {
 
 // nowUnix is a seam for tests; production uses the wall clock.
 var nowUnix = func() int64 { return time.Now().Unix() }
+
+// generation is the lane generation this backend stamps.
+func (b *Backend) generation() string {
+	if b.Generation != "" {
+		return b.Generation
+	}
+	return b.Cfg.SemanticGeneration()
+}

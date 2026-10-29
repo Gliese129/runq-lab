@@ -121,6 +121,12 @@ run.sh            — HPC only: generated wrapper script
 status.json       — HPC only: self-reported status
 ```
 
+Each version records the filesystem its directory is on (`ssh:user@host:port`,
+or this machine). That, not the target's name or configuration, decides who reads
+its files: after a config edit that moves no file (`max_inflight`, templates) the
+target still reads its results, and after a host or `data_path` move an
+`--into` starts a fresh directory instead of writing to the old path.
+
 Project and experiment directories are named by id, so renaming moves nothing; each
 holds an empty `0-<name>` marker that sorts first in `ls`. With `data_path` set,
 `<working_dir>/.runq/<project_id>` links to the project's data directory.

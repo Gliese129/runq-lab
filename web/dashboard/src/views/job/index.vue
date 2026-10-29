@@ -78,15 +78,14 @@
          version. Same table as `runq show ex…` / the draft page. -->
     <div v-else-if="tab === 'plan'">
       <PlanTable
-        :rows="planRows"
-        :baseline="detail.config?.baseline"
+        v-if="detail.plan"
+        :plan="detail.plan"
         :statuses="cells.map((c) => c.selected.status)"
         :row-links="cells.map(() => true)"
         :tags="cellTags"
         :accent="cellAccent"
         :dim="cellDim"
         :extra-header="t('cells.version')"
-        :scheduler-params="detail.scheduler_params"
         @open="(i) => onClickTask(cells[i].selected.id)"
       >
         <template #extra="{ index }">
@@ -113,7 +112,7 @@
           <span class="text-on-surface-variant">{{ new Date(b.submitted_at * 1000).toLocaleString() }}</span>
           <span v-if="b.note" class="note text-truncate" :title="b.note">{{ b.note }}</span>
           <span v-else-if="b.name" class="text-truncate">{{ b.name }}</span>
-          <code v-if="b.command" class="cmd text-truncate" :class="{ changed: b.seq > 1 && commandOf(b.seq) !== commandOf(b.seq - 1) }" :title="b.command">{{ b.command }}</code>
+          <code v-if="b.command" class="cmd text-truncate" :class="{ changed: b.command_changed }" :title="b.command">{{ b.command }}</code>
           <router-link v-if="b.draft_id" class="draft mono" :to="{ name: 'draft', params: { draftId: b.draft_id } }" :title="t('plan.batch_draft')">{{ b.draft_id }}</router-link>
         </div>
         <div v-if="focusSeq" class="focus-hint text-caption text-on-surface-variant">
@@ -203,7 +202,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useCancelling } from '@/composables/useCancelling'
 import { useJobDetailQuery, useCompareQuery, useJobResultsQuery, useJobActions, useJobActivityQuery, useJobDefaultViewsQuery } from '@/queries/useJobQueries'
 import { lastOutputTs } from '@/utils/lastOutput'
-import { jobCells, commandVaries, versionChanges, changesLine, previousVersion, type CellView } from '@/utils/jobCells'
+import { jobCells, commandVaries, changesLine, inPlanOrder, type CellView } from '@/utils/jobCells'
 import { useQueryClient } from '@tanstack/vue-query'
 import { qk } from '@/queries/keys'
 import { useTaskActions } from '@/queries/useTaskQueries'
@@ -223,7 +222,7 @@ import ResultsEmpty from './ResultsEmpty.vue'
 import JobCurves from './JobCurves.vue'
 import DefaultViewBlock from '@/components/views/DefaultViewBlock.vue'
 import PlanTable from '@/components/PlanTable.vue'
-import type { PlanRow, TaskView } from '@/types/api'
+import type { TaskView } from '@/types/api'
 import { wandbProjectUrl } from '@/utils/wandbUrl'
 
 const props = defineProps<{ project: string; jobId: string }>()
@@ -291,32 +290,22 @@ const TABS = new Set(['tasks', 'plan', 'results', 'curves', 'data'])
 // Cells: each shows one version (pinned, else latest); its row reads that
 // version's params and status.
 const batches = computed(() => detail.value?.batches ?? [])
-const cells = computed(() => jobCells(detail.value?.tasks ?? [], detail.value?.pinned))
+// in the backend plan's row order, so the per-row props line up with it
+const cells = computed(() => inPlanOrder(jobCells(detail.value?.tasks ?? [], detail.value?.pinned), detail.value?.plan))
 // A focused submission (its sN clicked) fades the cells it did not touch
 // and tags the others with the version it made.
 const focusSeq = ref(0)
 const madeBy = (c: CellView) => c.versions.find((v) => (v.batch_seq ?? 1) === focusSeq.value)
 const cellDim = computed(() => cells.value.map((c) => !!focusSeq.value && !madeBy(c)))
-const cellAccent = computed(() => cells.value.map((c) => (focusSeq.value ? !!madeBy(c) : commandVaries(c, batches.value))))
+const cellAccent = computed(() => cells.value.map((c) => (focusSeq.value ? !!madeBy(c) : commandVaries(c))))
 const cellTags = computed(() => cells.value.map((c) => {
   const made = focusSeq.value ? madeBy(c) : undefined
   if (made) return `s${focusSeq.value} → v${made.version ?? 1}`
   const parts: string[] = []
   if (c.versions.length > 1) parts.push(`v${c.selected.version ?? c.versions.length}/${c.versions.length}`)
-  if (commandVaries(c, batches.value)) parts.push(t('cells.commands_differ'))
+  if (commandVaries(c)) parts.push(t('cells.commands_differ'))
   return parts.join(' · ') || undefined
 }))
-// Pre-rc6 tasks have no run name: fall back to the short task id.
-const planRows = computed<PlanRow[]>(() => {
-  const notes = new Map<string, string[]>()
-  for (const r of detail.value?.config?.tasks ?? []) if (r.run && r.needs_code) notes.set(String(r.run), r.needs_code)
-  return cells.value.map((c) => ({
-    run: c.selected.run_name || c.selected.id.slice(0, 8),
-    params: c.selected.params ?? {},
-    needs_code: c.selected.run_name ? notes.get(c.selected.run_name) : undefined,
-  }))
-})
-
 // ── Version picker: latest follows the default rule; a number pins. Each
 // version (newest first) says its submission and what it changed against
 // the cell's previous version; under the picker, the shown version's
@@ -324,9 +313,6 @@ const planRows = computed<PlanRow[]>(() => {
 const LATEST = '__latest__'
 const qc = useQueryClient()
 const pinning = ref('')
-function commandOf(seq: number): string {
-  return (batches.value.find((b) => b.seq === seq)?.command ?? '').split(/\s+/).join(' ')
-}
 function latestOf(c: CellView): string {
   const newest = c.versions.map((_, i, a) => a[a.length - 1 - i])
   const best = newest.find((v) => v.status === 'success') ?? newest[0]
@@ -335,7 +321,7 @@ function latestOf(c: CellView): string {
 function versionOptions(c: CellView) {
   const newest = c.versions.map((_, i, a) => a[a.length - 1 - i])
   return newest.map((v) => {
-    const changed = changesLine(versionChanges(previousVersion(c, v), v, batches.value))
+    const changed = changesLine(v.changes)
     return { id: v.id, label: [`v${v.version ?? ''}`, t('status.task.' + v.status), `s${v.batch_seq ?? 1}`, changed].filter(Boolean).join(' · ') }
   })
 }
@@ -343,7 +329,7 @@ function whyOf(c: CellView): string {
   if (c.versions.length < 2) return ''
   const v = c.selected
   const note = batches.value.find((b) => b.seq === (v.batch_seq ?? 1))?.note
-  return [`s${v.batch_seq ?? 1}`, note, changesLine(versionChanges(previousVersion(c, v), v, batches.value))].filter(Boolean).join(' · ')
+  return [`s${v.batch_seq ?? 1}`, note, changesLine(v.changes)].filter(Boolean).join(' · ')
 }
 async function pin(c: CellView, value: string) {
   pinning.value = c.name

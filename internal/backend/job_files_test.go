@@ -207,10 +207,10 @@ func newJobFilesLane(t *testing.T, st *store.Store, name, workspace string) *SSH
 	return lane
 }
 
-// A version owned by a retiring lane generation (the target moved host or
-// data path) is that lane's: the active lane neither publishes job.json for
-// it nor ingests its producer files; the retiring lane does both, into its
-// own copy.
+// A version without a recorded location falls back to generation
+// ownership: the active lane neither publishes job.json for a retiring
+// generation's version nor ingests its producer files; the retiring lane
+// does both, into its own copy.
 func TestJobFilesFollowLaneGeneration(t *testing.T) {
 	ctx := context.Background()
 	f := newJobFilesFixture(t)
@@ -240,7 +240,7 @@ func TestJobFilesFollowLaneGeneration(t *testing.T) {
 
 	retiring.reconcileJobFiles(ctx, true, true)
 	snap := readSnapshot(t, f.jobDir)
-	if snap.PublishedFor != (JobSnapshotCopy{Target: "local", Generation: retiring.Generation()}) {
+	if snap.PublishedFor != (JobSnapshotCopy{Target: "local", Generation: retiring.Generation(), Location: retiring.scope.Location}) {
 		t.Fatalf("published_for = %+v", snap.PublishedFor)
 	}
 	for _, task := range snap.Tasks {
@@ -309,5 +309,46 @@ func TestJobFilesCopyPerTarget(t *testing.T) {
 		if snap := readSnapshot(t, dir); snap.Job.Name != "sweep v2" {
 			t.Fatalf("changed copy on %s not republished: %+v", name, snap.Job)
 		}
+	}
+}
+
+// A config edit that moves no file (max_inflight) makes a new generation;
+// the old one retires and stops scanning. A version on the same filesystem
+// is still read: the active lane ingests a scorer's late results for it.
+func TestJobFilesFollowLocationAcrossGenerations(t *testing.T) {
+	ctx := context.Background()
+	f := newJobFilesFixture(t)
+	if _, err := f.st.DB().ExecContext(ctx, `UPDATE tasks SET target_generation = 'retired-gen', location = ?`, f.lane.scope.Location); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.taskDir, "results.scorer.jsonl"),
+		[]byte(`{"ts":1,"section":"eval","axes":{},"metrics":{"acc":0.9}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.lane.reconcileJobFiles(ctx, true, true)
+	if rows, err := f.st.ListResultRecords(ctx, "job"); err != nil || len(rows) != 1 {
+		t.Fatalf("late scorer results of a retired generation's version: %+v, %v", rows, err)
+	}
+	if snap := readSnapshot(t, f.jobDir); snap.PublishedFor.Location != f.lane.scope.Location || len(snap.Tasks) == 0 || snap.Tasks[0].Location != f.lane.scope.Location {
+		t.Fatalf("job.json = %+v", snap)
+	}
+}
+
+// A synthesized local lane takes the generation the reconciler compares
+// (its user config's), and its filesystem is this controller's disk.
+func TestLaneGenerationAndLocationOverride(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	target := config.TargetConfig{Name: "local", Workspace: t.TempDir(), SubmitTemplate: "true", MaxInflight: 1}
+	lane, err := NewSSHBackend(SSHBackendConfig{Target: target, Store: st, GlobalCfg: &config.GlobalConfig{}, FS: rfs.NewLocalFS(),
+		ControllerID: "c1", Generation: "user-config-gen"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lane.Generation() != "user-config-gen" || lane.Location() != "local:c1" {
+		t.Fatalf("generation %q location %q", lane.Generation(), lane.Location())
 	}
 }

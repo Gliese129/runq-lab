@@ -5,10 +5,11 @@ package backend
 // so the store is current before calling this shared assembler.
 //
 // Key classification ("smart parse") doctrine — ZERO path/name inference:
-//   - `model` is the ONLY convention identity key (role=identity), typed —
-//     model=1 and model="1" are distinct series (see identityKey). Records
-//     without it fall back to their task_id — a fact of the write contract,
-//     not a guess (each task then forms its own series: ablation semantics).
+//   - A series never spans versions: each task_id is its own. Within one,
+//     `model` is the convention identity key (role=identity), typed —
+//     model=1 and model="1" are distinct series (see identityKey), so a
+//     version scoring several models keeps them apart. Two cells logging
+//     the same model stay two series (they once merged into one row).
 //   - Any other axis whose values are numeric AND vary within at least one
 //     series is an x candidate (role=x), first-appearance order, first =
 //     primary. Everything else is a label.
@@ -110,6 +111,9 @@ func jobResultsFromDB(ctx context.Context, st *store.Store, jobID string) (*JobR
 		}
 		rec := &resultRec{taskID: taskID, ts: row.TS, axes: axes, metrics: flattenEst(metrics), keys: store.ObjectKeys(row.MetricsJSON), order: i}
 		rec.identity, rec.label = identityKey(axes["model"], taskID)
+		if !strings.HasPrefix(rec.identity, "task:") {
+			rec.identity = "task:" + taskID + "\x00" + rec.identity
+		}
 		// A section or a scoring script is its own series: two producers
 		// scoring one model must not collapse into one "latest" row.
 		// Only a named section counts; "auto-…" is derived from the record's

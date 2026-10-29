@@ -397,15 +397,16 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 	samples := map[string]*sample{}
 	for _, r := range selected {
 		vals := map[string]any{}
+		// runq's own keys win over an axis of the same name (written
+		// before the SDK refused them): the cell and params are the
+		// version's, never a record's say.
 		for k, v := range r.Axes {
 			vals[k] = v
 		}
 		for k, v := range r.Params {
 			vals["param."+k] = v
 		}
-		if _, axis := vals[CellKey]; !axis {
-			vals[CellKey] = cellOf(r)
-		}
+		vals[CellKey] = cellOf(r)
 		key := map[string]any{}
 		for _, k := range rowKeys {
 			key[k] = vals[k]

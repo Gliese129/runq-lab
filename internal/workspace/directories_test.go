@@ -42,3 +42,16 @@ func TestTaskDirectoriesStayInTaskDirAndKeepCachesOutsideContract(t *testing.T) 
 		t.Fatal("invalid W&B root silently accepted")
 	}
 }
+
+// runq's W&B group and tags are defaults: environment: sets them if it
+// wants; runq's own directories still always win.
+func TestTaskEnvKeepsConfiguredWandbGroup(t *testing.T) {
+	id := Identity{TaskID: "t", TaskDir: "/d", JobName: "ablation", SweepKeys: []string{"lr"}}
+	env := TaskEnv(id, map[string]string{"WANDB_RUN_GROUP": "paper", "WANDB_TAGS": "x", "WANDB_DIR": "elsewhere"}, "/w")
+	if env["WANDB_RUN_GROUP"] != "paper" || env["WANDB_TAGS"] != "x" || env["WANDB_DIR"] != "/d" {
+		t.Fatalf("env = %v", env)
+	}
+	if env := TaskEnv(id, nil, "/w"); env["WANDB_RUN_GROUP"] != "ablation" || env["WANDB_TAGS"] != "lr" {
+		t.Fatalf("defaults = %v", env)
+	}
+}

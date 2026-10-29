@@ -12,7 +12,6 @@ import (
 	"github.com/gliese129/runq-lab/internal/job"
 	"github.com/gliese129/runq-lab/internal/utils"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 // ── runq show / archive / dashboard (rc6: one entry point per verb) ──
@@ -123,16 +122,9 @@ func showJob(cmd *cobra.Command, be backend.Backend, ref string, jsonOut bool) e
 	if j.Description != "" {
 		fmt.Println(j.Description)
 	}
-	if ex, ok := be.(backend.JobExporter); ok {
-		if text, err := ex.ExportJob(ctx, j.ID); err == nil {
-			var cfg job.JobConfig
-			if yaml.Unmarshal(text, &cfg) == nil {
-				if rows, err := job.Rows(&cfg); err == nil {
-					fmt.Println()
-					fmt.Print(job.PlanTable(rows, cfg.Baseline, nil))
-				}
-			}
-		}
+	if detail.Plan != nil {
+		fmt.Println()
+		fmt.Print(job.RenderPlan(*detail.Plan))
 	}
 	printDashboardLink(os.Stdout, dashboard.JobURL(dashboardBase(ctx, be), j.Project, j.ID))
 	wait.print(os.Stdout)

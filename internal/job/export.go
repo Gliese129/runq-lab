@@ -27,7 +27,7 @@ type ExportInput struct {
 	Project        string
 	Name           string
 	Description    string
-	Section        string // "" or "unsorted" = left out
+	Section        string // "" = left out; unsorted is written, so the rules do not re-sort it
 	Target         string
 	Command        string
 	Overrides      *Overrides
@@ -88,7 +88,7 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 	if in.DraftID != "" && in.Note != "" {
 		add("note", str(in.Note))
 	}
-	if in.Section != "" && in.Section != "unsorted" {
+	if in.Section != "" {
 		add("section", str(in.Section))
 	}
 	if in.Target != "" {
@@ -254,73 +254,6 @@ func NameRows(rows []Row) {
 			return
 		}
 	}
-}
-
-// PlanTable renders rows as a table of run × the params that vary, with
-// cells equal to the baseline left blank, and a "fixed:" line for the rest.
-func PlanTable(rows []Row, baseline string, declared []string) string {
-	if len(rows) == 0 {
-		return "(no rows)\n"
-	}
-	b := BaselineIndex(rows, baseline)
-	base := rows[b].Params
-	order := paramOrder(rows, declared)
-	var cols, fixedParts []string
-	for _, k := range order {
-		if inEveryRow(rows, k) && !varies(rows, k) {
-			fixedParts = append(fixedParts, k+"="+FormatValue(base[k]))
-		} else {
-			cols = append(cols, k)
-		}
-	}
-	header := append([]string{"CELL"}, cols...)
-	header = append(header, "NOTE")
-	table := [][]string{header}
-	for i, r := range rows {
-		run := r.Run
-		if i == b {
-			run += " (baseline)"
-		}
-		line := []string{run}
-		for _, k := range cols {
-			v, ok := r.Params[k]
-			switch {
-			case !ok:
-				line = append(line, "∅")
-			case i != b && SameValue(v, base[k]):
-				line = append(line, "")
-			default:
-				line = append(line, FormatValue(v))
-			}
-		}
-		note := ""
-		if len(r.NeedsCode) > 0 {
-			note = "needs code: " + strings.Join(r.NeedsCode, ", ")
-		}
-		table = append(table, append(line, note))
-	}
-	widths := make([]int, len(header))
-	for _, line := range table {
-		for i, c := range line {
-			if n := len([]rune(c)); n > widths[i] {
-				widths[i] = n
-			}
-		}
-	}
-	var out strings.Builder
-	for _, line := range table {
-		for i, c := range line {
-			out.WriteString(c)
-			if i < len(line)-1 {
-				out.WriteString(strings.Repeat(" ", widths[i]-len([]rune(c))+2))
-			}
-		}
-		out.WriteString("\n")
-	}
-	if len(fixedParts) > 0 {
-		out.WriteString("fixed: " + strings.Join(fixedParts, ", ") + "\n")
-	}
-	return out.String()
 }
 
 func varies(rows []Row, k string) bool {

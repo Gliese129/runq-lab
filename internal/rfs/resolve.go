@@ -57,3 +57,31 @@ func (c SSHConfig) DebugCommand() string {
 	args = append(args, c.OpenSSH.Host, "true")
 	return buildCmdLine(c.OpenSSH.Binary, args)
 }
+
+// EffectiveSSH asks OpenSSH (ssh -G) which user, host name and port a
+// connection resolves to after ~/.ssh/config: an alias and its HostName,
+// or an omitted user and its default, are the same endpoint. ok is false
+// when ssh cannot answer (the caller keeps the configured values).
+func EffectiveSSH(host string, port int, user, jump string) (effUser, effHost string, effPort int, ok bool) {
+	cfg, err := ResolveTargetSSH(host, port, user, "", jump)
+	if err != nil || cfg.OpenSSH == nil {
+		return "", "", 0, false
+	}
+	args := append(append([]string{"-G"}, cfg.OpenSSH.Args...), cfg.OpenSSH.Host)
+	out, err := exec.Command(cfg.OpenSSH.Binary, args...).Output()
+	if err != nil {
+		return "", "", 0, false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		key, value, _ := strings.Cut(strings.TrimSpace(line), " ")
+		switch key {
+		case "user":
+			effUser = value
+		case "hostname":
+			effHost = value
+		case "port":
+			effPort, _ = strconv.Atoi(value)
+		}
+	}
+	return effUser, effHost, effPort, effHost != ""
+}

@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     status_source TEXT,               -- L2-E: provenance: "" | wrapper | scheduler | inferred | runq | submit | retry
     kill_requested INTEGER NOT NULL DEFAULT 0, -- durable user cancellation intent
     failure_detail TEXT,              -- RQ-74: verbatim failure evidence (scheduler stderr, exit code, rendered command) for pre-run failures
-    target_generation TEXT NOT NULL DEFAULT ''  -- RQ-75: semantic hash of the target config that owns this task (lane-generation routing)
+    target_generation TEXT NOT NULL DEFAULT '', -- RQ-75: semantic hash of the target config that owns this task (lane-generation routing)
+    location     TEXT NOT NULL DEFAULT ''  -- the filesystem its task_dir is on: ssh:<user>@<host>:<port> | local:<controller id>
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_job_id      ON tasks(job_id);

@@ -427,6 +427,10 @@ var ErrRefNotFound = errors.New("not found")
 
 // likePrefix is ref as a LIKE prefix pattern: % and _ in a typed ref are
 // literal characters, not wildcards (use with ESCAPE '\').
+// likePrefix and prefixOf match an id prefix as the dashboard does: LIKE
+// finds candidates (it ignores ASCII case), substr keeps the exact-case ones.
+const prefixOf = `substr(id, 1, length(?)) = ?`
+
 func likePrefix(ref string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(ref) + "%"
 }
@@ -439,7 +443,7 @@ func (s *Store) ResolveJobRef(ctx context.Context, ref string) (*JobRow, error) 
 	if j, err := s.GetJob(ctx, ref); err != nil || j != nil {
 		return j, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM jobs WHERE id LIKE ? ESCAPE '\' ORDER BY id LIMIT 6`, likePrefix(ref))
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM jobs WHERE id LIKE ? ESCAPE '\' AND `+prefixOf+` ORDER BY id LIMIT 6`, likePrefix(ref), ref, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +474,7 @@ func (s *Store) ResolveTaskRef(ctx context.Context, ref string) (string, error) 
 	if ref == "" {
 		return "", fmt.Errorf("task %q: %w", ref, ErrRefNotFound)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM tasks WHERE id = ? OR id LIKE ? ESCAPE '\' ORDER BY id = ? DESC, id LIMIT 6`, ref, likePrefix(ref), ref)
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM tasks WHERE id = ? OR (id LIKE ? ESCAPE '\' AND `+prefixOf+`) ORDER BY id = ? DESC, id LIMIT 6`, ref, likePrefix(ref), ref, ref, ref)
 	if err != nil {
 		return "", err
 	}

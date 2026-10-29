@@ -339,6 +339,14 @@ func TerminalJobStatus(success, failed, killed int) string {
 	}
 }
 
+// Counts reports whether a version counts toward its job's status and
+// counts: its cell's selected version, or any version still live (a rerun
+// of a succeeded cell runs while the success stays selected). One rule for
+// the job status (ProjectJobStatus) and every count shown with it.
+func (t TaskRow) Counts() bool {
+	return t.SupersededBy == "" || !IsTerminalTaskStatus(t.Status)
+}
+
 // ProjectJobStatus is the single lifecycle projection from task rows to a job
 // status. Pause remains an orthogonal job-level overlay: callers that hold a
 // pause intent keep "paused" instead of applying this projection. Every
@@ -347,7 +355,7 @@ func TerminalJobStatus(success, failed, killed int) string {
 func ProjectJobStatus(tasks []TaskRow) (string, error) {
 	var waiting, active, success, failed, killed int
 	for _, task := range tasks {
-		if task.SupersededBy != "" && IsTerminalTaskStatus(task.Status) {
+		if !task.Counts() {
 			continue
 		}
 		switch task.Status {

@@ -165,6 +165,25 @@ def test_job_other_generation_of_this_target(clean_env, tmp_path):
     assert (gone.local, gone.task_dir) == (False, Path("/old/host/ex1/tkgone"))
 
 
+def test_job_location_decides_what_is_local(clean_env, tmp_path):
+    """With locations recorded, a version is local exactly when it is on the
+    filesystem the copy was written on — any target name or generation (a
+    data_path move on the same host stays local; a host move does not)."""
+    d = tmp_path / "ex1"
+    d.mkdir()
+    here, there = "ssh:me@hpc:22", "ssh:me@other:22"
+    snap = {"version": 2, "job": {"id": "ex1", "target": "a"},
+            "published_for": {"target": "a", "generation": "g2", "location": here},
+            "tasks": [{"id": "tk1", "target": "a", "generation": "g1", "location": here, "task_dir": "/old/root/ex1/tk1"},
+                      {"id": "tk2", "target": "a", "generation": "g2", "location": there, "task_dir": str(d / "tk2")}]}
+    (d / "job.json").write_text(json.dumps(snap))
+    v1, v2 = runq.experiment(d, producer="score").versions
+    assert (v1.local, v2.local) == (True, False)
+    assert v1.task_dir == Path("/old/root/ex1/tk1")  # an earlier data_path on this filesystem
+    with pytest.raises(FileNotFoundError, match="ssh:me@other:22"):
+        v2.result({"acc": 1.0})
+
+
 def test_job_without_ref_inside_a_task_reads_its_own_job(clean_env, job_dir, monkeypatch):
     monkeypatch.setenv("RUNQ_TASK_DIR", str(job_dir / "tk1"))
     assert runq.experiment(producer="score").id == "jb1"

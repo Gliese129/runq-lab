@@ -81,7 +81,9 @@ func DefaultSpecs(project string, in Input, varying []string) (specs []Spec, gro
 		metrics := metricOrder(records)
 		for _, r := range records {
 			for k := range r.Axes {
-				if k != "step" {
+				// a "cell" axis (written before the SDK refused it) is
+				// not the cell: the version's own cell key is
+				if k != "step" && k != CellKey {
 					axes[k] = true
 				}
 			}
@@ -106,7 +108,7 @@ func DefaultSpecs(project string, in Input, varying []string) (specs []Spec, gro
 				cells = append(cells, "param."+k)
 			}
 		}
-		if !axes[CellKey] && !paramsSeparate(records, cells) {
+		if !paramsSeparate(records, cells) {
 			cells = append(cells, CellKey)
 		}
 		spec.Rows = append(append(append([]string{}, plainAxes...), indexAxes...), cells...)

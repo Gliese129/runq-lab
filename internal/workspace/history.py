@@ -25,7 +25,7 @@ BASE, FANOUT = 32, 4
 # Bumped when what the index keeps changes; an older cache is rebuilt.
 # 2: metric points with a null value (a gap) are indexed, flagged by a 5th
 #    point field (1 = gap).
-VERSION = 2
+VERSION = 3
 
 def keys(value):
     return sorted(value)
@@ -33,11 +33,26 @@ def keys(value):
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
+def newer(cand, best):
+    # The results table's rule (store record_latest): a larger step wins;
+    # without two steps to compare (or equal ones) the later write wins.
+    if cand[2] is not None and best[2] is not None and cand[2] != best[2]:
+        return cand[2] > best[2]
+    return cand[3] >= best[3]
+
 def tree(points, coordinate):
     # points: [offset, length, step-or-null, ts, gap]. Leaf coordinates preserve
-    # file order for deterministic timestamp/step ties.
-    entries = [[p[coordinate], p[0], p[1]] for p in points if p[coordinate] is not None]
-    entries.sort(key=lambda p: (p[0], p[1]))
+    # file order for deterministic timestamp/step ties. Along time a leaf
+    # names the record the table showed at that moment (newer), so the last
+    # frame is the table.
+    if coordinate == 3:
+        entries, best = [], None
+        for p in sorted(points, key=lambda p: (p[3], p[0])):
+            best = p if best is None or newer(p, best) else best
+            entries.append([p[3], best[0], best[1]])
+    else:
+        entries = [[p[coordinate], p[0], p[1]] for p in points if p[coordinate] is not None]
+        entries.sort(key=lambda p: (p[0], p[1]))
     if not entries:
         return None
     nodes = [{"min": x[0][0], "max": x[-1][0], "items": x}
@@ -179,7 +194,16 @@ def run():
                 return {"series": series}
             trees = [item.get(axis) for item in index["series"].values() if item.get(axis)]
             if not trees:
-                return {"by": axis, "frames": []}
+                return {"by": axis, "frames": [], "ranges": {}}
+            # each section's own range: a view reading one section frames
+            # that section's span, not another section's
+            ranges = {}
+            for key, item in index["series"].items():
+                node = item.get(axis)
+                if node:
+                    section = json.loads(key)[0]
+                    r = ranges.setdefault(section, [node["min"], node["max"]])
+                    r[0], r[1] = min(r[0], node["min"]), max(r[1], node["max"])
             lo, hi = min(t["min"] for t in trees), max(t["max"] for t in trees)
             ats = json.loads(sys.argv[5]) if len(sys.argv)>5 else sorted(set(lo + i*(hi-lo)/(count-1) for i in range(count)))
             frames = []
@@ -199,6 +223,6 @@ def run():
                     rec["metrics"] = {k: rec.get("metrics", {}).get(k) for k in frozen[1]}
                     records.append(rec)
                 frames.append({"at": at, "records": records})
-            return {"by": axis, "frames": frames}
+            return {"by": axis, "frames": frames, "ranges": ranges}
 
 print(json.dumps(run(), allow_nan=False, separators=(",", ":")))

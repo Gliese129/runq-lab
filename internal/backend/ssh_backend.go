@@ -162,6 +162,12 @@ type SSHBackendConfig struct {
 	// rfs.LocalFS (plumbing commands default to runqd.sock, so templates
 	// are verbatim identical to a remote runq target).
 	FS rfs.FS
+	// ControllerID names this machine's disk in a local lane's location.
+	ControllerID string
+	// Generation overrides the lane generation (a synthesized local lane
+	// passes its user config's, so a runq upgrade that changes the preset
+	// does not orphan its versions); "" = Target's.
+	Generation string
 }
 
 // NewSSHBackend creates a Backend for a remote HPC target. The SSH
@@ -196,6 +202,12 @@ func NewSSHBackend(cfg SSHBackendConfig) (*SSHBackend, error) {
 		transportCloser = sshFS
 	}
 	hpcBe := remote.NewWithFS(&cfg.Target, cfg.Store, cfg.GlobalCfg, laneFS)
+	generation := cfg.Generation
+	if generation == "" {
+		generation = t.SemanticGeneration()
+	}
+	hpcBe.Generation = generation
+	hpcBe.Location = t.FilesystemID(cfg.ControllerID, rfs.EffectiveSSH)
 
 	logger := cfg.Logger
 	if logger == nil {
@@ -227,13 +239,14 @@ func NewSSHBackend(cfg SSHBackendConfig) (*SSHBackend, error) {
 		launcher:        launcher,
 		logger:          logger,
 		targetName:      t.Name,
-		scope:           store.NewLaneScope(t.Name, t.SemanticGeneration()),
+		scope:           store.NewLaneScope(t.Name, generation),
 		syncDone:        make(chan struct{}),
 		nudgeCh:         make(chan struct{}, 1),
 	}
 	// One scope, every query surface (RQ-75): the remote backend's probe/
 	// marker/heartbeat/orphan reads filter by the same ownership predicate.
 	hpcBe.Scope = be.scope
+	be.scope.Location = hpcBe.Location
 
 	return be, nil
 }
@@ -831,6 +844,39 @@ func (b *SSHBackend) GPUStatus(ctx context.Context) ([]GPUSlot, error) {
 
 // ── Task operations ───────────────────────────────────────────────────────
 
+// Location is the filesystem this lane reads (config.FilesystemID).
+func (b *SSHBackend) Location() string { return b.scope.Location }
+
+// BackfillLocation records this lane's filesystem on its generation's
+// versions submitted before locations were recorded.
+func (b *SSHBackend) BackfillLocation(ctx context.Context) error {
+	n, err := b.store.BackfillTaskLocations(ctx, b.scope.Target, b.scope.Generation, b.scope.Location)
+	if n > 0 {
+		b.logger.Info("recorded the filesystem of earlier versions", "versions", n, "location", b.scope.Location)
+	}
+	return err
+}
+
+// loadReadableTask loads a task whose files this lane reads (logs,
+// metrics): any generation's version on this lane's filesystem.
+func (b *SSHBackend) loadReadableTask(ctx context.Context, taskID, operation string) (*store.TaskRow, error) {
+	task, err := b.store.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", operation, err)
+	}
+	if task == nil {
+		return nil, fmt.Errorf("task %q: %w", taskID, ErrNotFound)
+	}
+	if !b.scope.ReadsFiles(*task) {
+		if task.Location == "" { // unlocated: generation ownership decided
+			return nil, fmt.Errorf("task %q moved to target generation %q; lane %q no longer owns it",
+				taskID, task.TargetGeneration, b.scope.Generation)
+		}
+		return nil, fmt.Errorf("task %q is on another filesystem (%s); lane %q (%s) no longer owns it", taskID, task.Location, b.scope.Generation, b.scope.Location)
+	}
+	return task, nil
+}
+
 func (b *SSHBackend) loadOwnedTask(ctx context.Context, taskID, operation string) (*store.TaskRow, error) {
 	task, err := b.store.GetTask(ctx, taskID)
 	if err != nil {
@@ -1051,7 +1097,7 @@ func (b *SSHBackend) ListTasks(ctx context.Context, opts TaskListOptions) ([]Tas
 func (b *SSHBackend) TaskMetrics(ctx context.Context, taskID string, afterTS int64) ([]MetricPoint, error) {
 	var points []MetricPoint
 	err := b.store.WithTaskLock(taskID, func() error {
-		task, err := b.loadOwnedTask(ctx, taskID, "task metrics")
+		task, err := b.loadReadableTask(ctx, taskID, "task metrics")
 		if err != nil {
 			return err
 		}
@@ -1072,7 +1118,7 @@ func (b *SSHBackend) TaskMetricBuckets(ctx context.Context, taskID, key string, 
 		source  string
 	)
 	err := b.store.WithTaskLock(taskID, func() error {
-		task, err := b.loadOwnedTask(ctx, taskID, "task metric buckets")
+		task, err := b.loadReadableTask(ctx, taskID, "task metric buckets")
 		if err != nil {
 			return err
 		}
@@ -1241,7 +1287,7 @@ func (b *SSHBackend) cancelRetryIntent(ctx context.Context, taskID string) (bool
 func (b *SSHBackend) TaskLogRead(ctx context.Context, taskID string, offset int64, maxLines int) (*LogPage, error) {
 	var page *LogPage
 	err := b.store.WithTaskLock(taskID, func() error {
-		task, err := b.loadOwnedTask(ctx, taskID, "task log read")
+		task, err := b.loadReadableTask(ctx, taskID, "task log read")
 		if err != nil {
 			return err
 		}
@@ -1265,7 +1311,7 @@ func (b *SSHBackend) TaskLogRead(ctx context.Context, taskID string, offset int6
 func (b *SSHBackend) TaskLogTail(ctx context.Context, taskID string, maxLines int) (*LogPage, error) {
 	var page *LogPage
 	err := b.store.WithTaskLock(taskID, func() error {
-		task, err := b.loadOwnedTask(ctx, taskID, "task log tail")
+		task, err := b.loadReadableTask(ctx, taskID, "task log tail")
 		if err != nil {
 			return err
 		}
@@ -1289,7 +1335,7 @@ func (b *SSHBackend) TaskLogTail(ctx context.Context, taskID string, maxLines in
 func (b *SSHBackend) TaskLogPage(ctx context.Context, taskID string, req logfile.PageRequest) (*LogPage, error) {
 	var page *LogPage
 	err := b.store.WithTaskLock(taskID, func() error {
-		task, err := b.loadOwnedTask(ctx, taskID, "task log page")
+		task, err := b.loadReadableTask(ctx, taskID, "task log page")
 		if err != nil {
 			return err
 		}
@@ -1338,7 +1384,7 @@ func (b *SSHBackend) TaskLogFollow(ctx context.Context, taskID string, offset in
 	}
 	var follower LogFollower
 	err = b.store.WithTaskLock(taskID, func() error {
-		task, err := b.loadOwnedTask(ctx, taskID, "task log follow")
+		task, err := b.loadReadableTask(ctx, taskID, "task log follow")
 		if err != nil {
 			return err
 		}

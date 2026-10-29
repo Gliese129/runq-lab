@@ -164,3 +164,30 @@ export function sequential(t: number): string {
   const c = c0.map((a, i) => Math.round(a + (c1[i] - a) * k))
   return `rgb(${c.join(',')})`
 }
+
+/** A line as logged: null values are gaps; lo/hi an optional band (an
+ *  estimate's error, or a mean's ±std). */
+export interface DrawableLine {
+  step: number[]
+  value: CurveValue[]
+  lo?: (number | null)[]
+  hi?: (number | null)[]
+}
+
+/** The SVG of one line in data → pixel scales x, y: the curve broken at
+ *  its gaps (never bridged), a lone point between gaps as a dot, and the
+ *  estimate band per unbroken run. */
+export function drawLine(l: DrawableLine, x: (v: number) => number, y: (v: number) => number): { path: string; band: string; dots: number[][] } {
+  const runs = gapRuns(l.value)
+  const px = (i: number) => x(l.step[i])
+  const py = (i: number) => y(l.value[i] as number)
+  let band = ''
+  if (l.lo && l.hi && l.lo.some((v) => v !== null)) {
+    band = runs.filter((r) => r.length > 1).map((r) => {
+      const up = r.map((i) => `${px(i)},${y(l.hi![i] ?? (l.value[i] as number))}`)
+      const down = r.map((i) => `${px(i)},${y(l.lo![i] ?? (l.value[i] as number))}`).reverse()
+      return `M${up.join('L')}L${down.join('L')}Z`
+    }).join('')
+  }
+  return { path: gapPath(runs, px, py), band, dots: isolatedPoints(runs, px, py) }
+}

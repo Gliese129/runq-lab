@@ -287,3 +287,27 @@ func TestDefaultViewKeepsMetricOrder(t *testing.T) {
 		t.Fatalf("charts %v columns %v", specs[0].Charts, specs[0].Columns)
 	}
 }
+
+// A record's "cell" axis (written before the SDK refused it) never takes
+// the version's cell: two cells with the same params stay two rows.
+func TestCellAxisNeverReplacesTheCell(t *testing.T) {
+	rec := func(src, cell string, acc float64) Record {
+		return Record{SourceID: src, JobID: "jb1", Cell: cell, Section: "eval", TS: 1,
+			Axes: map[string]any{"cell": "test"}, Metrics: map[string]any{"acc": acc}, Params: map[string]any{"lr": 0.1}}
+	}
+	in := Input{Records: []Record{rec("tk1", "a", 0.5), rec("tk2", "b", 0.6)}}
+	out, _, err := JobViews("p", in, nil, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || len(out[0].Rows) != 2 {
+		t.Fatalf("rows = %+v", out)
+	}
+	cells := map[any]bool{}
+	for _, r := range out[0].Rows {
+		cells[r.Key["cell"]] = true
+	}
+	if !cells["a"] || !cells["b"] {
+		t.Fatalf("row cells = %v, want a and b", cells)
+	}
+}

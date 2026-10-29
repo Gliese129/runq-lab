@@ -141,8 +141,10 @@ names. The first record freezes each source/section's keys (metrics in the order
 it gives them; tables list them that way, and a later call may give them in any
 order): supply the same keys
 every time, using `None` for unknown values. Missing keys become null; new keys
-are ignored with a warning. Axis values are strings, booleans, finite numbers
-or null; values are finite numbers, null, or `runq.stats` estimates. Across
+are ignored with a warning. Axis names `cell`, `producer` and `param.<name>`
+are runq's own (each record already carries its version's cell, scoring script
+and params) and raise `ValueError`; name such an axis differently. Axis values
+are strings, booleans, finite numbers or null; values are finite numbers, null, or `runq.stats` estimates. Across
 sources, a view chooses the newest timestamp (then source ID), without adding
 snapshots together. See [views and scoring scripts](views.md) for the full
 contract and examples.

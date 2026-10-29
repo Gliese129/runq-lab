@@ -17,15 +17,29 @@ export function sciNumber(v: number, digits: number): string {
   return `${m}e${Number(e)}`
 }
 
-/** Row-key value, with the view's key_formats entry when it has one. */
-export function formatKey(v: unknown, format?: string): string {
+/** Row-key value, with the view's key_formats entry when it has one — the
+ *  same formats as Go views.Format (int, floatN, sciN, pctN, duration,
+ *  ago; internal/views/testdata/key_formats.json checks both). now: the
+ *  result's generated_at, for ago. */
+export function formatKey(v: unknown, format?: string, now = Math.floor(Date.now() / 1000)): string {
   if (v === null || v === undefined) return '—'
-  if (typeof v === 'number') {
-    const sci = /^sci(\d)$/.exec(format ?? '')
-    if (sci) return sciNumber(v, Number(sci[1]))
-    return fullNumber(v)
-  }
-  return String(v)
+  if (typeof v !== 'number' || !format) return typeof v === 'number' ? fullNumber(v) : String(v)
+  const digits = (prefix: string) => Number(format.slice(prefix.length)) || 0
+  if (format === 'int') return v.toFixed(0)
+  if (format.startsWith('float')) return v.toFixed(digits('float'))
+  if (format.startsWith('sci')) return sciNumber(v, digits('sci'))
+  if (format.startsWith('pct')) return `${(v * 100).toFixed(digits('pct'))}%`
+  if (format === 'duration' || format === 'ago') return durationText(format === 'ago' ? now - v : v) + (format === 'ago' ? ' ago' : '')
+  return fullNumber(v)
+}
+
+function durationText(seconds: number): string {
+  const sign = seconds < 0 ? '-' : ''
+  const s = Math.trunc(Math.abs(seconds))
+  if (s >= 86400) return `${sign}${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`
+  if (s >= 3600) return `${sign}${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
+  if (s >= 60) return `${sign}${Math.floor(s / 60)}m ${s % 60}s`
+  return `${sign}${s}s`
 }
 
 /** Number for a cell: aggregate mean when present, else the raw value. */

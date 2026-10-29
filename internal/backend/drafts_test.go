@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -417,8 +418,10 @@ func TestDraftCellNamesSkipSchedulerParams(t *testing.T) {
 	if len(d.Rows) != 2 || d.Rows[0].Run != "base" || d.Rows[1].Run != "lr=0.2" {
 		t.Fatalf("rows = %+v", d.Rows)
 	}
-	if strings.Contains(d.Table, "h_rt=") || strings.Contains(d.YAML, "cell: h_rt") || !strings.Contains(d.YAML, "cell: lr=0.2") {
-		t.Fatalf("table/YAML disagree with the rows:\n%s\n%s", d.Table, d.YAML)
+	if strings.Contains(d.YAML, "cell: h_rt") || !strings.Contains(d.YAML, "cell: lr=0.2") ||
+		slices.Contains(d.Plan.Columns, "h_rt") || len(d.Plan.Scheduler) != 1 || d.Plan.Scheduler[0] != [2]string{"h_rt", "1 / 2"} ||
+		!strings.Contains(d.Table, "scheduler: h_rt=1 / 2") {
+		t.Fatalf("table/YAML disagree with the rows:\n%s\n%s\n%+v", d.Table, d.YAML, d.Plan)
 	}
 	if _, err := m.SubmitDraft(ctx, d.Draft.ID, DraftSubmitOptions{}); err != nil {
 		t.Fatal(err)

@@ -252,3 +252,54 @@ func TestPlanAllowsSameParamsUnderTwoNames(t *testing.T) {
 		t.Fatalf("two names: %d, %v", len(rows), err)
 	}
 }
+
+// The same target name on another filesystem (the host moved) or under
+// another data_path is not where the earlier versions are: an append gets
+// a fresh directory under today's root, never the old path.
+func TestAppendFollowsTheFilesystemNotTheName(t *testing.T) {
+	ctx := context.Background()
+	b, proj := appendFixture(t)
+	b.Location = "ssh:me@old-host:22"
+	jobID, rows, err := b.Prepare(ctx, gridCfg([]any{0}, nil), proj, SubmitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].Location != "ssh:me@old-host:22" {
+		t.Fatalf("version location = %q", rows[0].Location)
+	}
+	for _, r := range rows {
+		setStatus(t, b.Store, r.ID, "failed")
+	}
+	oldDir := filepath.Dir(rows[0].TaskDir)
+	for _, c := range []struct {
+		name     string
+		location string
+		dataPath string
+	}{
+		{"host moved", "ssh:me@new-host:22", b.Cfg.DataPath},
+		{"data_path moved", "ssh:me@old-host:22", filepath.Join(t.TempDir(), "new-root")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			moved := *b.Cfg
+			moved.DataPath = c.dataPath
+			nb := &Backend{Cfg: &moved, Store: b.Store, FS: b.FS, Location: c.location}
+			cfg := gridCfg([]any{0}, nil)
+			cfg.Into = jobID
+			_, added, err := nb.Prepare(ctx, cfg, proj, SubmitOpts{})
+			if err != nil || len(added) == 0 {
+				t.Fatalf("append: %d versions, %v", len(added), err)
+			}
+			for _, r := range added {
+				// same path string is fine on another host; under a moved
+				// data_path it must be the new root
+				movedRoot := c.dataPath != b.Cfg.DataPath && filepath.Dir(r.TaskDir) == oldDir
+				if movedRoot || !strings.HasPrefix(r.TaskDir, c.dataPath) || r.Location != c.location {
+					t.Fatalf("new version at %s (%s), old dir %s", r.TaskDir, r.Location, oldDir)
+				}
+			}
+			for _, r := range added {
+				setStatus(t, b.Store, r.ID, "failed")
+			}
+		})
+	}
+}

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/gliese129/runq-lab/internal/ingest"
@@ -67,6 +69,9 @@ type JobSnapshot struct {
 type JobSnapshotCopy struct {
 	Target     string `json:"target"`
 	Generation string `json:"generation"`
+	// Location is the filesystem this copy was written on: a version with
+	// the same location has its directory here (readers check that).
+	Location string `json:"location,omitempty"`
 }
 
 type JobSnapshotJob struct {
@@ -79,8 +84,12 @@ type JobSnapshotJob struct {
 }
 
 type JobSnapshotTask struct {
-	ID            string         `json:"id"`
-	RunName       string         `json:"run_name"`
+	ID      string `json:"id"`
+	RunName string `json:"run_name"`
+	// Cell is the cell it is a version of, by the server's rule
+	// (store.CellKey): the run name, or for a pre-rc6 version without one
+	// the id its superseded_by chain ends at. Readers group by it.
+	Cell          string         `json:"cell"`
 	Status        string         `json:"status"`
 	Params        map[string]any `json:"params"`
 	TaskDir       string         `json:"task_dir"`
@@ -93,23 +102,29 @@ type JobSnapshotTask struct {
 	Version       int            `json:"version"`
 	Selected      bool           `json:"selected"`
 	Target        string         `json:"target"`
-	Generation    string         `json:"generation"` // the lane generation that owns it
+	Generation    string         `json:"generation"`         // the lane generation that owns it
+	Location      string         `json:"location,omitempty"` // the filesystem its directory is on
 }
 
 // jobSnapshot builds the job.json copy the lane with this scope publishes;
-// dir is the job's directory on that lane, "" when no version it owns
-// recorded a workspace (nothing to publish into). An experiment that ran on
+// dirs are the job's directories whose versions this lane reads (one, or
+// more after a data_path move), none when no such version recorded a
+// workspace (nothing to publish into). An experiment that ran on
 // several targets (or lane generations) gets one copy per owning lane, the
 // same listing with its own published_for.
-func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow, scope *store.LaneScope) (snap JobSnapshot, dir string, err error) {
+func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow, scope *store.LaneScope) (snap JobSnapshot, dirs []string, err error) {
 	tasks, err := st.JobTasksInOrder(ctx, j.ID)
 	if err != nil {
-		return snap, "", err
+		return snap, nil, err
 	}
 	var selected []store.TaskRow
 	snap = JobSnapshot{Version: jobSnapshotVersion, Tasks: []JobSnapshotTask{},
 		Job:          JobSnapshotJob{ID: j.ID, Name: j.Name, Project: j.ProjectName, Status: j.Status, Target: j.Target, CreatedAt: j.CreatedAt.Unix()},
-		PublishedFor: JobSnapshotCopy{Target: scope.Target, Generation: scope.Generation}}
+		PublishedFor: JobSnapshotCopy{Target: scope.Target, Generation: scope.Generation, Location: scope.Location}}
+	byID := make(map[string]*store.TaskRow, len(tasks))
+	for i := range tasks {
+		byID[tasks[i].ID] = &tasks[i]
+	}
 	for _, t := range tasks {
 		if t.SupersededBy == "" {
 			selected = append(selected, t)
@@ -122,27 +137,33 @@ func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow, scope *st
 			taskTarget = j.Target
 		}
 		generation := t.TargetGeneration
-		if scope.Owns(taskTarget, generation) {
-			generation = scope.Generation // a legacy unstamped row is the active lane's
-			if dir == "" {
-				dir = path.Dir(t.TaskDir)
+		owned := t
+		owned.Target = taskTarget
+		if scope.ReadsFiles(owned) {
+			if generation == "" {
+				generation = scope.Generation // a legacy unstamped row is the active lane's
+			}
+			// every experiment directory this lane reads (an earlier
+			// data_path keeps its own) gets the listing
+			if dir := path.Dir(t.TaskDir); !slices.Contains(dirs, dir) {
+				dirs = append(dirs, dir)
 			}
 		}
 		params := map[string]any{}
 		_ = json.Unmarshal([]byte(t.ParamsJSON), &params)
 		obs, err := st.SourceObservation(ctx, t.ID)
 		if err != nil {
-			return snap, "", err
+			return snap, nil, err
 		}
 		snap.Tasks = append(snap.Tasks, JobSnapshotTask{
-			ID: t.ID, RunName: t.RunName, Status: t.Status, Params: params, TaskDir: t.TaskDir,
+			ID: t.ID, RunName: t.RunName, Cell: cellName(store.CellKey(t, byID)), Status: t.Status, Params: params, TaskDir: t.TaskDir,
 			OutputDir: workspace.OutputsDir(t.TaskDir), CheckpointDir: workspace.CheckpointsDir(t.TaskDir),
 			StartedAt: unixPtr(t.StartedAt), FinishedAt: unixPtr(t.FinishedAt), LastOutputAt: obs.LastOutputAt, BatchSeq: t.BatchSeq,
-			Version: t.Version, Selected: t.SupersededBy == "", Target: taskTarget, Generation: generation,
+			Version: t.Version, Selected: t.SupersededBy == "", Target: taskTarget, Generation: generation, Location: t.Location,
 		})
 	}
 	snap.ObservedAt, snap.ObservationState, err = st.JobObservation(ctx, selected)
-	return snap, dir, err
+	return snap, dirs, err
 }
 
 // hash covers everything but the two clocks, so a pass that only re-observed
@@ -166,8 +187,8 @@ func (b *SSHBackend) publishJobSnapshot(ctx context.Context, jobID string) error
 }
 
 func (b *SSHBackend) publishJob(ctx context.Context, j store.JobRow) (JobSnapshot, error) {
-	snap, dir, err := jobSnapshot(ctx, b.store, j, b.scope)
-	if err != nil || dir == "" {
+	snap, dirs, err := jobSnapshot(ctx, b.store, j, b.scope)
+	if err != nil || len(dirs) == 0 {
 		return snap, err
 	}
 	h := snap.hash()
@@ -176,8 +197,10 @@ func (b *SSHBackend) publishJob(ctx context.Context, j store.JobRow) (JobSnapsho
 	}
 	snap.UpdatedAt = time.Now().Unix()
 	raw, _ := json.Marshal(snap)
-	if err := atomicRemote(ctx, rfs.WithContext(b.backend.FS, ctx), path.Join(dir, "job.json"), raw); err != nil {
-		return snap, err
+	for _, dir := range dirs {
+		if err := atomicRemote(ctx, rfs.WithContext(b.backend.FS, ctx), path.Join(dir, "job.json"), raw); err != nil {
+			return snap, err
+		}
 	}
 	return snap, b.store.SetJobSnapshotHash(ctx, j.ID, b.scope.Target, b.scope.Generation, h)
 }
@@ -209,8 +232,8 @@ func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
 			if t.Target != b.scope.Target {
 				continue // another target's version: not on this filesystem
 			}
-			if t.Generation != b.scope.Generation {
-				foreign++ // another lane generation's: its own lane (if live) scans it
+			if !b.scope.ReadsFiles(store.TaskRow{Target: t.Target, TargetGeneration: t.Generation, Location: t.Location}) {
+				foreign++ // on another filesystem (or an unlocated version of another generation)
 				continue
 			}
 			dir := path.Dir(t.TaskDir)
@@ -221,7 +244,7 @@ func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
 			dirs[dir][t.TaskDir] = t.ID
 		}
 		if foreign > 0 {
-			b.logger.Debug("job files: versions of another lane generation left to their own lane",
+			b.logger.Debug("job files: versions this lane does not read left to their own lane",
 				"job", j.ID, "versions", foreign, "generation", b.scope.Generation)
 		}
 	}
@@ -245,8 +268,8 @@ func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
 				if err != nil || row == nil {
 					return err
 				}
-				if !b.scope.Owns(row.Target, row.TargetGeneration) {
-					return nil // restamped since the snapshot: no longer this lane's files
+				if !b.scope.ReadsFiles(*row) {
+					return nil // moved since the snapshot: no longer this lane's files
 				}
 				_, err = ingest.ReapProducerResults(ctx, b.store, ingest.Target{TaskID: row.ID, JobID: row.JobID, Dir: row.TaskDir, FS: fsys}, f.Producer, f.Size)
 				return err
@@ -339,4 +362,10 @@ func unixPtr(t *time.Time) *int64 {
 	}
 	v := t.Unix()
 	return &v
+}
+
+// cellName strips store.CellKey's kind prefix ("run:", "task:").
+func cellName(key string) string {
+	_, name, _ := strings.Cut(key, ":")
+	return name
 }
