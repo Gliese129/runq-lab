@@ -1,15 +1,14 @@
 <template>
   <XYFrame ref="frame" :g="g" :x-ticks="xTicks" :y-ticks="yTicks" :x-title="xTitle" :y-title="yTitle" :legend="series.map((s) => s.label)">
-    <g v-for="(s, si) in series" :key="si">
+    <g v-for="(s, si) in series" v-show="!hidden.has(si)" :key="si" :opacity="dimmed(si) ? 0.3 : 1">
       <path v-if="s.band" :d="s.band" :fill="th.color(si)" fill-opacity="0.14" stroke="none" />
       <path :d="s.line" fill="none" :stroke="th.color(si)" stroke-width="1.5" :stroke-dasharray="DASHES[si % DASHES.length]" />
       <g v-for="(p, pi) in s.pts" :key="pi" @mouseenter="hot = { row: p.row, col: p.col }" @mouseleave="hot = null">
-        <circle v-if="isHot(hot, p.row, p.col)" :cx="p.px" :cy="p.py" r="6" fill="none" :stroke="th.color(si)" stroke-width="1.2" />
+        <circle v-if="screen && isHot(hot, p.row, p.col)" :cx="p.px" :cy="p.py" r="6" fill="none" :stroke="th.color(si)" stroke-width="1.2" />
         <path :d="markerPath(MARKERS[si % MARKERS.length], p.px, p.py, 2.6)"
           :fill="MARKERS[si % MARKERS.length] === 'cross' ? 'none' : th.color(si)" :stroke="th.color(si)" stroke-width="0.8" />
         <!-- a wider invisible target, so a 2.6-unit marker is easy to hover -->
         <circle :cx="p.px" :cy="p.py" r="7" fill="transparent" />
-        <title>{{ p.title }}</title>
       </g>
     </g>
   </XYFrame>
@@ -17,7 +16,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { ChartSpec, ViewCell, ViewResult } from '@/types/views'
+import type { ChartSpec, ViewResult } from '@/types/views'
 import XYFrame from './XYFrame.vue'
 import { DASHES, MARKERS, linear, logScale, markerPath, tickLabel, type WidthPreset } from './chartGeom'
 import { useChartTheme } from './chartGeom'
@@ -25,9 +24,21 @@ import { distinct, points, slotNames, yIsPct, type Point } from './chartData'
 import { frameGeom } from './frame'
 import { formatKey, keyLabel } from '../viewFormat'
 import { isHot, useViewHover } from '../viewHover'
+import { useHiddenSeries } from './chartSeries'
 
 const th = useChartTheme()
 const hot = useViewHover()
+const hiddenRef = useHiddenSeries()
+const hidden = computed(() => hiddenRef.value)
+// Hover is a screen affordance; the paper copy (exports) never shows it.
+const screen = computed(() => th.value.name === 'screen')
+/** While a value is hovered (here or in the table), the other series fade. */
+const dimmed = (si: number) => {
+  const h = hot.value
+  if (!screen.value || !h) return false
+  const at = series.value.findIndex((s) => s.pts.some((p) => p.row === h.row && p.col === h.col))
+  return at >= 0 && at !== si
+}
 
 const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; domain?: ViewResult }>()
 const frame = ref<{ svg: SVGSVGElement | null } | null>(null)
@@ -41,7 +52,7 @@ const usable = (p: Point) => typeof p.x === 'number' && p.y !== null
 const pts = computed(() => points(props.result, slots.value).filter(usable))
 const fullPts = computed(() => (props.domain ? points(props.domain, slots.value).filter(usable) : pts.value))
 const colors = computed(() => distinct(fullPts.value.map((p) => p.color)))
-const g = computed(() => frameGeom(props.width, { legend: colors.value.length > 1 }))
+const g = computed(() => frameGeom(props.width, { legend: colors.value.length > 1 && colors.value.map(colorLabel) }))
 const pct = computed(() => yIsPct(props.result, props.spec.y as string | string[]))
 const logX = computed(() => props.spec.log_x === true && pts.value.every((p) => (p.x as number) > 0))
 
@@ -83,14 +94,10 @@ function colorLabel(c: unknown): string {
   return `${keyLabel(keys[0])} = ${formatKey(c, props.result.key_formats?.[keys[0]])}`
 }
 
-// A point's tooltip gives the estimate's error in full.
-const pointText = (cell?: ViewCell) => cell?.exact || cell?.text || ''
-
 const series = computed(() => colors.value.map((c) => {
   const ps = pts.value.filter((p) => p.color === c).sort((a, b) => (a.x as number) - (b.x as number))
   const at = ps.map((p) => ({
     px: x.value(p.x as number), py: y.value(p.y!), lo: y.value(lo(p)), hi: y.value(hi(p)), row: p.row, col: p.col,
-    title: `${colorLabel(c)} · ${keyLabel(xKey.value)} = ${formatKey(p.x)}: ${pointText(props.result.rows[p.row]?.cells[p.col])}`,
   }))
   const line = at.map((p, i) => `${i ? 'L' : 'M'}${p.px},${p.py}`).join('')
   const hasErr = ps.some((p) => p.err || p.lo !== null)

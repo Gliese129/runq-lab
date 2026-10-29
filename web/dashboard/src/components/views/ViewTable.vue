@@ -3,30 +3,42 @@
     <table class="vt">
       <thead>
         <tr v-if="groups.length" class="vt-top">
-          <th v-for="k in rowKeys" :key="k" rowspan="2" class="vt-key vt-bottom">{{ keyLabel(k) }}</th>
+          <th v-for="k in rowKeys" :key="k" rowspan="2" :colspan="keyParts[k]" class="vt-key vt-bottom">{{ keyLabel(k) }}</th>
           <th v-for="g in groups" :key="String(g.label)" :colspan="g.span" class="vt-group">{{ g.label }}</th>
           <th v-if="rowMeta" rowspan="2" class="vt-src">{{ t('views.source') }}</th>
           <th v-if="hasState" rowspan="2" />
         </tr>
         <tr :class="groups.length ? 'vt-mid' : 'vt-top vt-mid'">
           <template v-if="!groups.length">
-            <th v-for="k in rowKeys" :key="k" class="vt-key">{{ keyLabel(k) }}</th>
+            <th v-for="k in rowKeys" :key="k" :colspan="keyParts[k]" class="vt-key">{{ keyLabel(k) }}</th>
           </template>
-          <th v-for="(c, i) in result.columns" :key="i" class="vt-num">
-            {{ columnLabel(c) }}<span v-if="c.better" class="vt-arrow">{{ c.better === 'higher' ? '↑' : '↓' }}</span>
+          <th v-for="(c, i) in result.columns" :key="i" class="vt-num" :aria-sort="ariaSort(i)">
+            <button type="button" class="vt-sort" :class="{ on: sort?.col === i }" :title="t('views.sort_hint')" @click="cycleSort(i)">
+              <v-icon v-if="sort?.col === i" size="14" class="vt-sort-icon">{{ sort.dir === 'desc' ? 'mdi-sort-descending' : 'mdi-sort-ascending' }}</v-icon>
+              {{ columnLabel(c) }}<span v-if="c.better" class="vt-arrow">{{ c.better === 'higher' ? '↑' : '↓' }}</span>
+            </button>
           </th>
           <th v-if="rowMeta && !groups.length" class="vt-src">{{ t('views.source') }}</th>
           <th v-if="hasState && !groups.length" />
         </tr>
       </thead>
       <tbody>
-        <tr v-for="(row, ri) in result.rows" :key="ri" :class="{ 'vt-empty': row.empty, 'vt-last': ri === result.rows.length - 1 }">
-          <td v-for="(k, ki) in rowKeys" :key="k" class="vt-key">
-            <template v-if="!repeated(ri, ki)">
-              <span>{{ formatKey(row.key[k], result.key_formats?.[k]) }}</span>
-              <span v-if="k === 'metric' && rowBetter(row)" class="vt-arrow" :title="t('views.better_' + rowBetter(row))">{{ rowBetter(row) === 'higher' ? '↑' : '↓' }}</span>
+        <tr v-for="({ row, ri }, pos) in ordered" :key="ri" :class="{ 'vt-empty': row.empty, 'vt-last': pos === ordered.length - 1 }">
+          <template v-for="(k, ki) in rowKeys" :key="k">
+            <td v-if="keyParts[k] === 1" class="vt-key">
+              <template v-if="!repeated(ri, ki)">
+                <span>{{ formatKey(row.key[k], result.key_formats?.[k]) }}</span>
+                <span v-if="k === 'metric' && rowBetter(row)" class="vt-arrow" :title="t('views.better_' + rowBetter(row))">{{ rowBetter(row) === 'higher' ? '↑' : '↓' }}</span>
+              </template>
+            </td>
+            <!-- a value in parts ("A1 JA-plain | 准确率"): one sub-column
+                 per part, so the bars line up down the table -->
+            <template v-else>
+              <td v-for="(p, pi) in keyCells(row, ri, ki, k)" :key="pi" class="vt-key vt-part">
+                <span v-if="pi > 0 && p !== null" class="vt-bar" aria-hidden="true">|</span>{{ p }}
+              </td>
             </template>
-          </td>
+          </template>
           <template v-if="row.empty">
             <td :colspan="result.columns.length + (hasState ? 1 : 0) + (rowMeta ? 1 : 0)" class="vt-nodata">{{ t('views.no_data') }}</td>
           </template>
@@ -49,10 +61,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ViewCell, ViewColumn, ViewResult, ViewRow } from '@/types/views'
-import { formatKey, keyLabel as baseKeyLabel } from './viewFormat'
+import { cellNumber, formatKey, keyLabel as baseKeyLabel, keyPartCount, splitKey } from './viewFormat'
 import { isHot, useViewHover } from './viewHover'
 
 const props = defineProps<{ result: ViewResult }>()
@@ -69,6 +81,17 @@ const rowKeys = computed(() => {
   const varying = keys.filter((k) => k === 'metric' || rows.some((r) => r.key[k] !== rows[0].key[k]))
   return varying.length ? varying : keys
 })
+
+const keyText = (row: ViewRow, k: string) => formatKey(row.key[k], props.result.key_formats?.[k])
+const keyParts = computed<Record<string, number>>(() => Object.fromEntries(rowKeys.value.map((k) =>
+  [k, keyPartCount(props.result.rows.map((r) => keyText(r, k)))])))
+/** The parts of a row key, padded to its sub-columns; null where the
+ *  value repeats the row above (printed once). */
+function keyCells(row: ViewRow, ri: number, ki: number, k: string): (string | null)[] {
+  if (repeated(ri, ki)) return Array.from({ length: keyParts.value[k] }, () => null)
+  const ps = splitKey(keyText(row, k))
+  return Array.from({ length: keyParts.value[k] }, (_, i) => ps[i] ?? '')
+}
 
 function keyLabel(k: string): string {
   return k === 'metric' && props.result.row_keys[0] === 'metric' ? t('views.metric') : baseKeyLabel(k)
@@ -101,9 +124,32 @@ const groups = computed(() => {
   return out
 })
 
-/** Outer row keys repeat down a block; print them once (like \multirow). */
+// Click a value column's header: high → low, low → high, then the view's
+// own order. Rows without a value there go last either way.
+const sort = ref<{ col: number; dir: 'desc' | 'asc' } | null>(null)
+function cycleSort(col: number) {
+  const s = sort.value
+  sort.value = s?.col !== col ? { col, dir: 'desc' } : s.dir === 'desc' ? { col, dir: 'asc' } : null
+}
+function ariaSort(col: number): 'descending' | 'ascending' | undefined {
+  return sort.value?.col === col ? (sort.value.dir === 'desc' ? 'descending' : 'ascending') : undefined
+}
+const ordered = computed(() => {
+  const rows = props.result.rows.map((row, ri) => ({ row, ri }))
+  const s = sort.value
+  if (!s) return rows
+  const val = (r: ViewRow) => (r.empty ? null : cellNumber(r.cells[s.col]))
+  return rows.sort((a, b) => {
+    const va = val(a.row), vb = val(b.row)
+    if (va === null || vb === null) return va === vb ? a.ri - b.ri : va === null ? 1 : -1
+    return (s.dir === 'desc' ? vb - va : va - vb) || a.ri - b.ri
+  })
+})
+
+/** Outer row keys repeat down a block; print them once (like \multirow).
+ *  A sorted table breaks the blocks, so every row prints its keys. */
 function repeated(ri: number, ki: number): boolean {
-  if (ri === 0 || ki >= rowKeys.value.length - 1) return false
+  if (sort.value || ri === 0 || ki >= rowKeys.value.length - 1) return false
   const prev = props.result.rows[ri - 1].key
   const cur = props.result.rows[ri].key
   return rowKeys.value.slice(0, ki + 1).every((k) => prev[k] === cur[k])
@@ -180,8 +226,18 @@ function cellTitle(cell: ViewCell): string {
 .vt tbody tr:hover td { background: rgb(var(--v-theme-on-surface), 0.035); }
 .vt tbody td.vt-hot { background: rgb(var(--v-theme-primary), 0.12); box-shadow: inset 0 0 0 1px rgb(var(--v-theme-primary), 0.5); }
 .vt-key { text-align: left; }
+.vt td.vt-part { padding-right: 0; }
+.vt td.vt-part + td.vt-part { padding-left: 10px; }
+.vt td.vt-part:last-of-type, .vt td.vt-part:has(+ td:not(.vt-part)) { padding-right: 12px; }
+.vt-bar { margin-right: 10px; color: rgb(var(--v-theme-on-surface-variant)); opacity: 0.6; }
 .vt td.vt-key { color: rgb(var(--v-theme-on-surface)); }
 .vt-num { text-align: right; }
+.vt-sort {
+  display: inline-flex; align-items: center; gap: 2px; border: none; background: none; padding: 0; cursor: pointer;
+  font: inherit; color: inherit;
+}
+.vt-sort:hover, .vt-sort.on { color: rgb(var(--v-theme-on-surface)); }
+.vt-sort-icon { color: rgb(var(--v-theme-primary)); }
 .vt td.vt-num { font-family: var(--font-mono); font-size: 12.5px; }
 .vt-group { text-align: center; }
 .vt-meta { font-family: var(--font-mono); font-size: 10.5px; color: rgb(var(--v-theme-on-surface-variant)); line-height: 1.3; }

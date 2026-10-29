@@ -34,10 +34,12 @@ export function useViewRenderQuery(
   project: MaybeRefOrGetter<string>,
   name: MaybeRefOrGetter<string>,
   jobs: MaybeRefOrGetter<string[]> = [],
+  enabled: MaybeRefOrGetter<boolean> = true,
 ) {
   return useQuery({
     queryKey: computed(() => qk.viewRender(toValue(project), toValue(name), toValue(jobs))),
     queryFn: () => viewsApi.render(toValue(project), toValue(name), toValue(jobs)),
+    enabled: computed(() => toValue(enabled)),
     refetchInterval: (q) => (viewIsLive(q.state.data) ? LIVE_VIEW_MS : false),
   })
 }

@@ -1,48 +1,60 @@
 <template>
   <div class="view-page">
-    <div class="view-head mb-4" :style="{ '--project': projectColor(project) }">
-      <router-link class="text-caption text-on-surface-variant text-decoration-none" :to="{ name: 'project', params: { project } }">{{ project }}</router-link>
-      <div class="d-flex flex-wrap ga-2 mt-2">
+    <!-- The project's saved views; below md it folds into the select. -->
+    <aside class="view-rail">
+      <router-link class="rail-project" :to="{ name: 'project', params: { project } }">
+        <ProjectDot :project="project" :size="10" /><span class="text-truncate">{{ project }}</span>
+      </router-link>
+      <div class="rail-label">{{ t('views.title') }}</div>
+      <nav :aria-label="t('views.title')">
         <router-link
-          v-for="v in viewsQuery.data.value ?? []"
-          :key="v.name"
-          class="view-tab"
-          :class="{ on: v.name === name }"
+          v-for="v in views" :key="v.name" class="rail-item" :class="{ on: v.name === name }"
+          :title="v.title || v.name" :aria-current="v.name === name ? 'page' : undefined"
           :to="{ name: 'view', params: { project, name: v.name } }"
         >{{ v.title || v.name }}</router-link>
+      </nav>
+    </aside>
+
+    <div class="view-main">
+      <div class="view-select">
+        <router-link class="rail-project mb-2" :to="{ name: 'project', params: { project } }">
+          <ProjectDot :project="project" :size="10" /><span class="text-truncate">{{ project }}</span>
+        </router-link>
+        <v-select
+          :model-value="name" :items="views" item-title="title" item-value="name" :label="t('views.title')"
+          density="compact" variant="outlined" hide-details
+          @update:model-value="(v: string) => router.push({ name: 'view', params: { project, name: v } })"
+        />
       </div>
-    </div>
 
-    <!-- Cross-job comparison: the jobs are chosen here, explicitly. -->
-    <div class="job-pick mb-3">
-      <span class="text-caption text-on-surface-variant mr-1">{{ t('views.jobs') }}</span>
-      <span v-for="id in selected" :key="id" class="job-chip" :title="jobNote(id)">
-        <code>{{ id.slice(0, 8) }}</code>
-        <span class="text-truncate">{{ jobNote(id) }}</span>
-        <button type="button" class="job-chip-x" :aria-label="t('common.remove_item', { name: id.slice(0, 8) })" @click="remove(id)">×</button>
-      </span>
-      <v-menu location="bottom start" max-height="360">
-        <template #activator="{ props: menu }">
-          <v-btn v-bind="menu" size="small" variant="text"><v-icon start size="16">mdi-plus</v-icon>{{ t('views.add_job') }}</v-btn>
+      <header class="view-header">
+        <div class="min-w-0 flex-grow-1">
+          <h1 class="view-title">{{ title }}</h1>
+          <div class="view-meta">
+            <code>{{ name }}</code>
+            <span v-for="e in result?.extra ?? []" :key="e.name" class="extra">{{ e.name }}<template v-if="e.agg">[{{ e.agg }}]</template> = {{ e.text }}</span>
+          </div>
+        </div>
+        <ViewActions
+          v-if="selected.length" :project="project" :name="name" :charts="result?.charts" :locked-charts="compared.hiddenCharts"
+          :export-text="exportText" :filename="name"
+        />
+      </header>
+
+      <ViewExperiments
+        :project="project" :selected="selected" :jobs="projectJobs" :sources="result?.sources" :empty="compared.empty"
+        @add="add" @remove="remove"
+      />
+
+      <ViewPanel v-if="selected.length" :key="name + selected.join(',')" class="mt-5" :project="project" :name="name" :jobs="selected" intersect bare>
+        <template #custom="{ result: shown }">
+          <CustomView :project="project" :name="name" :result="shown" />
         </template>
-        <v-list density="compact" min-width="320">
-          <v-list-item v-for="j in addable" :key="j.id" @click="add(j.id)">
-            <v-list-item-title class="text-body-2"><code class="mr-2">{{ j.id.slice(0, 8) }}</code>{{ j.name }}</v-list-item-title>
-          </v-list-item>
-          <v-list-item v-if="!addable.length" disabled><v-list-item-title class="text-body-2">{{ t('views.no_more_jobs') }}</v-list-item-title></v-list-item>
-        </v-list>
-      </v-menu>
+        <template #charts="{ result: shown, hidden }">
+          <ViewCharts :project="project" :name="name" :result="shown" :jobs="selected" :hidden="hidden" />
+        </template>
+      </ViewPanel>
     </div>
-
-    <div v-if="!selected.length" class="pick-hint">{{ t('views.pick_jobs_hint') }}</div>
-    <ViewPanel v-else :key="name + selected.join(',')" :project="project" :name="name" :jobs="selected" intersect>
-      <template #custom="{ result }">
-        <CustomView :project="project" :name="name" :result="result" />
-      </template>
-      <template #charts="{ result, hidden }">
-        <ViewCharts :project="project" :name="name" :result="result" :jobs="selected" :hidden="hidden" />
-      </template>
-    </ViewPanel>
   </div>
 </template>
 
@@ -50,12 +62,16 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import ProjectDot from '@/components/ProjectDot.vue'
 import ViewPanel from '@/components/views/ViewPanel.vue'
 import ViewCharts from '@/components/views/ViewCharts.vue'
 import CustomView from '@/components/views/CustomView.vue'
-import { useSavedViewQuery, useViewsQuery } from '@/queries/useViewQueries'
+import ViewActions from '@/components/views/ViewActions.vue'
+import ViewExperiments from '@/components/views/ViewExperiments.vue'
+import { intersectColumns } from '@/components/views/viewCompare'
+import { viewsApi } from '@/apis/views'
+import { useSavedViewQuery, useViewRenderQuery, useViewsQuery } from '@/queries/useViewQueries'
 import { useJobsListQuery } from '@/queries/useJobQueries'
-import { useProjectColors } from '@/composables/useProjectColors'
 
 const props = defineProps<{ project: string; name: string }>()
 const { t } = useI18n()
@@ -64,10 +80,9 @@ const router = useRouter()
 const viewsQuery = useViewsQuery(() => props.project)
 const savedQuery = useSavedViewQuery(() => props.project, () => props.name)
 const jobsQuery = useJobsListQuery()
-const projectColor = useProjectColors()
 
+const views = computed(() => (viewsQuery.data.value ?? []).map((v) => ({ ...v, title: v.title || v.name })))
 const projectJobs = computed(() => (jobsQuery.data.value ?? []).filter((j) => j.project === props.project))
-const jobNote = (id: string) => projectJobs.value.find((j) => j.id === id)?.name ?? ''
 
 // Selection: ?jobs=a,b in the URL, else last time's choice for this view,
 // else the view's explicit job list. Note-pattern selectors are not used.
@@ -88,27 +103,47 @@ watch(selected, (ids) => {
   try { localStorage.setItem(storeKey(), JSON.stringify(ids)) } catch { /* private mode */ }
   router.replace({ query: { ...route.query, jobs: ids.length ? ids.join(',') : undefined } })
 })
-
-const addable = computed(() => projectJobs.value.filter((j) => !selected.value.includes(j.id)))
 function add(id: string) { selected.value = [...selected.value, id] }
 function remove(id: string) { selected.value = selected.value.filter((x) => x !== id) }
+
+// The header reads the same render the panel shows (one cached query):
+// each experiment's status and data age, and which charts cannot show.
+const renderQuery = useViewRenderQuery(() => props.project, () => props.name, selected, () => selected.value.length > 0)
+const result = computed(() => (selected.value.length ? renderQuery.data.value : undefined))
+const compared = computed(() => (result.value
+  ? intersectColumns(result.value, selected.value)
+  : { empty: [] as string[], hiddenCharts: [] as number[] }))
+const title = computed(() => result.value?.title || views.value.find((v) => v.name === props.name)?.title || props.name)
+const exportText = (format: 'latex' | 'markdown' | 'csv') => viewsApi.exportText(props.project, props.name, format, { jobs: selected.value })
 </script>
 
 <style scoped>
-.view-page { max-width: 1120px; margin: 0 auto; }
-.view-head { position: relative; padding-left: 16px; }
-.view-head::before { content: ''; position: absolute; left: 0; top: 2px; bottom: 2px; width: 4px; border-radius: 2px; background: var(--project); }
-.view-tab {
-  font-size: 13px; padding: 4px 12px; border-radius: 999px; text-decoration: none;
-  color: rgb(var(--v-theme-on-surface)); border: 0.5px solid rgb(var(--v-theme-outline-variant));
+.view-page { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 32px; align-items: start; }
+.view-rail { position: sticky; top: 16px; max-height: calc(100vh - 120px); overflow-y: auto; padding-right: 4px; }
+.rail-project {
+  display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; text-decoration: none;
+  color: rgb(var(--v-theme-on-surface)); padding: 4px 10px; min-width: 0;
 }
-.view-tab.on { background: rgb(var(--v-theme-on-surface), 0.08); border-color: rgb(var(--v-theme-on-surface), 0.3); }
-.job-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.job-chip {
-  display: inline-flex; align-items: center; gap: 6px; max-width: 320px; font-size: 12px;
-  padding: 2px 4px 2px 10px; border-radius: 999px; border: 0.5px solid rgb(var(--v-theme-outline-variant));
+.rail-project:hover { text-decoration: underline; }
+.rail-label { font-size: 11px; letter-spacing: 0.04em; color: rgb(var(--v-theme-on-surface-variant)); padding: 14px 10px 6px; }
+.rail-item {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  font-size: 13px; line-height: 1.4; padding: 6px 10px; margin-bottom: 2px; border-radius: 8px;
+  text-decoration: none; color: rgb(var(--v-theme-on-surface-variant));
 }
-.job-chip code { font-family: var(--font-mono); background: none; color: rgb(var(--v-theme-on-surface-variant)); }
-.job-chip-x { border: none; background: none; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 4px; color: rgb(var(--v-theme-on-surface-variant)); }
-.pick-hint { font-size: 13px; color: rgb(var(--v-theme-on-surface-variant)); padding: 24px 0; }
+.rail-item:hover { background: rgb(var(--v-theme-on-surface), 0.05); color: rgb(var(--v-theme-on-surface)); }
+.rail-item.on { background: rgb(var(--v-theme-primary), 0.12); color: rgb(var(--v-theme-primary)); font-weight: 500; }
+.view-select { display: none; }
+.view-header { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
+.view-title { font-size: 20px; font-weight: 500; line-height: 1.35; margin: 0; }
+.view-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-top: 4px; font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
+.view-meta code { font-family: var(--font-mono); background: none; padding: 0; }
+.view-meta .extra { color: rgb(var(--v-theme-on-surface)); }
+.min-w-0 { min-width: 0; }
+@media (max-width: 959px) {
+  .view-page { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .view-rail { display: none; }
+  .view-select { display: block; margin-bottom: 16px; }
+  .view-header { flex-wrap: wrap; }
+}
 </style>

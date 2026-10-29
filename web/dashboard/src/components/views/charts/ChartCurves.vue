@@ -2,7 +2,7 @@
   <div v-if="seriesQuery.isLoading.value" class="pa-6"><v-skeleton-loader type="image" /></div>
   <div v-else-if="!all.length" class="pa-4 text-caption" style="color: #666">{{ t('views.no_curve_data') }}</div>
   <XYFrame v-else ref="frame" :g="g" :x-ticks="xTicks" :y-ticks="yTicks" x-title="step" :y-title="metric" :legend="lines.map((l) => l.label)">
-    <g v-for="(l, li) in lines" :key="li">
+    <g v-for="(l, li) in lines" v-show="!hidden.has(l.ci)" :key="li">
       <path v-if="l.band" :d="l.band" :fill="th.color(l.ci)" fill-opacity="0.15" stroke="none" />
       <path v-for="(d, di) in l.paths" :key="di" :d="d" fill="none" :stroke="th.color(l.ci)" :stroke-width="l.raw ? 1 : 1.5"
         :stroke-dasharray="DASHES[l.ci % DASHES.length]" :stroke-opacity="l.raw ? 0.8 : 1" />
@@ -22,8 +22,11 @@ import { useChartTheme } from './chartGeom'
 import { frameGeom } from './frame'
 import { useViewSeriesQuery, viewIsLive } from '@/queries/useViewQueries'
 import { formatKey, keyLabel } from '../viewFormat'
+import { useHiddenSeries } from './chartSeries'
 
 const th = useChartTheme()
+const hiddenRef = useHiddenSeries()
+const hidden = computed(() => hiddenRef.value)
 
 const props = withDefaults(defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; project: string; view: string; index: number; jobs?: string[] }>(), { jobs: () => [] })
 const { t } = useI18n()
@@ -34,7 +37,7 @@ defineExpose({ get svg() { return frame.value?.svg ?? null } })
 const seriesQuery = useViewSeriesQuery(() => props.project, () => props.view, () => props.index, true, () => props.jobs, () => viewIsLive(props.result))
 const metric = computed(() => String(props.spec.metric))
 const raw = computed(() => seriesQuery.data.value?.series ?? [])
-const g = computed(() => frameGeom(props.width, { legend: raw.value.length > 1 }))
+const g = computed(() => frameGeom(props.width, { legend: raw.value.length > 1 && raw.value.map(seriesLabel) }))
 
 // Each series draws the mean of its versions (band ±std where ≥2 were
 // averaged) or each version as logged (band: its estimate's error) — the
@@ -54,8 +57,10 @@ const y = computed(() => {
   const pad = (hi - lo) * 0.06 || Math.abs(hi) * 0.05 || 0.01
   return linear([lo - pad, hi + pad], [g.value.plotH, 0])
 })
+const seriesLabel = (s: { key: Record<string, unknown> }) =>
+  Object.entries(s.key).map(([k, v]) => `${keyLabel(k)} = ${formatKey(v, props.result.key_formats?.[k])}`).join(', ') || metric.value
 const lines = computed(() => raw.value.map((s, ci) => {
-  const label = Object.entries(s.key).map(([k, v]) => `${keyLabel(k)} = ${formatKey(v, props.result.key_formats?.[k])}`).join(', ') || metric.value
+  const label = seriesLabel(s)
   const drawn = drawable.value[ci].map((l) => drawLine(l, x.value, y.value))
   return {
     label, ci, raw: !s.mean && drawn.length > 1,

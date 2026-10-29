@@ -191,3 +191,59 @@ export function drawLine(l: DrawableLine, x: (v: number) => number, y: (v: numbe
   }
   return { path: gapPath(runs, px, py), band, dots: isolatedPoints(runs, px, py) }
 }
+
+// ── Label layout ─────────────────────────────────────────────────────────
+// Widths are estimated, not measured, so the on-screen chart and its paper
+// copy lay out the same and the geometry stays testable without a DOM.
+
+/** Approximate width of a label in px: wide glyphs (CJK, kana, full-width
+ *  forms) ~1em, the rest ~0.56em. */
+export function textWidth(s: string, size: number): number {
+  let w = 0
+  for (const ch of s) w += /[⺀-鿿가-힯豈-﫿＀-￯]/.test(ch) ? size : size * 0.56
+  return w
+}
+
+/** Cut a label to a width with an ellipsis (the full text goes in a tooltip). */
+export function ellipsize(s: string, size: number, max: number): string {
+  if (textWidth(s, size) <= max) return s
+  let out = ''
+  for (const ch of s) {
+    if (textWidth(out + ch + '…', size) > max) break
+    out += ch
+  }
+  return out + '…'
+}
+
+export const LEGEND_ROW = 13
+
+/** Legend items flow left to right and wrap into rows within maxW; a label
+ *  wider than a whole row is cut. */
+export function legendLayout(labels: string[], kind: 'swatch' | 'line', maxW: number, size = 10) {
+  const lead = kind === 'swatch' ? 12 : 18
+  let x = 0, row = 0
+  const items = labels.map((full) => {
+    const label = ellipsize(full, size, Math.max(40, maxW - lead))
+    const w = lead + textWidth(label, size)
+    if (x > 0 && x + w > maxW) { x = 0; row++ }
+    const item = { x, row, label, full }
+    x += w + 12
+    return item
+  })
+  return { items, rows: labels.length ? row + 1 : 0 }
+}
+
+/** Category tick labels under slots of width `slot`: horizontal while
+ *  every label fits; else rotated -40° (ending at the tick) and cut to
+ *  `maxLen` px. `depth` is the extra bottom margin they need beyond a
+ *  horizontal row, `reach` how far left of its tick a label runs. */
+export const TICK_ANGLE = 40
+export function categoryTicks(labels: string[], slot: number, size = 9.5, maxLen = 140) {
+  const fits = labels.every((l) => textWidth(l, size) <= slot - 4)
+  if (fits) return { rotate: false, labels: labels.map((full) => ({ label: full, full })), depth: 0, reach: 0 }
+  const cut = labels.map((full) => ({ label: ellipsize(full, size, maxLen), full }))
+  const longest = Math.max(...cut.map((c) => textWidth(c.label, size)))
+  const rad = (TICK_ANGLE * Math.PI) / 180
+  const tall = longest * Math.sin(rad) + size * Math.cos(rad)
+  return { rotate: true, labels: cut, depth: Math.max(0, Math.ceil(tall - size)), reach: Math.ceil(longest * Math.cos(rad)) }
+}

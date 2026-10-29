@@ -3,13 +3,19 @@
     <div class="chart-bar">
       <span class="chart-name">{{ chartName }}</span>
       <v-spacer />
-      <v-btn-toggle v-model="width" density="compact" variant="text" mandatory class="chart-width">
-        <v-btn value="single" size="x-small">{{ t('views.single_col') }}</v-btn>
-        <v-btn value="double" size="x-small">{{ t('views.double_col') }}</v-btn>
-      </v-btn-toggle>
+      <v-btn
+        size="small" variant="text" icon density="comfortable" class="chart-tool"
+        :title="width === 'single' ? t('views.widen_chart') : t('views.narrow_chart')"
+        :aria-label="width === 'single' ? t('views.widen_chart') : t('views.narrow_chart')"
+        @click="width = width === 'single' ? 'double' : 'single'"
+      >
+        <v-icon size="18">{{ width === 'single' ? 'mdi-arrow-expand-horizontal' : 'mdi-arrow-collapse-horizontal' }}</v-icon>
+      </v-btn>
       <v-menu location="bottom end">
         <template #activator="{ props: menu }">
-          <v-btn v-bind="menu" size="x-small" variant="text"><v-icon start size="14">mdi-download</v-icon>{{ t('views.export') }}</v-btn>
+          <v-btn v-bind="menu" size="small" variant="text" icon density="comfortable" class="chart-tool" :title="t('views.export')" :aria-label="t('views.export')">
+            <v-icon size="18">mdi-download</v-icon>
+          </v-btn>
         </template>
         <v-list density="compact">
           <v-list-item @click="exportSvg"><v-list-item-title class="text-body-2">SVG</v-list-item-title></v-list-item>
@@ -27,11 +33,20 @@
     <div v-if="animating" class="chart-anim">{{ animating }}</div>
     <!-- On screen the dashboard theme; the paper copy (off-screen, same
          geometry) is what SVG/PNG/PDF and animations export. -->
-    <div class="chart-screen" :class="{ wide: width === 'double' }">
+    <div
+      ref="screenEl" class="chart-screen" :class="{ wide: width === 'double' }"
+      @mousemove="onMove" @mouseleave="pointer = null"
+    >
       <ChartThemeScope v-if="comp" :theme="screen">
         <component :is="comp" :result="result" :spec="spec" :width="width" :project="project" :view="view" :index="index" :jobs="jobs" />
       </ChartThemeScope>
       <div v-else class="text-caption pa-4">{{ t('views.unknown_template', { name: spec.template }) }}</div>
+    </div>
+    <!-- the value under the pointer: its row keys, column, and value in full -->
+    <div v-if="tip" class="chart-tip" :style="tip.style" role="tooltip">
+      <div v-for="k in tip.keys" :key="k.name" class="tip-key"><span>{{ k.name }}</span>{{ k.value }}</div>
+      <div class="tip-value"><span>{{ tip.column }}</span>{{ tip.value }}</div>
+      <div v-if="tip.n !== undefined" class="tip-key"><span>n</span>{{ tip.n }}</div>
     </div>
     <div v-if="comp" class="chart-paper-copy" aria-hidden="true">
       <ChartThemeScope :theme="PAPER_THEME">
@@ -52,6 +67,9 @@ import { useTheme } from 'vuetify'
 import { downloadBlob, svgToCanvas, svgToPdf, svgToPng, svgString } from './chartExport'
 import { encodeGif, encodeWebm, stamp } from './chartAnimate'
 import { viewsApi } from '@/apis/views'
+import { formatKey, keyLabel } from '../viewFormat'
+import { useViewHover } from '../viewHover'
+import { provideHiddenSeries } from './chartSeries'
 import ChartCompare from './ChartCompare.vue'
 import ChartSweep from './ChartSweep.vue'
 import ChartHeatmap from './ChartHeatmap.vue'
@@ -78,6 +96,35 @@ const chartName = computed(() => {
   const y = props.spec.y
   return Array.isArray(y) ? y.join(' · ') : typeof y === 'string' ? y : props.spec.template
 })
+// Legend clicks hide series in this card (screen and paper copy alike).
+provideHiddenSeries()
+
+// Tooltip: the charts mark the value under the pointer in the shared hover
+// (row, column of the result); the card says what that value is.
+const hot = useViewHover()
+const screenEl = ref<HTMLElement | null>(null)
+const pointer = ref<{ x: number; y: number; w: number } | null>(null)
+function onMove(e: MouseEvent) {
+  const card = screenEl.value?.parentElement?.getBoundingClientRect()
+  if (card) pointer.value = { x: e.clientX - card.left, y: e.clientY - card.top, w: card.width }
+}
+const tip = computed(() => {
+  const h = hot.value, p = pointer.value
+  const row = h && p ? props.result.rows[h.row] : undefined
+  const cell = row?.cells[h!.col]
+  if (!row || !cell || !p) return null
+  // right half: the tooltip opens to the left of the pointer
+  const flip = p.x > p.w / 2
+  return {
+    keys: props.result.row_keys.map((k) => ({ name: keyLabel(k), value: formatKey(row.key[k], props.result.key_formats?.[k]) })),
+    column: props.result.columns[h!.col]?.name ?? '',
+    value: (cell.exact || cell.text) + (cell.delta_text ? `  (${cell.delta_text})` : ''),
+    // an estimate's text already says its n
+    n: /\bn=/.test(cell.exact || cell.text) ? undefined : cell.n,
+    style: { top: `${p.y + 14}px`, ...(flip ? { right: `${p.w - p.x + 14}px` } : { left: `${p.x + 14}px` }) },
+  }
+})
+
 // Small multiples need the room of a double column.
 const width = ref<WidthPreset>(props.spec.facet ? 'double' : 'single')
 const chart = ref<{ svg: SVGSVGElement | null } | null>(null)
@@ -138,8 +185,20 @@ async function exportPdf() {
 </script>
 
 <style scoped>
-.chart-card { border: 0.5px solid rgb(var(--v-theme-outline-variant)); border-radius: 12px; padding: 10px 14px 14px; background: rgb(var(--v-theme-surface)); }
-.chart-bar { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+.chart-card { position: relative; border: 0.5px solid rgb(var(--v-theme-outline-variant)); border-radius: 12px; padding: 10px 14px 14px; background: rgb(var(--v-theme-surface)); }
+.chart-tip {
+  position: absolute; z-index: 5; pointer-events: none; max-width: 320px; padding: 8px 10px; border-radius: 8px;
+  font-size: 12px; line-height: 1.5; background: color-mix(in srgb, rgb(var(--v-theme-surface)) 90%, rgb(var(--v-theme-on-surface)));
+  border: 0.5px solid rgb(var(--v-theme-outline-variant)); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+.tip-key, .tip-value { display: flex; gap: 10px; justify-content: space-between; white-space: nowrap; }
+.tip-key span, .tip-value span { color: rgb(var(--v-theme-on-surface-variant)); }
+.tip-key { overflow: hidden; text-overflow: ellipsis; }
+.tip-value { font-family: var(--font-mono); font-weight: 500; margin-top: 2px; }
+.tip-value span { font-family: var(--font-sans, inherit); font-weight: 400; }
+.chart-bar { display: flex; align-items: center; gap: 2px; margin-bottom: 4px; min-height: 32px; }
+.chart-tool { color: rgb(var(--v-theme-on-surface-variant)); opacity: 0.7; }
+.chart-card:hover .chart-tool, .chart-tool:focus-visible { opacity: 1; }
 .chart-name { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
 .chart-anim { font-size: 12px; color: rgb(var(--v-theme-primary)); margin-bottom: 4px; }
 /* The figure geometry scaled ~1.45×: 13px labels, 2px lines, 8px markers. */

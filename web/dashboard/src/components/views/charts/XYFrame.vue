@@ -1,7 +1,7 @@
 <template>
   <svg ref="svg" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${g.W} ${g.H}`" :width="g.W" :height="g.H" :font-family="th.font">
     <rect :width="g.W" :height="g.H" :fill="th.bg" />
-    <ChartLegend v-if="legend.length > 1" :labels="legend" :kind="legendKind" :x="g.M.l" :y="12" />
+    <ChartLegend v-if="legend.length > 1" :labels="legend" :kind="legendKind" :x="g.M.l" :y="12" :width="g.W - g.M.l - 4" />
     <g :transform="`translate(${g.M.l},${g.M.t})`">
       <line v-for="t in yTicks" :key="'gy' + t.pos" x1="0" :x2="g.plotW" :y1="t.pos" :y2="t.pos" :stroke="th.grid" stroke-width="0.6" />
       <slot />

@@ -48,3 +48,19 @@ export function cellNumber(cell: { value: unknown; mean?: number } | undefined):
   if (typeof cell.mean === 'number') return cell.mean
   return typeof cell.value === 'number' && Number.isFinite(cell.value) ? cell.value : null
 }
+
+/** A row-key value written in parts, "A1 JA-plain | 准确率": the parts of
+ *  " | " (or a full-width ｜). */
+const KEY_SEP = /\s+[|¦│]\s+|\s*｜\s*/
+export function splitKey(v: string): string[] {
+  return v.split(KEY_SEP)
+}
+
+/** How many sub-columns a row key's values split into so their separators
+ *  line up: the most parts any value has, when every value has at least
+ *  two; else 1 (the column shows as written). */
+export function keyPartCount(values: string[]): number {
+  if (!values.length) return 1
+  const n = values.map((v) => splitKey(v).length)
+  return Math.min(...n) > 1 ? Math.max(...n) : 1
+}

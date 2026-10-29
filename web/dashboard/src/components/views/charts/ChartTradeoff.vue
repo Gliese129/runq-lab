@@ -1,7 +1,7 @@
 <template>
   <XYFrame ref="frame" :g="g" :x-ticks="xTicks" :y-ticks="yTicks" :x-title="xTitle" :y-title="yTitle" :legend="legend">
     <path v-if="frontier" :d="frontier" fill="none" :stroke="th.muted" stroke-width="1" stroke-dasharray="4 3" />
-    <g v-for="(p, i) in placed" :key="i">
+    <g v-for="(p, i) in placed" v-show="!hidden.has(p.ci)" :key="i">
       <path :d="markerPath(MARKERS[p.ci % MARKERS.length], p.px, p.py, 3.2)"
         :fill="MARKERS[p.ci % MARKERS.length] === 'cross' ? 'none' : th.color(p.ci)" :stroke="th.color(p.ci)" stroke-width="0.8" />
       <text v-if="labels" :x="p.px + 5" :y="p.py - 4" font-size="8.5" :fill="th.muted">{{ p.label }}</text>
@@ -18,8 +18,11 @@ import { useChartTheme } from './chartGeom'
 import { column, distinct, isPct } from './chartData'
 import { frameGeom } from './frame'
 import { cellNumber, formatKey, keyLabel } from '../viewFormat'
+import { useHiddenSeries } from './chartSeries'
 
 const th = useChartTheme()
+const hiddenRef = useHiddenSeries()
+const hidden = computed(() => hiddenRef.value)
 
 const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPreset; domain?: ViewResult }>()
 const frame = ref<{ svg: SVGSVGElement | null } | null>(null)
@@ -45,7 +48,7 @@ const pts = computed(() => rowPoints(props.result))
 const fullPts = computed(() => (props.domain ? rowPoints(props.domain) : pts.value))
 const colors = computed(() => distinct(fullPts.value.map((p) => p.color)))
 const legend = computed(() => (colorKey.value ? colors.value.map((c) => `${keyLabel(colorKey.value!)} = ${formatKey(c, props.result.key_formats?.[colorKey.value!])}`) : []))
-const g = computed(() => frameGeom(props.width, { legend: legend.value.length > 1 }))
+const g = computed(() => frameGeom(props.width, { legend: legend.value.length > 1 && legend.value }))
 const xPct = computed(() => isPct(column(props.result, xName.value)))
 const yPct = computed(() => isPct(column(props.result, yName.value)))
 
