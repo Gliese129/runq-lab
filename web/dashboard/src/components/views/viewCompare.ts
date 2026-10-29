@@ -1,16 +1,8 @@
 /** Cross-job comparison on the project view page: the jobs are chosen by
- *  hand, and only the columns every chosen job has data for are shown. */
-import type { ViewCell, ViewResult, ViewRow } from '@/types/views'
-
-function jobsOf(row: ViewRow, cell: ViewCell | undefined): string[] {
-  const ids = (cell?.contributors ?? []).map((c) => c.job_id)
-  if (ids.length) return ids
-  return row.job_id ? [row.job_id] : []
-}
-
-function hasValue(cell: ViewCell | undefined): boolean {
-  return cell !== undefined && cell.value !== null && cell.value !== undefined
-}
+ *  hand, and only the columns every chosen job with data has a value in
+ *  are shown. The render says which columns each job has (sources[].columns);
+ *  a job without any is listed as having no data instead of emptying the table. */
+import type { ViewResult } from '@/types/views'
 
 export interface Intersected {
   result: ViewResult
@@ -23,20 +15,16 @@ export interface Intersected {
   hiddenCharts: number[]
 }
 
-/** Keep the columns every chosen job has a value in; with one job (or none)
- *  the result is unchanged. Charts that need a dropped column go too. */
+/** Keep the columns every chosen job with data has a value in; with fewer
+ *  than two such jobs the columns are unchanged. Charts that need a dropped
+ *  column go too. */
 export function intersectColumns(r: ViewResult, jobs: readonly string[]): Intersected {
   if (jobs.length < 2) return { result: r, dropped: [], empty: [], hiddenCharts: [] }
-  const per = r.columns.map(() => new Set<string>())
-  const any = new Set<string>()
-  for (const row of r.rows) {
-    if (row.empty) continue
-    row.cells.forEach((cell, i) => {
-      if (!hasValue(cell)) return
-      for (const j of jobsOf(row, cell)) { per[i].add(j); any.add(j) }
-    })
-  }
-  const keep = r.columns.map((_, i) => jobs.every((j) => per[i].has(j)))
+  const has = new Map(r.sources.map((s) => [s.job_id, new Set(s.columns ?? [])]))
+  const empty = jobs.filter((j) => !has.get(j)?.size)
+  const withData = jobs.filter((j) => has.get(j)?.size)
+  if (withData.length < 2) return { result: r, dropped: [], empty, hiddenCharts: [] }
+  const keep = r.columns.map((_, i) => withData.every((j) => has.get(j)!.has(i)))
   const dropped = [...new Set(r.columns.filter((_, i) => !keep[i]).map((c) => c.name))]
     .filter((name) => !r.columns.some((c, i) => c.name === name && keep[i]))
   const kept = new Set(r.columns.filter((_, i) => keep[i]).map((c) => c.name))
@@ -50,7 +38,7 @@ export function intersectColumns(r: ViewResult, jobs: readonly string[]): Inters
       rows: r.rows.map((row) => ({ ...row, cells: row.cells.filter((_, i) => keep[i]) })),
     },
     dropped,
-    empty: jobs.filter((j) => !any.has(j)),
+    empty,
     hiddenCharts,
   }
 }

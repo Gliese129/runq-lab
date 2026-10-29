@@ -79,6 +79,8 @@ export interface ViewSource {
   attention: Record<string, unknown>[]
   incomplete?: boolean
   warnings?: string[]
+  /** result columns (by index) this job has a value in */
+  columns?: number[]
 }
 
 export interface ViewExtra {

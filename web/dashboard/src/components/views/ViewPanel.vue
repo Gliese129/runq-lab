@@ -46,7 +46,7 @@
         <span v-if="compared.dropped.length">{{ t('views.dropped_columns', { cols: compared.dropped.join(', ') }) }}</span>
         <span v-if="compared.empty.length">{{ t('views.jobs_without_data', { jobs: compared.empty.map((j) => j.slice(0, 8)).join(', ') }) }}</span>
       </div>
-      <div v-if="intersect && jobs.length > 1 && !shown!.columns.length" class="view-error">{{ t('views.no_common_columns') }}</div>
+      <div v-if="compared.dropped.length && !shown!.columns.length" class="view-error">{{ t('views.no_common_columns') }}</div>
       <template v-else>
         <slot name="custom" :result="shown!" />
         <ViewTable v-if="!vis.hidden.value.has('table')" :result="shown!" />

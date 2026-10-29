@@ -1,6 +1,7 @@
 package views
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -70,5 +71,54 @@ func TestThreeValuedExpressions(t *testing.T) {
 	}
 	if _, err := Parse("open('/tmp/x')"); err == nil {
 		t.Fatal("function calls accepted")
+	}
+}
+
+// A view set up ahead of its data (expect grid, pivot) over two jobs that
+// have only recorded another section: neither has a column, so the page
+// says they have no data rather than that they share no columns.
+func TestSourceColumnsWithoutData(t *testing.T) {
+	spec := Spec{Name: "matrix", Project: "p", Section: "math-dev40", Rows: []string{"param.variant", "condition", "update"},
+		Expect:  map[string][]any{"param.variant": {"A1", "A2"}, "condition": {"JA", "EN"}, "update": {float64(20), float64(30)}},
+		Columns: []Column{{Name: "Accuracy", Value: "accuracy", Format: "pct1"}}, Pivot: &Pivot{Axis: "update", Order: []any{float64(20), float64(30)}}}
+	training := func(job string) Record {
+		return Record{SourceID: "tk" + job, JobID: job, Section: "training", TS: 1, Axes: map[string]any{"variant": "A1"}, Metrics: map[string]any{"mean_reward": 0.5}}
+	}
+	out, err := Render(spec, Input{Records: []Record{training("jbA"), training("jbB")}, Sources: []Source{{JobID: "jbA"}, {JobID: "jbB"}}}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Columns) != 2 || len(out.Rows) != 4 {
+		t.Fatalf("expect grid: %d columns, %d rows", len(out.Columns), len(out.Rows))
+	}
+	for _, s := range out.Sources {
+		if s.Columns == nil || len(s.Columns) != 0 {
+			t.Fatalf("%s has no data, want columns []: %v", s.JobID, s.Columns)
+		}
+	}
+}
+
+// Each job reports the columns it has a value in; an aggregated cell
+// counts only for the jobs whose samples gave a value.
+func TestSourceColumnsPerJob(t *testing.T) {
+	spec := Spec{Name: "v", Project: "p", Section: "eval", Rows: []string{"model", "param.seed"}, Aggregate: &Aggregate{Over: []string{"param.seed"}, Stat: "mean"},
+		Columns: []Column{{Name: "Acc", Value: "acc"}, {Name: "J", Value: "j"}}}
+	rec := func(job string, seed float64, j any) Record {
+		return Record{SourceID: "tk" + job, JobID: job, Section: "eval", TS: 1, Axes: map[string]any{"model": "m"}, Params: map[string]any{"seed": seed}, Metrics: map[string]any{"acc": 0.5, "j": j}}
+	}
+	in := Input{Records: []Record{rec("jbA", 1, 0.3), rec("jbB", 2, nil)}, Sources: []Source{{JobID: "jbA"}, {JobID: "jbB"}, {JobID: "jbC"}}}
+	out, err := Render(spec, in, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string][]int{}
+	for _, s := range out.Sources {
+		got[s.JobID] = s.Columns
+	}
+	if fmt.Sprint(got["jbA"]) != "[0 1]" || fmt.Sprint(got["jbB"]) != "[0]" || fmt.Sprint(got["jbC"]) != "[]" {
+		t.Fatalf("source columns: %v", got)
+	}
+	if in.Sources[0].Columns != nil {
+		t.Fatal("the input's sources were changed")
 	}
 }

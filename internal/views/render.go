@@ -58,6 +58,10 @@ type Source struct {
 	Attention        []map[string]any `json:"attention"`
 	Incomplete       bool             `json:"incomplete,omitempty"`
 	Warnings         []string         `json:"warnings,omitempty"`
+	// Columns lists the result columns (by index) the job has a value in;
+	// empty when it has none. A page comparing hand-picked jobs keeps the
+	// columns every job with data has, and names the jobs without any.
+	Columns []int `json:"columns"`
 }
 type Data struct {
 	State     string `json:"state"`
@@ -562,6 +566,7 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 	}
 	rankAndBaseline(out, s)
 	rankEst(out)
+	sourceColumns(out)
 	for _, e := range s.Extra {
 		v, err := evalValue(e.Value, in.Extras[e.Job])
 		if err != nil {
@@ -586,6 +591,47 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 		out.Extra = append(out.Extra, ExtraCell{e.Name, v, txt, agg})
 	}
 	return out, nil
+}
+
+// sourceColumns records, per source, the columns it has a value in: a
+// cell counts for the jobs that contributed to it (its row's job when
+// the cell names none).
+func sourceColumns(out *Result) {
+	has := map[string]map[int]bool{}
+	for _, row := range out.Rows {
+		if row.Empty {
+			continue
+		}
+		for i, cell := range row.Cells {
+			if cell.Value == nil {
+				continue
+			}
+			jobs := []string{}
+			for _, c := range cell.Contributors {
+				jobs = append(jobs, c.JobID)
+			}
+			if len(jobs) == 0 && row.JobID != "" {
+				jobs = []string{row.JobID}
+			}
+			for _, j := range jobs {
+				if has[j] == nil {
+					has[j] = map[int]bool{}
+				}
+				has[j][i] = true
+			}
+		}
+	}
+	sources := make([]Source, len(out.Sources)) // the input's slice stays as it was
+	for i, src := range out.Sources {
+		src.Columns = []int{}
+		for ci := range out.Columns {
+			if has[src.JobID][ci] {
+				src.Columns = append(src.Columns, ci)
+			}
+		}
+		sources[i] = src
+	}
+	out.Sources = sources
 }
 
 // KeepsCell reports whether the view's filter keeps a cell with these
@@ -657,12 +703,17 @@ func aggregate(out *Result, a Aggregate) {
 		}
 		for ci, c := range out.Columns {
 			values := []float64{}
+			var from []Contributor // the samples that gave a value
 			for _, sample := range g {
 				if v, ok := number(sample.Cells[ci].Value); ok {
 					values = append(values, v)
+					from = append(from, sample.Contributors...)
 				}
 			}
-			cell := Cell{Text: "--", Contributors: r.Contributors}
+			if from == nil {
+				from = r.Contributors
+			}
+			cell := Cell{Text: "--", Contributors: from}
 			n := len(values)
 			cell.N = &n
 			if n > 0 {
