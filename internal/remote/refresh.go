@@ -116,8 +116,15 @@ func (b *Backend) SchedulerProbe(ctx context.Context, floor time.Duration) error
 	}
 	var active []entry
 	anyNeedsProbe := false
+	// A finished job whose outcome is partly a guess (an inferred failure
+	// within store.SettleGrace) stays in the pass: a late status.json or a
+	// scheduler that lists the job again can still correct it.
+	unsettled, uerr := b.Store.UnsettledJobIDs(ctx)
+	if uerr != nil {
+		return uerr
+	}
 	for _, j := range jobs {
-		if store.IsTerminalJobStatus(j.Status) {
+		if store.IsTerminalJobStatus(j.Status) && !unsettled[j.ID] {
 			continue
 		}
 		if b.Scope != nil && !ownedJobs[j.ID] {
@@ -330,6 +337,13 @@ func (b *Backend) persistDecision(ctx context.Context, tk store.TaskRow, d Decis
 	if leavingUnknown && !isTerminal(d.Status) {
 		if ru, ok := b.Finisher.(interface{ ResumeUnknown(taskID string) }); ok {
 			ru.ResumeUnknown(tk.ID)
+		}
+	}
+	// Reviving a provisional terminal: the queue follows the DB back to
+	// running, or the task's real verdict is dropped as stale later.
+	if isTerminal(tk.Status) && !isTerminal(d.Status) {
+		if ro, ok := b.Finisher.(interface{ ReopenTask(taskID string) }); ok {
+			ro.ReopenTask(tk.ID)
 		}
 	}
 	return nil

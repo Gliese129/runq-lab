@@ -124,7 +124,7 @@ project's largest finished experiment per version × the planned version count.
 - `runq logs` prints the tail and returns when stdout is not a terminal; add `--timeout <dur>` for a bounded follow.
 - Check progress with one `runq ps <job_id> --json`; to wait for the next change, use `runq ps <job_id> --wait --json` — one bounded call in place of a sleep loop.
 - When reporting to the researcher, include the `url` of the experiment or version.
-- `runq clean` is irreversible; preview with `--show`.
+- `runq clean` is irreversible; preview with `--show`. It removes settled versions only: a failure runq guessed (status source `inferred`, or a submit failure) can still turn out to be running, so it is kept — and listed under `skipped` — until it is confirmed or 24 h have passed since it ended. `runq kill` still sends such a version's cancel.
 
 ## Reusable views and scoring scripts
 

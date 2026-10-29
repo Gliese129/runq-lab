@@ -34,7 +34,7 @@ func TestPerformCleanExactSelectionKeepsUnknownTask(t *testing.T) {
 		{
 			ID: "failed-task", JobID: "job-1", ProjectName: "p",
 			Command: "true", ParamsJSON: "{}", GPUsNeeded: 1,
-			Status: "failed", EnqueuedAt: time.Now(),
+			Status: "failed", StatusSource: "wrapper", EnqueuedAt: time.Now(),
 		},
 	} {
 		if err := st.InsertTask(ctx, &row); err != nil {

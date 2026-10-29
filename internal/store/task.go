@@ -365,8 +365,15 @@ func (s *Store) UpdateTaskStatus(ctx context.Context, taskID string, status stri
 	whereClauses := []string{"id = ?"}
 	whereArgs := []any{taskID}
 	fenced := false
-	if status == "pending" || status == "submitting" {
+	if status == "pending" || status == "submitting" || status == "unknown" {
+		// Submission-phase statuses never replace a terminal one.
 		whereClauses = append(whereClauses, "status NOT IN ('success', 'failed', 'killed')")
+	} else if !IsTerminalTaskStatus(status) {
+		// Settled is absorbing: a live status may replace only a
+		// provisional terminal (see settled.go).
+		settled, cutoff := SettledSQL(time.Now())
+		whereClauses = append(whereClauses, "NOT "+settled)
+		whereArgs = append(whereArgs, cutoff)
 	}
 
 	if expected, ok := fields[expectedStatusField]; ok {

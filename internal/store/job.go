@@ -389,20 +389,31 @@ func ProjectJobStatus(tasks []TaskRow) (string, error) {
 // as active — it is resumable, and a hidden-but-resumable job is the same
 // forgotten-state hazard (matches the GUI, which only offers Archive on
 // terminal jobs).
+//
+// The check and the write are one statement: no version may be live at the
+// moment of archiving (a reconcile may revive one between a read and a
+// write); a version that revives later unarchives the job (refreshJobTx).
 func (s *Store) ArchiveJob(ctx context.Context, jobID string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE jobs SET archived_at = ? WHERE id = ? AND status NOT IN `+ActiveStatusesSQL()+`
+		AND NOT EXISTS (SELECT 1 FROM tasks WHERE job_id = jobs.id AND status IN `+ActiveStatusesSQL()+`)`, time.Now().Unix(), jobID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
 	var status string
-	err := s.db.QueryRowContext(ctx, `SELECT status FROM jobs WHERE id = ?`, jobID).Scan(&status)
+	err = s.db.QueryRowContext(ctx, `SELECT status FROM jobs WHERE id = ?`, jobID).Scan(&status)
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("job %q not found", jobID)
 	}
 	if err != nil {
 		return err
 	}
-	if IsActiveStatus(status) {
-		return fmt.Errorf("job %s is %s — kill it (or let it finish) before archiving", jobID, status)
+	if !IsActiveStatus(status) {
+		status = "still running a version"
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE jobs SET archived_at = ? WHERE id = ?`, time.Now().Unix(), jobID)
-	return err
+	return fmt.Errorf("job %s is %s — kill it (or let it finish) before archiving", jobID, status)
 }
 
 func (s *Store) UnarchiveJob(ctx context.Context, jobID string) error {

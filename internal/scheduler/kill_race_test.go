@@ -111,6 +111,26 @@ func TestKillFlagSettlesFailureAsKilled(t *testing.T) {
 	}
 }
 
+// A guessed failure with a kill pending is killed, but stays a guess
+// (inferred, provisional): runq records no kill it did not confirm, and
+// evidence of a live process can still correct it.
+func TestKillFlagKeepsInferredFailureProvisional(t *testing.T) {
+	fl := &fakeRemoteLauncher{}
+	s, q, _ := newKillRaceHarness(t, fl)
+	task := seedRunningTask(t, s, q, "t-killguess")
+
+	s.RequestKill(task.ID)
+	s.FinishTask(task, StatusFailed, map[string]any{"status_source": "inferred"})
+
+	row, err := s.store.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != "killed" || row.StatusSource != "inferred" || row.Settled(time.Now()) {
+		t.Fatalf("got %s/%s settled=%v, want killed/inferred, not settled", row.Status, row.StatusSource, row.Settled(time.Now()))
+	}
+}
+
 // Control: without the flag, the same verdict settles failed.
 func TestFailureWithoutKillFlagSettlesFailed(t *testing.T) {
 	fl := &fakeRemoteLauncher{}

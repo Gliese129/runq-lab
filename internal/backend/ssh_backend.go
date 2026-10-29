@@ -1154,7 +1154,9 @@ func (b *SSHBackend) KillTask(ctx context.Context, taskID string) error {
 	if err != nil {
 		return err
 	}
-	if task == nil || task.Status == "success" || task.Status == "failed" || task.Status == "killed" {
+	// A settled terminal has nothing left to cancel; a guessed one (an
+	// inferred failure) may still run, so its cancel is sent (remote Kill).
+	if task == nil || task.Settled(time.Now()) {
 		return nil
 	}
 	if !b.scope.Owns(task.Target, task.TargetGeneration) {

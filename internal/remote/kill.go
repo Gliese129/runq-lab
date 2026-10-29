@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gliese129/runq-lab/internal/store"
 	"github.com/gliese129/runq-lab/internal/utils"
@@ -45,8 +46,17 @@ func (b *Backend) Kill(ctx context.Context, target string) (killed int, err erro
 	}
 
 	var problems []string
+	now := time.Now()
 	for _, tk := range tasks {
-		if isTerminal(tk.Status) {
+		// A terminal that is not settled (a guessed failure) may hide a
+		// live job: its cancel is sent too. A cancel that fails means it
+		// did end, as guessed — not a problem; one that succeeds proves
+		// it was alive, and it is recorded killed.
+		guessed := isTerminal(tk.Status) && !tk.Settled(now)
+		if isTerminal(tk.Status) && !guessed {
+			continue
+		}
+		if tk.ExternalID == "" && guessed {
 			continue
 		}
 		if tk.ExternalID == "" {
@@ -60,7 +70,9 @@ func (b *Backend) Kill(ctx context.Context, target string) (killed int, err erro
 			problems = append(problems, fmt.Sprintf("%s: render kill_template: %v", tk.ID, rErr))
 			continue
 		}
-		if out, xerr := b.shellRun(ctx, cmd); xerr != nil {
+		if out, xerr := b.shellRun(ctx, cmd); xerr != nil && guessed {
+			continue
+		} else if xerr != nil {
 			opLog("KILL FAIL task=%s ext=%s\ncmd: %s\nerr: %v\noutput: %s", tk.ID, tk.ExternalID, cmd, xerr, out)
 			problems = append(problems, fmt.Sprintf(
 				"%s (ext id %s): cancel failed (may have already finished): %v %s",

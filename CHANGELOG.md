@@ -4,6 +4,17 @@
 
 ### Breaking
 
+- A version's terminal status is *settled* once the wrapper, runq or the
+  scheduler reported it, or a guessed one (inferred, submit failure) stood
+  for 24 h. Settled never goes back to running; `runq clean` (also
+  `--checkpoints`) removes settled versions only and lists the others under
+  `skipped`; archiving checks the versions themselves and a version that
+  revives unarchives its experiment; an append whose planned versions
+  changed before it was written is refused (plan it again). A guessed
+  failure that revives now reaches its real verdict (the reconcile pass
+  used to fail on it until restart); a kill of a guessed failure sends its
+  cancel and, with a kill pending, a guessed failure stays a guess
+  (`killed`/`inferred`) instead of a confirmed kill.
 - job.yaml `note:` is the submission's note (why it was made — for `--into`,
   what it fixes), not the pre-rc6 key for `name:`; files still using it for the
   name need `name:`. It is kept with the submission and shown on the Cells tab

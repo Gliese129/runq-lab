@@ -123,6 +123,8 @@ func (s *Scheduler) handleLaunchOutcome(task *Task, err error) {
 func (s *Scheduler) markUnknown(task *Task, cause error) {
 	dbCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()
+	// A verdict or kill that landed meanwhile wins: the store never moves
+	// a terminal task to unknown (a submission-phase status).
 	if err := s.store.UpdateTaskStatus(dbCtx, task.ID, string(StatusUnknown), map[string]any{
 		"status_source":  "submit",
 		"failure_detail": failureDetail(cause),
@@ -180,6 +182,19 @@ func (s *Scheduler) ResumeUnknown(taskID string) {
 	defer s.finishMu.Unlock()
 	if err := s.queue.ResumeUnknown(taskID); err != nil {
 		s.logger.Warn("resume unknown: queue sync failed", "task", taskID, "error", err)
+	}
+}
+
+// ReopenTask follows the DB when reconcile revived a provisional terminal:
+// the queue entry goes back to running and holds its slot again, so the
+// task's real verdict later passes the staleness gate instead of being
+// dropped (which left the DB live and the reconcile pass failing).
+func (s *Scheduler) ReopenTask(taskID string) {
+	s.finishMu.Lock()
+	defer s.finishMu.Unlock()
+	if s.queue.Reopen(taskID) {
+		s.slots.Reserve(taskID)
+		s.logger.Info("task reopened: live evidence after a provisional terminal", "task", taskID)
 	}
 }
 
@@ -311,6 +326,10 @@ func (s *Scheduler) finishTaskInner(task *Task, status TaskStatus, extra map[str
 	// stands (facts win) and completeTask clears any leftover flag. Placed
 	// AFTER the staleness gate on purpose: a stale attempt's verdict must
 	// not consume a flag aimed at the current attempt.
+	// A guessed failure (inferred) stays a guess: it becomes killed but
+	// keeps its provisional source, so later evidence of a live process
+	// can still correct it — runq never records a confirmed kill it did
+	// not confirm.
 	if status == StatusFailed && s.killPending(task.ID) {
 		s.logger.Info("kill honored on failure verdict", "task", task.ID)
 		status = StatusKilled
@@ -318,7 +337,9 @@ func (s *Scheduler) finishTaskInner(task *Task, status TaskStatus, extra map[str
 		for k, v := range extra {
 			merged[k] = v
 		}
-		merged["status_source"] = "runq"
+		if merged["status_source"] != "inferred" {
+			merged["status_source"] = "runq"
+		}
 		extra = merged
 	}
 	var transitioned bool

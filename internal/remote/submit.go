@@ -330,7 +330,11 @@ func (b *Backend) Prepare(ctx context.Context, jobCfg job.JobConfig, proj *proje
 		jobCfg.Name = batchName
 		batchJSON, _ := json.Marshal(jobCfg)
 		batch := store.JobBatch{JobID: jobID, SubmittedAt: now, Name: batchName, Description: plan.Description,
-			Command: plan.CommandTemplate, Target: b.Cfg.Name, ConfigJSON: string(batchJSON), DraftID: jobCfg.DraftID}
+			Command: plan.CommandTemplate, Target: b.Cfg.Name, ConfigJSON: string(batchJSON), DraftID: jobCfg.DraftID,
+			Expect: make(map[string]string, len(into.tasks))}
+		for _, t := range into.tasks {
+			batch.Expect[t.ID] = t.Status
+		}
 		seq, err := b.Store.AppendTasks(ctx, batch, rows)
 		if err != nil {
 			return jobID, nil, fmt.Errorf("append tasks to %s: %w", jobID, err)

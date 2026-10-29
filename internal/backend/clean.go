@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gliese129/runq-lab/internal/rfs"
 	"github.com/gliese129/runq-lab/internal/store"
@@ -41,12 +42,19 @@ func PerformClean(ctx context.Context, st *store.Store, fsFor func(store.TaskRow
 		}
 	}
 
-	// Exclude active tasks — never clean running/pending/paused work. The
-	// same rule is applied again when each task is acted on (cleanBlocker).
+	// Clean settled versions only — never live work, nor a guessed outcome
+	// that may still revive. The same rule is applied again when each task
+	// is acted on (cleanBlocker).
+	// Live work is left out silently, as always; a terminal whose outcome
+	// is not settled yet is reported, so the researcher knows why it stayed.
+	var held []CleanSkip
 	{
 		var safe []tagged
 		for _, u := range unique {
-			if cleanBlocker(u.task, &u.task) != "" {
+			if why := cleanBlocker(u.task, &u.task); why != "" {
+				if store.IsTerminalTaskStatus(u.task.Status) {
+					held = append(held, CleanSkip{TaskID: u.task.ID, JobID: u.task.JobID, Status: u.task.Status, Reason: why})
+				}
 				continue
 			}
 			safe = append(safe, u)
@@ -115,11 +123,13 @@ func PerformClean(ctx context.Context, st *store.Store, fsFor func(store.TaskRow
 		for _, u := range unique {
 			rows = append(rows, u.task)
 		}
-		return cleanCheckpoints(ctx, st, resolveFS, rows, preview, opts.DryRun), nil
+		res := cleanCheckpoints(ctx, st, resolveFS, rows, preview, opts.DryRun)
+		res.Skipped = append(held, res.Skipped...)
+		return res, nil
 	}
 
 	if opts.DryRun {
-		return &CleanResult{Preview: preview}, nil
+		return &CleanResult{Preview: preview, Skipped: held}, nil
 	}
 
 	// ── Phase 1: DB mutations inside a transaction ──
@@ -142,11 +152,11 @@ func PerformClean(ctx context.Context, st *store.Store, fsFor func(store.TaskRow
 
 	for i, u := range unique {
 		// All-or-nothing by design: the DB record dies here, files die in
-		// phase 2. Re-check liveness in the DELETE itself (cleanGuardSQL):
-		// reconciliation may move a selected task to unknown after the
-		// preview/filter pass, and an outcome-unknown attempt must retain
-		// its durable ownership.
-		res, err := tx.ExecContext(ctx, "DELETE FROM tasks WHERE id = ? AND "+cleanGuardSQL, u.task.ID)
+		// phase 2. The DELETE itself requires the row settled: settled is
+		// absorbing (store.SettledSQL), so the files removed after commit
+		// belong to a version no status write can revive.
+		settled, cutoff := store.SettledSQL(time.Now())
+		res, err := tx.ExecContext(ctx, "DELETE FROM tasks WHERE id = ? AND "+settled, u.task.ID, cutoff)
 		if err != nil {
 			return nil, fmt.Errorf("delete task %q during clean: %w", u.task.ID, err)
 		}
@@ -265,26 +275,32 @@ func PerformClean(ctx context.Context, st *store.Store, fsFor func(store.TaskRow
 		Jobs:       int(deletedJobs),
 		FreedBytes: freedBytes,
 		Failures:   failures,
+		Skipped:    held,
 	}, nil
 }
 
-// cleanBlocker is THE liveness rule of every clean, applied when tasks are
-// selected and again at the moment each one is acted on: in between,
-// reconciliation may move an inferred-failed task back to running, and a
-// retry may requeue it. selected is the row as selected, current the row
-// read again at act time (nil: gone). It returns why the task must be left
-// alone, or "" when cleaning it is still safe.
+// cleanBlocker is THE rule of every clean, applied when tasks are selected
+// and again at the moment each one is acted on: only a settled version
+// (store.IsSettled) is cleaned — not live work, and not a guessed outcome
+// (inferred, a submit failure) that reconciliation may still revive.
+// selected is the row as selected, current the row read again at act time
+// (nil: gone). It returns why the task must be left alone, or "" when
+// cleaning it is safe.
 //
 // The full clean acts with one DELETE per task, so it applies the rule as
-// cleanGuardSQL inside that statement (the row, once gone, cannot come
-// back); the checkpoints clean keeps the row and re-reads it under the
-// task lock right before its rm (cleanCheckpoints).
+// store.SettledSQL inside that statement (the row, once gone, cannot come
+// back); the checkpoints clean keeps the row and re-reads it right before
+// its rm. Settled is absorbing, so nothing can revive it in between.
 func cleanBlocker(selected store.TaskRow, current *store.TaskRow) string {
+	now := time.Now()
 	switch {
 	case current == nil:
 		return "no longer exists"
-	case store.IsActiveStatus(current.Status):
+	case !store.IsTerminalTaskStatus(current.Status):
 		return "now " + current.Status
+	case !current.Settled(now):
+		return fmt.Sprintf("its %s outcome (%s) is not confirmed yet; it settles %s after it ended",
+			current.Status, sourceOrNone(current.StatusSource), store.SettleGrace)
 	case current.ExternalID != selected.ExternalID,
 		current.TargetGeneration != selected.TargetGeneration,
 		current.TaskDir != selected.TaskDir:
@@ -293,8 +309,12 @@ func cleanBlocker(selected store.TaskRow, current *store.TaskRow) string {
 	return ""
 }
 
-// cleanGuardSQL is cleanBlocker's status rule as a WHERE clause.
-var cleanGuardSQL = "status NOT IN " + store.ActiveStatusesSQL()
+func sourceOrNone(source string) string {
+	if source == "" {
+		return "no source"
+	}
+	return source
+}
 
 // collectCleanTargets gathers tasks matching the opts selectors.
 // Returns parallel slices of tasks and their selection reasons.

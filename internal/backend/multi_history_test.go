@@ -121,7 +121,7 @@ func TestCleanUsesTaskGenerationArtifactEndpoint(t *testing.T) {
 	finished := time.Now()
 	if err := st.InsertTask(ctx, &store.TaskRow{
 		ID: "task-clean-history", JobID: "job-clean-history", ProjectName: "p",
-		Command: "true", ParamsJSON: "{}", Status: "success", Target: "hpc",
+		Command: "true", ParamsJSON: "{}", Status: "success", StatusSource: "wrapper", Target: "hpc",
 		TargetGeneration: "old", TaskDir: t.TempDir(), EnqueuedAt: time.Now(), FinishedAt: &finished,
 	}); err != nil {
 		t.Fatal(err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,7 +44,7 @@ func TestCleanCheckpointsOnlyDeletesCheckpoints(t *testing.T) {
 			}
 		}
 		if err := st.InsertTask(ctx, &store.TaskRow{ID: task, JobID: job, ProjectName: "p", Command: "true", ParamsJSON: "{}",
-			Status: status, TaskDir: dir, LogPath: filepath.Join(dir, "task.log"), EnqueuedAt: time.Now()}); err != nil {
+			Status: status, StatusSource: "wrapper", TaskDir: dir, LogPath: filepath.Join(dir, "task.log"), EnqueuedAt: time.Now()}); err != nil {
 			t.Fatal(err)
 		}
 		return dir
@@ -137,7 +138,7 @@ func TestCleanCheckpointsReportsFailures(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(ck, 0o755) })
 	if err := st.InsertTask(ctx, &store.TaskRow{ID: "tk1", JobID: "jbdone", ProjectName: "p", Command: "true", ParamsJSON: "{}",
-		Status: "success", TaskDir: dir, EnqueuedAt: time.Now()}); err != nil {
+		Status: "success", StatusSource: "wrapper", TaskDir: dir, EnqueuedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	res, err := PerformClean(ctx, st, nil, CleanOptions{Checkpoints: true, TaskIDs: []string{"tk1"}})
@@ -166,9 +167,9 @@ func (f *flipOnFirstExecFS) Exec(ctx context.Context, cmd string, args ...string
 	return f.LocalFS.Exec(ctx, cmd, args...)
 }
 
-// A task selected as failed (inferred) that reconciliation moves back to
-// running before the rm keeps its checkpoints, and comes back as skipped;
-// the other selected task is still cleaned.
+// A guessed failure (inferred) is not settled: its checkpoints are kept
+// and it comes back as skipped with why — even when reconciliation moves it
+// back to running in the middle of the clean. The settled task is cleaned.
 func TestCleanCheckpointsRechecksStatusBeforeDeleting(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")
@@ -221,8 +222,8 @@ func TestCleanCheckpointsRechecksStatusBeforeDeleting(t *testing.T) {
 	if res.Tasks != 1 || res.Jobs != 1 {
 		t.Fatalf("result = %+v, want 1 version in 1 experiment cleaned", res)
 	}
-	if len(res.Skipped) != 1 || res.Skipped[0].TaskID != "tkflip" || res.Skipped[0].Status != "running" {
-		t.Fatalf("skipped = %+v, want tkflip (running)", res.Skipped)
+	if len(res.Skipped) != 1 || res.Skipped[0].TaskID != "tkflip" || !strings.Contains(res.Skipped[0].Reason, "not confirmed") {
+		t.Fatalf("skipped = %+v, want tkflip (outcome not confirmed)", res.Skipped)
 	}
 	if res.FreedBytes < 4096 || res.FreedBytes >= 2*4096 {
 		t.Fatalf("freed = %d, want only the cleaned task's checkpoint", res.FreedBytes)

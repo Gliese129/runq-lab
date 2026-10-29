@@ -191,6 +191,23 @@ func (q *Queue) ResumeUnknown(taskID string) error {
 	return nil
 }
 
+// Reopen moves a terminal task back to running: reconcile found live
+// evidence behind a provisional terminal (an inferred failure, a submit
+// failure whose job did reach the scheduler). It reports whether the task
+// was terminal; any other state is left alone.
+func (q *Queue) Reopen(taskID string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	t := q.findLocked(taskID)
+	if t == nil || (t.Status != StatusSuccess && t.Status != StatusFailed && t.Status != StatusKilled) {
+		return false
+	}
+	t.Status = StatusRunning
+	t.FinishedAt = nil
+	return true
+}
+
 // Complete transitions a task to a terminal state (success/failed/killed).
 func (q *Queue) Complete(taskID string, status TaskStatus) error {
 	q.mu.Lock()

@@ -225,13 +225,16 @@ func refreshJobTx(ctx context.Context, tx *sql.Tx, jobID string, keepStatus bool
 			return "", nil, err
 		}
 	}
-	var finished any // live again: no longer finished
+	// Live again (a provisional terminal revived): no longer finished, and
+	// no longer archived — a hidden job must never hold live work.
+	var finished any
 	if IsTerminalJobStatus(status) {
 		finished = time.Now().Unix()
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET total_tasks = ?, status = ?,
-		finished_at = CASE WHEN ? IS NULL THEN NULL ELSE COALESCE(finished_at, ?) END WHERE id = ?`,
-		len(cells), status, finished, finished, jobID); err != nil {
+		finished_at = CASE WHEN ? IS NULL THEN NULL ELSE COALESCE(finished_at, ?) END,
+		archived_at = CASE WHEN ? IS NULL THEN NULL ELSE archived_at END WHERE id = ?`,
+		len(cells), status, finished, finished, finished, jobID); err != nil {
 		return "", nil, err
 	}
 	return status, tasks, nil

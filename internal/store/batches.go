@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -21,7 +23,16 @@ type JobBatch struct {
 	TaskCount   int       `json:"task_count"`
 	ConfigJSON  string    `json:"-"`
 	DraftID     string    `json:"draft_id,omitempty"`
+	// Expect is what an append was planned against: each existing
+	// version's status (task id → status). AppendTasks refuses the append
+	// when one changed since (a version revived, finished or was cleaned),
+	// since its new / new_version / skipped verdicts may no longer hold.
+	Expect map[string]string `json:"-"`
 }
+
+// ErrAppendStale means the experiment changed between planning an append
+// and writing it.
+var ErrAppendStale = errors.New("the experiment changed since this append was planned")
 
 func batchSeqOrFirst(seq int) int {
 	if seq <= 0 {
@@ -134,6 +145,9 @@ func (s *Store) AppendTasks(ctx context.Context, b JobBatch, tasks []TaskRow) (i
 	if status == "paused" {
 		return 0, fmt.Errorf("job %s is paused; resume it before appending", b.JobID)
 	}
+	if err := checkAppendExpect(ctx, tx, b); err != nil {
+		return 0, err
+	}
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) + 1 FROM job_batches WHERE job_id = ?`, b.JobID).Scan(&b.Seq); err != nil {
 		return 0, err
 	}
@@ -154,4 +168,42 @@ func (s *Store) AppendTasks(ctx context.Context, b JobBatch, tasks []TaskRow) (i
 		return 0, fmt.Errorf("commit tx: %w", err)
 	}
 	return b.Seq, nil
+}
+
+func checkAppendExpect(ctx context.Context, tx *sql.Tx, b JobBatch) error {
+	if len(b.Expect) == 0 {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id, status, COALESCE(run_name, '') FROM tasks WHERE job_id = ?`, b.JobID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	now := map[string]string{}
+	names := map[string]string{}
+	for rows.Next() {
+		var id, status, name string
+		if err := rows.Scan(&id, &status, &name); err != nil {
+			return err
+		}
+		now[id], names[id] = status, name
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	ids := make([]string, 0, len(b.Expect))
+	for id := range b.Expect {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		status, ok := now[id]
+		switch {
+		case !ok:
+			return fmt.Errorf("%w: version %s is gone; plan the append again", ErrAppendStale, id)
+		case status != b.Expect[id]:
+			return fmt.Errorf("%w: cell %q version %s is %s now (was %s); plan the append again", ErrAppendStale, names[id], id, status, b.Expect[id])
+		}
+	}
+	return nil
 }
