@@ -1,6 +1,6 @@
 [project]
 name = "runq-sdk"
-version = "0.6.0"
+version = "0.7.0"
 description = "Lab GPU scheduler — in-task Python SDK"
 readme = "README.md"
 # 3.10 floor: matches PyTorch's current support window and is widely
