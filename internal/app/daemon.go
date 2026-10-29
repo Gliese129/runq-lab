@@ -269,7 +269,7 @@ func (d *Daemon) serveDashboard() {
 	if d.Dashboard.StaticAssetsUnavailable() {
 		d.Logger.Warn("dashboard UI not installed; API routes still available")
 	}
-	srv := &http.Server{Handler: d.Dashboard.Handler()}
+	srv := &http.Server{Handler: d.Dashboard.TCPHandler()}
 	err = srv.Serve(ln)
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		d.Logger.Error("dashboard serve error", "error", err)

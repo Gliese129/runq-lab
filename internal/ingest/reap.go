@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"path"
@@ -215,6 +216,22 @@ type scanOutcome struct {
 	rebuild  bool  // file shrank — caller must rebuild derived rows
 	size     int64 // stat size at this pass
 	consumed int64 // parsed up to here (complete lines; tail included when final)
+	// readErr: the read stopped before EOF (e.g. a transport failure).
+	// The lines before it were parsed and are accounted in consumed; the
+	// rest of the file was never seen. "This scan ended" is not "the file
+	// was read to the end": only a read that reached EOF may freeze a mark.
+	readErr error
+}
+
+// mark is the (size, offset, final) a caller records for this pass. After a
+// failed read it covers exactly the consumed bytes and stays open, so the
+// next pass — even of an unchanged file — resumes at consumed and a terminal
+// pass freezes only once a read reaches EOF.
+func (sc scanOutcome) mark(final bool) (size, offset int64, frozen bool) {
+	if sc.readErr != nil {
+		return sc.consumed, sc.consumed, false
+	}
+	return sc.size, sc.consumed, final
 }
 
 // scanIncremental applies the (size, parsed_offset) incremental-read
@@ -225,8 +242,9 @@ type scanOutcome struct {
 //	                 lines (an unterminated tail waits for the next pass)
 //	size shrank    → the file was rewritten: rebuild from 0
 //
-// final consumes the tail even without a trailing newline. The function
-// performs NO store writes — pairing the parsed delta with its mark update
+// final consumes the tail even without a trailing newline. A read error
+// ends the pass with the outcome's readErr set (see scanOutcome.mark). The
+// function performs NO store writes — pairing the parsed delta with its mark update
 // atomically is the caller's job.
 func scanIncremental(fsys rfs.FS, path string, markSize, markOffset int64, final bool, onLine func([]byte)) (scanOutcome, error) {
 	info, err := fsys.Stat(path)
@@ -262,16 +280,19 @@ func scanIncremental(fsys rfs.FS, path string, markSize, markOffset int64, final
 	consumed := offset
 	for {
 		raw, rerr := br.ReadBytes('\n')
-		complete := rerr == nil
-		if len(raw) > 0 && (complete || final) {
+		// An unterminated tail is a whole record only at EOF of a final
+		// pass; bytes cut short by a read error are never parsed.
+		if len(raw) > 0 && (rerr == nil || (rerr == io.EOF && final)) {
 			onLine(bytes.TrimRight(raw, "\r\n"))
 			consumed += int64(len(raw))
 		}
-		if rerr != nil {
-			if rerr != io.EOF {
-				logger.Warnf("reap %s: read error (partial result): %v", path, rerr)
-			}
+		if rerr == io.EOF {
 			break
+		}
+		if rerr != nil {
+			logger.Warnf("reap %s: read error after %d bytes (mark stays open): %v", path, consumed, rerr)
+			return scanOutcome{rebuild: rebuild, size: size, consumed: consumed,
+				readErr: fmt.Errorf("read %s: %w", path, rerr)}, nil
 		}
 	}
 	return scanOutcome{rebuild: rebuild, size: size, consumed: consumed}, nil
@@ -280,8 +301,10 @@ func scanIncremental(fsys rfs.FS, path string, markSize, markOffset int64, final
 // ReapIncremental ingests the bytes appended to the task's SDK output files
 // (metrics.jsonl / results.jsonl, plus the small links.json) since the last pass, each
 // under its own (size, parsed_offset) mark. final marks the terminal pass:
-// tails are consumed and every mark is frozen — settled tasks are never
-// stat'ed again. Per-file failures don't block the other files; errors are
+// tails are consumed and every mark read to EOF is frozen — settled tasks
+// are never stat'ed again. A file whose read failed keeps an open mark at
+// the bytes really consumed (and its error is returned), so the next pass
+// retries it. Per-file failures don't block the other files; errors are
 // joined, and remain warn-only for callers on verdict paths (same contract
 // as always).
 func ReapIncremental(ctx context.Context, st *store.Store, target Target, final bool) (Result, error) {
@@ -339,14 +362,15 @@ func reapMetricsFile(ctx context.Context, st *store.Store, target Target, fsys r
 	// ONE transaction: rebuild delete + summary merges + the
 	// mark. "Counted" and "accounted" are inseparable — a crash between
 	// them would replay this delta next pass and inflate count/sum.
+	size, offset, frozen := sc.mark(final)
 	if err := st.ApplyIngestDelta(ctx, target.TaskID, sc.rebuild,
 		c.summaryRows(),
-		store.IngestMark{Size: sc.size, Offset: sc.consumed, Final: final}); err != nil {
+		store.IngestMark{Size: size, Offset: offset, Final: frozen}); err != nil {
 		return err
 	}
 	res.MetricCount += c.result.MetricCount
 	res.LatestStep = c.result.LatestStep
-	return nil
+	return sc.readErr
 }
 
 func reapResultsFile(ctx context.Context, st *store.Store, target Target, fsys rfs.FS, final bool, res *Result) error {
@@ -372,13 +396,14 @@ func reapResultsFile(ctx context.Context, st *store.Store, target Target, fsys r
 	if sc.skip {
 		return nil
 	}
+	size, offset, frozen := sc.mark(final)
 	if err := st.ApplyResultsIngestDelta(ctx, target.TaskID, sc.rebuild,
 		c.rows, c.parsed,
-		store.FileIngestMark{Size: sc.size, Offset: sc.consumed, Final: final}); err != nil {
+		store.FileIngestMark{Size: size, Offset: offset, Final: frozen}); err != nil {
 		return err
 	}
 	res.ResultCount += c.parsed
-	return nil
+	return sc.readErr
 }
 
 // maxLinksFileBytes bounds links.json: it holds a handful of URLs, so

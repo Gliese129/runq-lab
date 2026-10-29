@@ -9,7 +9,7 @@ import (
 // IngestMark is one task's incremental-ingest state (spec §8.1.4).
 // Zero value = never ingested.
 type IngestMark struct {
-	Size   int64 // stat size at last pass
+	Size   int64 // stat size at last pass (= Offset after a failed read)
 	Offset int64 // parsed up to here (complete lines only)
 	Final  bool  // terminal pass done: skip this task forever
 }

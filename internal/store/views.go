@@ -172,11 +172,19 @@ func (s *Store) ViewJobs(ctx context.Context, spec views.Spec, override []string
 	return out, nil
 }
 func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []string) (views.Input, error) {
-	in := views.Input{Extras: map[string]map[string]any{}}
-	jobs, err := s.ViewJobs(ctx, spec, override)
+	sc, err := s.ViewScope(ctx, spec, override)
 	if err != nil {
-		return in, err
+		return views.Input{Extras: map[string]map[string]any{}}, err
 	}
+	return s.ScopeInput(ctx, sc)
+}
+
+// ScopeInput reads the table's input for a view scope: the records of its
+// selected versions, plus what extras and source health need.
+func (s *Store) ScopeInput(ctx context.Context, sc *ViewScope) (views.Input, error) {
+	in := views.Input{Extras: map[string]map[string]any{}}
+	spec := sc.Spec
+	jobs := append([]JobRow{}, sc.Jobs...)
 	tableJobs := map[string]bool{}
 	for _, j := range jobs {
 		tableJobs[j.ID] = true
@@ -201,38 +209,26 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 		jobs = append(jobs, *j)
 	}
 	for _, j := range jobs {
-		tasks, err := s.ListTasks(ctx, TaskFilter{JobID: j.ID, LiveOnly: true})
-		if err != nil {
-			return in, err
-		}
-		params := map[string]map[string]any{}
-		cells := map[string]string{}
-		versions := map[string]int{}
-		picks, err := s.CellPicks(ctx, j.ID)
-		if err != nil {
-			return in, err
-		}
-		pinned := map[string]bool{}
-		for _, id := range picks {
-			pinned[id] = true
-		}
-		if all, err := s.JobTasksInOrder(ctx, j.ID); err == nil {
-			for _, v := range all {
-				versions[v.ID] = v.Version
+		versions, ok := sc.Versions[j.ID]
+		if !ok { // an extra's job: read for its values, not the table
+			var err error
+			if versions, err = s.viewVersions(ctx, j.ID); err != nil {
+				return in, err
 			}
 		}
-		status := map[string]string{}
+		tasks := make([]TaskRow, len(versions))
+		byID := map[string]ViewVersion{}
+		for i, v := range versions {
+			tasks[i] = v.TaskRow
+			byID[v.ID] = v
+		}
 		source := views.Source{JobID: j.ID, Note: j.Name, Status: j.Status, Tasks: len(tasks), Attention: []map[string]any{}, ObservationState: "never"}
+		var err error
 		source.ObservedAt, source.ObservationState, err = s.JobObservation(ctx, tasks)
 		if err != nil {
 			return in, err
 		}
 		for _, t := range tasks {
-			var p map[string]any
-			_ = json.Unmarshal([]byte(t.ParamsJSON), &p)
-			params[t.ID] = p
-			cells[t.ID] = t.CellName()
-			status[t.ID] = t.Status
 			obs, err := s.SourceObservation(ctx, t.ID)
 			if err != nil {
 				return in, err
@@ -258,8 +254,9 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 			}
 			if tableJobs[j.ID] {
 				taskID, producer := SplitSourceID(r.TaskID)
-				v := views.Record{SourceID: r.TaskID, Producer: producer, JobID: r.JobID, Section: r.Section, TS: r.TS, Params: params[taskID], Cell: cells[taskID],
-					Status: status[taskID], Version: versions[taskID], Pinned: pinned[taskID]}
+				version := byID[taskID]
+				version.JobID = r.JobID
+				v := version.record(r.TaskID, producer, r.Section, r.TS, nil, nil)
 				if err := json.Unmarshal([]byte(r.AxesJSON), &v.Axes); err != nil {
 					return in, err
 				}

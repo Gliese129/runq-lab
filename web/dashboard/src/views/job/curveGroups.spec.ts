@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { curvePlots, curveSections } from './curveGroups'
+import { curvePlots, curveSections, drawLine } from './curveGroups'
+
+const id = (v: number) => v
+
+describe('curve drawing', () => {
+  it('shows a null as a gap: 1 → null → 3 is two dots, never the segment 1–3', () => {
+    const d = drawLine({ step: [1, 2, 3], value: [1, null, 3] }, id, id)
+    expect(d.path).toBe('')
+    expect(d.dots).toEqual([[1, 1], [3, 3]])
+  })
+  it('breaks the line and its band at a gap', () => {
+    const d = drawLine({ step: [1, 2, 3, 4, 5], value: [1, 2, null, 4, 5], lo: [0, 1, null, 3, 4], hi: [2, 3, null, 5, 6] }, id, id)
+    expect(d.path).toBe('M1,1L2,2M4,4L5,5')
+    expect(d.band).toBe('M1,2L2,3L2,1L1,0ZM4,5L5,6L5,4L4,3Z')
+    expect(d.dots).toEqual([])
+  })
+})
 
 const line = (cell: string, series?: { name: string; axis: string; at: unknown }) => ({ task_id: 't-' + cell, cell, step: [1, 2], value: [0.1, 0.2], series })
 

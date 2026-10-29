@@ -287,6 +287,15 @@ CREATE TABLE IF NOT EXISTS cell_versions (
  PRIMARY KEY (job_id, cell)
 );
 
+-- The content hash of each job.json copy last published: one per lane
+-- (target, generation) that owns versions of the job, so an experiment on
+-- several targets rewrites a copy only when that copy changes.
+CREATE TABLE IF NOT EXISTS job_snapshots (
+ job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+ target TEXT NOT NULL, generation TEXT NOT NULL, hash TEXT NOT NULL,
+ PRIMARY KEY (job_id, target, generation)
+);
+
 -- What a finished job left on disk (du of its job directory), measured
 -- once in the background after it turns terminal and again by
 -- `clean --checkpoints --show`. The draft preview's space estimate is

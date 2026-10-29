@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/gliese129/runq-lab/internal/backend"
 	"github.com/spf13/cobra"
@@ -27,6 +29,9 @@ func runKill(cmd *cobra.Command, args []string) error {
 	}
 	return withBackend(cmd, func(be backend.Backend) error {
 		ctx := cmd.Context()
+		if target := resolveTarget(cmd); target != "" {
+			return killOnTarget(ctx, be, id, target, jsonOut)
+		}
 		// Short ids resolve as in ps/show; an ambiguous prefix is an answer.
 		var fn func(context.Context, backend.Backend, string) (string, error)
 		switch {
@@ -81,6 +86,63 @@ func runKill(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// killOnTarget is `kill <ref> -t <target>`: the ref resolves as without
+// -t, and the kill acts only on that target. A version on another target
+// is refused; an experiment loses only its versions on the target (its
+// submissions may run elsewhere) and is refused when it has none there.
+func killOnTarget(ctx context.Context, be backend.Backend, id, target string, jsonOut bool) error {
+	done := func(what string) error {
+		if jsonOut {
+			printJSON(map[string]bool{"ok": true})
+			return nil
+		}
+		fmt.Println(what)
+		return nil
+	}
+	if !isExperimentRef(id) {
+		v, err := be.GetTask(ctx, id)
+		switch {
+		case err == nil:
+			if v.Target != target {
+				return fmt.Errorf("version %s runs on target %q, not %q: %w", v.ID, v.Target, target, backend.ErrNotOnTarget)
+			}
+			if err := be.KillTask(ctx, v.ID); err != nil {
+				return err
+			}
+			return done(fmt.Sprintf("version %s killed", v.ID))
+		case !errors.Is(err, backend.ErrNotFound):
+			return err
+		}
+	}
+	d, err := be.GetJob(ctx, id)
+	if errors.Is(err, backend.ErrNotFound) {
+		return fmt.Errorf("no version or experiment found with id %q", id)
+	}
+	if err != nil {
+		return err
+	}
+	taskTargets := make([]string, len(d.Tasks))
+	for i, t := range d.Tasks {
+		taskTargets[i] = t.Target
+	}
+	on := backend.JobTargets(d.Job.Target, taskTargets)
+	if !slices.Contains(on, target) {
+		return backend.NotOnTargetError("experiment", d.Job.ID, target, on)
+	}
+	tk, ok := be.(backend.TargetKiller)
+	if !ok {
+		return fmt.Errorf("kill -t: %w", backend.ErrNotSupported)
+	}
+	if err := tk.KillJobOnTarget(ctx, d.Job.ID, target); err != nil {
+		return err
+	}
+	if len(on) > 1 {
+		return done(fmt.Sprintf("experiment %s killed on target %s (its versions on %s keep running)",
+			d.Job.ID, target, strings.Join(slices.DeleteFunc(on, func(t string) bool { return t == target }), ", ")))
+	}
+	return done(fmt.Sprintf("experiment %s killed", d.Job.ID))
+}
+
 func prefixOf(id string) string {
 	if len(id) < 2 {
 		return ""
@@ -90,7 +152,7 @@ func prefixOf(id string) string {
 
 func init() {
 	killCmd.Flags().Bool("json", false, "output raw JSON")
-	killCmd.Flags().StringP("target", "t", "", "Compute target (for target-scoped resolution)")
+	killCmd.Flags().StringP("target", "t", "", "Only kill on this target: refuse a version elsewhere, kill only an experiment's versions here")
 
 	killCmd.GroupID = groupCore
 	rootCmd.AddCommand(killCmd)

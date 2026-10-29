@@ -3,6 +3,7 @@
  *  sections by log_group prefix. Nothing is inferred from a key's spelling:
  *  a series is what runq.log marked as one. */
 import type { CurveLine, JobCurve } from '@/types/views'
+import { gapPath, gapRuns, isolatedPoints, type CurveValue } from '@/components/views/charts/chartGeom'
 
 export interface PlotLine {
   label: string
@@ -10,7 +11,8 @@ export interface PlotLine {
   color: number
   dash: number
   step: number[]
-  value: number[]
+  /** null: a gap (NaN/Inf), drawn as a break */
+  value: CurveValue[]
   lo?: (number | null)[]
   hi?: (number | null)[]
 }
@@ -68,6 +70,24 @@ function lineOf(l: CurveLine, cell: number, dash: number, several: boolean): Plo
   const at = l.series ? `${l.series.axis}=${String(l.series.at)}` : ''
   const label = [several || !at ? l.cell : '', at].filter(Boolean).join(' · ')
   return { label, color: cell, dash, step: l.step, value: l.value, lo: l.lo, hi: l.hi }
+}
+
+/** The SVG of one line in data → pixel scales x, y: the curve broken at
+ *  its gaps (never bridged), a lone point between gaps as a dot, and the
+ *  estimate band per unbroken run. */
+export function drawLine(l: Pick<PlotLine, 'step' | 'value' | 'lo' | 'hi'>, x: (v: number) => number, y: (v: number) => number): { path: string; band: string; dots: number[][] } {
+  const runs = gapRuns(l.value)
+  const px = (i: number) => x(l.step[i])
+  const py = (i: number) => y(l.value[i] as number)
+  let band = ''
+  if (l.lo && l.hi && l.lo.some((v) => v !== null)) {
+    band = runs.filter((r) => r.length > 1).map((r) => {
+      const up = r.map((i) => `${px(i)},${y(l.hi![i] ?? (l.value[i] as number))}`)
+      const down = r.map((i) => `${px(i)},${y(l.lo![i] ?? (l.value[i] as number))}`).reverse()
+      return `M${up.join('L')}L${down.join('L')}Z`
+    }).join('')
+  }
+  return { path: gapPath(runs, px, py), band, dots: isolatedPoints(runs, px, py) }
 }
 
 /** Pinned plots (in pin order) and the rest by log_group prefix. */

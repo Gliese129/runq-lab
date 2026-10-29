@@ -26,7 +26,7 @@ When the service serves the dashboard, `submit`, `ps` and `show` JSON carry a
 | `runq draft <job.yaml> --into <ex…> [--rerun <cell>]` | Plan an append to an existing experiment of the same project (`-t` may send it to another target). A cell is a run name: each row is a new cell, a new version of a cell whose selected version failed or was killed, or skipped (succeeded or still running; `--rerun <cell>` runs a succeeded one again). A row that names a cell must keep its params, except the ones only the scheduler reads; a changed command is allowed and flagged |
 | `runq submit dr… --into <ex…> [--rerun <cell>]` | Append the draft to that experiment as its next submission → `{"job_id", "total_tasks", "append": {"new", "new_version", "skipped", "rerun", "batch"}}`. Each cell shows one version (the pinned one, else the latest success, else the latest); older versions stay as history. Nothing to run → an error, no submission |
 | `runq submit [job.yaml \| . \| -]` (at a terminal) | Plan the file as a draft and show it, then one key: `s` submit, `e` edit in `$EDITOR`, `p` pick the project, `q` quit keeping the draft. No argument starts from a template. Outside a terminal a job file is refused — use `runq draft` |
-| `runq kill <task_id \| job_id>` | Cancel a version, or every version of an experiment |
+| `runq kill <task_id \| job_id> [-t <target>]` | Cancel a version, or every version of an experiment. With `-t`, only on that target: an experiment loses just its versions there, and a version or experiment with nothing there is refused |
 
 ## Watch it
 

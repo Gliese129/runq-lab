@@ -18,7 +18,7 @@ type curveLine struct {
 	TaskID string                 `json:"task_id"`
 	Cell   string                 `json:"cell"`
 	Step   []float64              `json:"step"`
-	Value  []float64              `json:"value"`
+	Value  workspace.CurveValues  `json:"value"` // null = a gap
 	Lo     []*float64             `json:"lo,omitempty"`
 	Hi     []*float64             `json:"hi,omitempty"`
 	Series *workspace.CurveSeries `json:"series,omitempty"`

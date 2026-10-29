@@ -122,22 +122,79 @@ func cleanCheckpoints(ctx context.Context, st *store.Store, resolveFS func(store
 		if dryRun {
 			continue
 		}
-		cleaned, fails := deleteCheckpointContents(ctx, g.fs, ckDirs)
+		cleaned, removed, cleanedJobs, skipped, fails := deleteCheckpointsGuarded(ctx, st, g.fs, g.tasks)
 		res.Tasks += cleaned
+		res.Skipped = append(res.Skipped, skipped...)
 		res.Failures = append(res.Failures, fails...)
 		// Freed is what is gone: measured again after the rm, not assumed.
-		if merr == nil {
-			if after, aerr := diskspace.Measure(ctx, g.fs, ckDirs...); aerr == nil {
-				for _, d := range ckDirs {
+		if merr == nil && len(removed) > 0 {
+			if after, aerr := diskspace.Measure(ctx, g.fs, removed...); aerr == nil {
+				for _, d := range removed {
 					res.FreedBytes += max(0, use[d].Bytes-after[d].Bytes)
 				}
 			} else {
 				res.Failures = append(res.Failures, fmt.Sprintf("target %s: could not measure what was freed: %v", g.target, aerr))
 			}
 		}
-		res.Jobs += len(jobOrder)
+		res.Jobs += cleanedJobs
 	}
 	return res
+}
+
+// deleteCheckpointsGuarded is the act step of a checkpoints clean. Selection
+// and the du pass can be long past (an SSH round trip, a confirmation
+// prompt), so each batch takes its tasks' locks, re-reads every task and
+// applies cleanBlocker (the rule the full clean applies in its DELETE), and
+// only then empties the checkpoints of the tasks still inactive and still
+// the attempt that was selected. The rest come back as skipped.
+// Returns the dirs emptied, the dirs handed to rm, the number of jobs among
+// them, the skipped tasks and the failures.
+func deleteCheckpointsGuarded(ctx context.Context, st *store.Store, fsys rfs.FS, tasks []store.TaskRow) (int, []string, int, []CleanSkip, []string) {
+	const batch = 100
+	var (
+		cleaned  int
+		removed  []string
+		skipped  []CleanSkip
+		failures []string
+	)
+	jobs := map[string]bool{}
+	for start := 0; start < len(tasks); start += batch {
+		chunk := tasks[start:min(start+batch, len(tasks))]
+		ids := make([]string, len(chunk))
+		for i, t := range chunk {
+			ids[i] = t.ID
+		}
+		_ = st.WithTaskLocks(ids, func() error {
+			var dirs []string
+			for _, t := range chunk {
+				current, err := st.GetTask(ctx, t.ID)
+				if err != nil {
+					failures = append(failures, fmt.Sprintf("task %s: could not re-check its status, checkpoints kept: %v", t.ID, err))
+					continue
+				}
+				if why := cleanBlocker(t, current); why != "" {
+					status := ""
+					if current != nil {
+						status = current.Status
+					}
+					slog.Info("clean: skipping checkpoints of a task no longer cleanable", "task", t.ID, "reason", why)
+					skipped = append(skipped, CleanSkip{TaskID: t.ID, JobID: t.JobID, Status: status, Reason: why})
+					continue
+				}
+				dirs = append(dirs, workspace.CheckpointsDir(t.TaskDir))
+				jobs[t.JobID] = true
+			}
+			if len(dirs) == 0 {
+				return nil
+			}
+			n, fails := deleteCheckpointContents(ctx, fsys, dirs)
+			cleaned += n
+			removed = append(removed, dirs...)
+			failures = append(failures, fails...)
+			return nil
+		})
+	}
+	return cleaned, removed, len(jobs), skipped, failures
 }
 
 // recordJobUsage stores a terminal job's measured directory (the dry run

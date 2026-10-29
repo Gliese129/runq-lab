@@ -25,10 +25,18 @@ import (
 // job.json with runq.job() and writes results.<producer>.jsonl through
 // job.tasks[i].record(); this lane publishes the first and ingests the second.
 //
-// Cost: deciding whether job.json changed is store-only; the target sees a
-// write only when it did. Producer files are found with one listing exec
-// per jobFilesChunk job dirs: every pass while tasks run, every
-// idleProducerScanInterval otherwise. Background passes cover recent jobs
+// Ownership: a lane publishes and scans only the versions it owns — the
+// same (target, generation) predicate its task point reads use
+// (LaneScope.Owns). An active lane and a retiring one each keep their own
+// copy of job.json (the retiring generation may sit on another host or data
+// path) and ingest producer files for their own versions; a version of a
+// settled (historical) generation is left alone.
+//
+// Cost: deciding whether job.json changed is store-only (one stored hash per
+// job, target and generation); the target sees a write only when it did.
+// Producer files are found with one listing exec per jobFilesChunk job
+// dirs: every pass while tasks run, every idleProducerScanInterval
+// otherwise. Background passes cover recent jobs
 // (unfinished, or created/finished within recentJobWindow); a forced pass
 // (--fresh, dashboard refresh) covers every unarchived job of the target.
 
@@ -46,10 +54,19 @@ const (
 type JobSnapshot struct {
 	Version          int               `json:"version"`
 	Job              JobSnapshotJob    `json:"job"`
+	PublishedFor     JobSnapshotCopy   `json:"published_for"`
 	Tasks            []JobSnapshotTask `json:"tasks"`
 	UpdatedAt        int64             `json:"updated_at"`
 	ObservedAt       *int64            `json:"observed_at"`
 	ObservationState string            `json:"observation_state"`
+}
+
+// JobSnapshotCopy names the lane a job.json copy was published by: the
+// versions whose target and generation match it are the ones in this copy's
+// directory (an experiment on several targets has a copy on each).
+type JobSnapshotCopy struct {
+	Target     string `json:"target"`
+	Generation string `json:"generation"`
 }
 
 type JobSnapshotJob struct {
@@ -76,20 +93,23 @@ type JobSnapshotTask struct {
 	Version       int            `json:"version"`
 	Selected      bool           `json:"selected"`
 	Target        string         `json:"target"`
+	Generation    string         `json:"generation"` // the lane generation that owns it
 }
 
-// jobSnapshot builds a job's job.json from the store; dir is the job's
-// directory on target, "" when no task there recorded a workspace (nothing
-// to publish into). An experiment that ran on several targets gets the same
-// job.json in its directory on each.
-func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow, target string) (snap JobSnapshot, dir string, err error) {
+// jobSnapshot builds the job.json copy the lane with this scope publishes;
+// dir is the job's directory on that lane, "" when no version it owns
+// recorded a workspace (nothing to publish into). An experiment that ran on
+// several targets (or lane generations) gets one copy per owning lane, the
+// same listing with its own published_for.
+func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow, scope *store.LaneScope) (snap JobSnapshot, dir string, err error) {
 	tasks, err := st.JobTasksInOrder(ctx, j.ID)
 	if err != nil {
 		return snap, "", err
 	}
 	var selected []store.TaskRow
 	snap = JobSnapshot{Version: jobSnapshotVersion, Tasks: []JobSnapshotTask{},
-		Job: JobSnapshotJob{ID: j.ID, Name: j.Name, Project: j.ProjectName, Status: j.Status, Target: j.Target, CreatedAt: j.CreatedAt.Unix()}}
+		Job:          JobSnapshotJob{ID: j.ID, Name: j.Name, Project: j.ProjectName, Status: j.Status, Target: j.Target, CreatedAt: j.CreatedAt.Unix()},
+		PublishedFor: JobSnapshotCopy{Target: scope.Target, Generation: scope.Generation}}
 	for _, t := range tasks {
 		if t.SupersededBy == "" {
 			selected = append(selected, t)
@@ -101,8 +121,12 @@ func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow, target st
 		if taskTarget == "" {
 			taskTarget = j.Target
 		}
-		if dir == "" && taskTarget == target {
-			dir = path.Dir(t.TaskDir)
+		generation := t.TargetGeneration
+		if scope.Owns(taskTarget, generation) {
+			generation = scope.Generation // a legacy unstamped row is the active lane's
+			if dir == "" {
+				dir = path.Dir(t.TaskDir)
+			}
 		}
 		params := map[string]any{}
 		_ = json.Unmarshal([]byte(t.ParamsJSON), &params)
@@ -114,7 +138,7 @@ func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow, target st
 			ID: t.ID, RunName: t.RunName, Status: t.Status, Params: params, TaskDir: t.TaskDir,
 			OutputDir: workspace.OutputsDir(t.TaskDir), CheckpointDir: workspace.CheckpointsDir(t.TaskDir),
 			StartedAt: unixPtr(t.StartedAt), FinishedAt: unixPtr(t.FinishedAt), LastOutputAt: obs.LastOutputAt, BatchSeq: t.BatchSeq,
-			Version: t.Version, Selected: t.SupersededBy == "", Target: taskTarget,
+			Version: t.Version, Selected: t.SupersededBy == "", Target: taskTarget, Generation: generation,
 		})
 	}
 	snap.ObservedAt, snap.ObservationState, err = st.JobObservation(ctx, selected)
@@ -130,8 +154,8 @@ func (s JobSnapshot) hash() string {
 	return hex.EncodeToString(sum[:])
 }
 
-// publishJobSnapshot writes the job's job.json when its content changed
-// since the last publish.
+// publishJobSnapshot writes this lane's copy of the job's job.json when its
+// content changed since this lane last published it.
 func (b *SSHBackend) publishJobSnapshot(ctx context.Context, jobID string) error {
 	j, err := b.store.GetJob(ctx, jobID)
 	if err != nil || j == nil {
@@ -142,12 +166,12 @@ func (b *SSHBackend) publishJobSnapshot(ctx context.Context, jobID string) error
 }
 
 func (b *SSHBackend) publishJob(ctx context.Context, j store.JobRow) (JobSnapshot, error) {
-	snap, dir, err := jobSnapshot(ctx, b.store, j, b.targetName)
+	snap, dir, err := jobSnapshot(ctx, b.store, j, b.scope)
 	if err != nil || dir == "" {
 		return snap, err
 	}
-	h := snap.hash() + "@" + b.targetName // one stored hash per job: a second target's copy rewrites
-	if prev, err := b.store.JobSnapshotHash(ctx, j.ID); err != nil || prev == h {
+	h := snap.hash()
+	if prev, err := b.store.JobSnapshotHash(ctx, j.ID, b.scope.Target, b.scope.Generation); err != nil || prev == h {
 		return snap, err
 	}
 	snap.UpdatedAt = time.Now().Unix()
@@ -155,17 +179,14 @@ func (b *SSHBackend) publishJob(ctx context.Context, j store.JobRow) (JobSnapsho
 	if err := atomicRemote(ctx, rfs.WithContext(b.backend.FS, ctx), path.Join(dir, "job.json"), raw); err != nil {
 		return snap, err
 	}
-	return snap, b.store.SetJobSnapshotHash(ctx, j.ID, h)
+	return snap, b.store.SetJobSnapshotHash(ctx, j.ID, b.scope.Target, b.scope.Generation, h)
 }
 
 // reconcileJobFiles is one job-files pass: publish changed job.json files,
 // then (scan) ingest grown producer results. all widens the pass from recent
-// jobs to every unarchived job (forced refresh). Only the active lane of a
-// target runs it; retiring lanes share the target's jobs.
+// jobs to every unarchived job (forced refresh). Every lane runs it for the
+// versions it owns: the active lane and each retiring generation alike.
 func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
-	if b.scope.IsRetiring() {
-		return
-	}
 	jobs, err := b.store.ListJobs(ctx, "", b.targetName)
 	if err != nil {
 		b.logger.Warn("job files: list jobs", "error", err)
@@ -183,9 +204,14 @@ func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
 		if err != nil {
 			b.logger.Debug("job files: publish job.json", "job", j.ID, "error", err)
 		}
+		foreign := 0
 		for _, t := range snap.Tasks {
-			if t.Target != b.targetName {
+			if t.Target != b.scope.Target {
 				continue // another target's version: not on this filesystem
+			}
+			if t.Generation != b.scope.Generation {
+				foreign++ // another lane generation's: its own lane (if live) scans it
+				continue
 			}
 			dir := path.Dir(t.TaskDir)
 			if dirs[dir] == nil {
@@ -193,6 +219,10 @@ func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
 				order = append(order, dir)
 			}
 			dirs[dir][t.TaskDir] = t.ID
+		}
+		if foreign > 0 {
+			b.logger.Debug("job files: versions of another lane generation left to their own lane",
+				"job", j.ID, "versions", foreign, "generation", b.scope.Generation)
 		}
 	}
 	if !scan {
@@ -214,6 +244,9 @@ func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
 				row, err := b.store.GetTask(ctx, taskID)
 				if err != nil || row == nil {
 					return err
+				}
+				if !b.scope.Owns(row.Target, row.TargetGeneration) {
+					return nil // restamped since the snapshot: no longer this lane's files
 				}
 				_, err = ingest.ReapProducerResults(ctx, b.store, ingest.Target{TaskID: row.ID, JobID: row.JobID, Dir: row.TaskDir, FS: fsys}, f.Producer, f.Size)
 				return err

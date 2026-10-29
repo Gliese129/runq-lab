@@ -93,7 +93,11 @@ it serves the dashboard) or, without one, the version reference `ex…/<cell>@vN
 
 Training curves — one `metrics.jsonl` row per key. Returns `None`. An explicit
 `step` is written back to `ctx.current_step`; without it the current ctx
-step (possibly `None`) is used. NaN / Inf are written as `null` (a gap).
+step (possibly `None`) is used. The step is the point's x on the Curves tab;
+a point with no step is drawn at its position among that curve's points in
+`metrics.jsonl` (0, 1, 2, … in write order) — pass `step` throughout a curve
+so the two never mix on one axis. NaN / Inf are written as `null` and drawn
+as a gap: the line breaks there and is never bridged or interpolated.
 Values may be numbers, `stats.est(...)` (drawn with its band) or a series
 (one curve `name@k` per index value, drawn as one chart). `runq.report` is the
 older name (DeprecationWarning).
@@ -196,9 +200,10 @@ for cell in exp.cells:                    # cell.name, cell.params, cell.selecte
     v = cell.selected                     # the version the cell shows
     v.id, v.run_name, v.status, v.params, v.task_dir, v.output_dir, v.checkpoint_dir
     v.started_at, v.finished_at, v.last_output_at, v.batch_seq, v.version, v.selected
-    v.target, v.local                     # where it ran; False = on another target's filesystem
+    v.target, v.generation, v.local       # where it ran; local False = not on this filesystem
     v.result({"acc": stats.est(per_problem)}, section="math")
 exp.versions                              # every version, shown or not
+exp.published_for                         # {"target", "generation"} this job.json copy was written for
 ```
 
 `runq.job()`, `exp.tasks` (= `[c.selected for c in exp.cells]`), the class name
@@ -207,10 +212,18 @@ whenever it sees the experiment change. With no `ref` inside a runq task it is t
 task's own experiment; a `ex…` id works when the runq service socket is reachable
 (`RUNQ_SOCKET` or the local one). A missing or unreadable job.json raises.
 An experiment that ran on several targets (`--into` another target) lists every
-version in each target's job.json: versions of the target you read from are
-rebased onto that directory; the others keep their recorded paths, have
-`v.local == False`, and their `v.result` raises naming `v.target` — score
-them on that target.
+version in each target's job.json, and each copy names the target and
+configuration generation it was written for (`published_for` at the top of
+job.json; each version carries its own `target` and `generation`). A version
+is local when its target matches `published_for` and so does its generation —
+or, for another generation of that target (a config change on the same
+machine), when its directory is in the experiment dir. Local versions are
+rebased onto the directory you read; the others keep their recorded paths,
+have `v.local == False`, and their `v.result` raises naming `v.target` — score
+them where they ran. Two machines with the same absolute path are told apart
+by `published_for`, not by the path. A job.json from an older runq without
+`published_for` counts a target as local when one of its version directories
+is present.
 
 `v.result` is `runq.result` for that version — same validation, same frozen
 section keys — appended to `<task_dir>/results.<producer>.jsonl`. `producer`

@@ -340,6 +340,19 @@ type CleanResult struct {
 	// unreachable target, a failed rm). The records are gone either way;
 	// these files may still be on disk.
 	Failures []string `json:"failures,omitempty"`
+
+	// Skipped are selected tasks left alone because, when the clean came
+	// to act on them, they were no longer inactive (reconciliation moved
+	// them back to running, a retry requeued them) or had changed owner.
+	Skipped []CleanSkip `json:"skipped,omitempty"`
+}
+
+// CleanSkip is one selected task a clean did not touch, and why.
+type CleanSkip struct {
+	TaskID string `json:"task_id"`
+	JobID  string `json:"job_id"`
+	Status string `json:"status,omitempty"` // its status at act time ("" = gone)
+	Reason string `json:"reason"`
 }
 
 // CheckpointJob is one job's checkpoint footprint in a checkpoints clean.

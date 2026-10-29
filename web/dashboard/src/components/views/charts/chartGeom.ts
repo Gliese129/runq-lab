@@ -80,6 +80,34 @@ export function niceTicks(lo: number, hi: number, count = 5): number[] {
   return out
 }
 
+/** A curve value: null is a gap (a NaN/Inf the SDK wrote as null). */
+export type CurveValue = number | null
+
+/** Index runs of consecutive drawable points: a null or non-finite value
+ *  ends a run, so a curve breaks there instead of being bridged — a NaN
+ *  shows as a gap; curves are never interpolated. */
+export function gapRuns(value: readonly (CurveValue | undefined)[]): number[][] {
+  const runs: number[][] = []
+  let run: number[] = []
+  value.forEach((v, i) => {
+    if (v != null && Number.isFinite(v)) run.push(i)
+    else if (run.length) { runs.push(run); run = [] }
+  })
+  if (run.length) runs.push(run)
+  return runs
+}
+
+/** SVG path of a curve broken at its gaps: one M…L… subpath per run. A run
+ *  of one point (a value between two gaps) is not a segment; callers draw
+ *  those as dots (isolatedPoints) so no logged value goes missing. */
+export function gapPath(runs: number[][], px: (i: number) => number, py: (i: number) => number): string {
+  return runs.filter((r) => r.length > 1).map((r) => r.map((i, k) => `${k ? 'L' : 'M'}${px(i)},${py(i)}`).join('')).join('')
+}
+
+export function isolatedPoints(runs: number[][], px: (i: number) => number, py: (i: number) => number): number[][] {
+  return runs.filter((r) => r.length === 1).map(([i]) => [px(i), py(i)])
+}
+
 export function linear(d: [number, number], r: [number, number], opts: { nice?: boolean; zero?: boolean } = {}): Scale {
   let [d0, d1] = d
   if (opts.zero) { d0 = Math.min(0, d0); d1 = Math.max(0, d1) }

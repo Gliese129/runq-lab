@@ -229,6 +229,9 @@ func runCleanCheckpoints(cmd *cobra.Command, be backend.Backend, opts backend.Cl
 	if err != nil {
 		return err
 	}
+	for _, s := range result.Skipped {
+		fmt.Printf("  kept %s (%s): %s\n", s.TaskID, s.JobID, s.Reason)
+	}
 	if result.Tasks == 0 && len(result.Failures) == 0 {
 		fmt.Println("No checkpoints to clean.")
 		return nil

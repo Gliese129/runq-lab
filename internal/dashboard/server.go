@@ -93,8 +93,20 @@ func NewServerWithAssets(be backend.Backend, cfg *config.GlobalConfig, assetsDir
 	return s
 }
 
+// Handler serves the v1 surface on the unix socket (CLI, SDK) and inside
+// the remote-CLI forward. The TCP listener uses TCPHandler.
 func (s *Server) Handler() http.Handler {
-	return accessLogMiddleware(s.accessLog, recoverMiddleware(corsMiddleware(versionGateMiddleware(s.canonicalRefMiddleware(s.mux)))))
+	return s.handler(nil)
+}
+
+// handler builds the middleware chain; guard (TCP only) sits inside the
+// access log and panic recovery, in front of everything else.
+func (s *Server) handler(guard func(http.Handler) http.Handler) http.Handler {
+	h := corsMiddleware(versionGateMiddleware(s.canonicalRefMiddleware(s.mux)))
+	if guard != nil {
+		h = guard(h)
+	}
+	return accessLogMiddleware(s.accessLog, recoverMiddleware(h))
 }
 
 // versionGateMiddleware is the client-version guardrail: a runq client that
@@ -1181,9 +1193,20 @@ func (s *Server) handleKillTask(w http.ResponseWriter, r *http.Request) {
 
 // Old clients receive an explicit, side-effect-free retirement response.
 
+// handleKillJob — POST /jobs/{id}/kill[?target=…]: with target, only the
+// experiment's versions on that target are killed; an experiment with none
+// there is refused (409) rather than killed elsewhere.
 func (s *Server) handleKillJob(w http.ResponseWriter, r *http.Request) {
 	s.handleAction(w, r, func() error {
-		return s.backend.KillJob(r.Context(), r.PathValue("id"))
+		target := r.URL.Query().Get("target")
+		if target == "" {
+			return s.backend.KillJob(r.Context(), r.PathValue("id"))
+		}
+		tk, ok := s.backend.(backend.TargetKiller)
+		if !ok {
+			return fmt.Errorf("target-scoped kill: %w", backend.ErrNotSupported)
+		}
+		return tk.KillJobOnTarget(r.Context(), r.PathValue("id"), target)
 	})
 }
 
@@ -1310,7 +1333,8 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, backend.ErrForbidden):
 		status, code = http.StatusForbidden, backend.CodeForbidden
-	case errors.Is(err, backend.ErrNoTargetConfigured), errors.Is(err, job.ErrNothingToAppend):
+	case errors.Is(err, backend.ErrNoTargetConfigured), errors.Is(err, job.ErrNothingToAppend),
+		errors.Is(err, backend.ErrNotOnTarget):
 		status, code = http.StatusConflict, backend.CodeInvalidState
 	case errors.Is(err, backend.ErrNotSupported):
 		status, code = http.StatusConflict, backend.CodeNotSupported

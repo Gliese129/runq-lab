@@ -244,7 +244,20 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 			}
 		}
 	}
-	rows, err := job.Rows(&cfg)
+	// Scheduler params: DECLARED scope wins (self-describing config);
+	// template-reference inference remains as a fallback for configs that
+	// haven't adopted scope yet. Resolved before the rows: they are not
+	// part of a cell, so generated cell names leave them out.
+	schedParams := make(map[string]bool, len(d.SchedulerParams))
+	for _, n := range d.SchedulerParams {
+		schedParams[n] = true
+	}
+	for _, def := range proj.Params {
+		if def.Scope == "scheduler" {
+			schedParams[def.Name] = true
+		}
+	}
+	rows, err := job.PlanRows(&cfg, schedParams)
 	if err != nil {
 		return Plan{}, fmt.Errorf("expand job: %w", err)
 	}
@@ -325,19 +338,6 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 	}
 	if err := validateParamTypes(proj, taskParams); err != nil {
 		return Plan{}, err
-	}
-
-	// Scheduler params: DECLARED scope wins (self-describing config);
-	// template-reference inference remains as a fallback for configs that
-	// haven't adopted scope yet.
-	schedParams := make(map[string]bool, len(d.SchedulerParams))
-	for _, n := range d.SchedulerParams {
-		schedParams[n] = true
-	}
-	for _, def := range proj.Params {
-		if def.Scope == "scheduler" {
-			schedParams[def.Name] = true
-		}
 	}
 
 	pf := preflight.DefaultPreflight()

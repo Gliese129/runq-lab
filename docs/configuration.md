@@ -191,7 +191,9 @@ cells:
   rows, and submitting does not wait for them. Neither key becomes a param.
   The older spelling `tasks:` / `run:` still parses, with a warning.
 - Sweep rows get names too: what differs from the baseline row
-  (`kl=0.1, seed=2`), and `base` for the baseline itself.
+  (`kl=0.1, seed=2`), and `base` for the baseline itself. Scheduler params
+  (`scope: scheduler`, or read by the target's `submit_template`) are left out
+  of the name, so sweep rows that differ only in them are a plan error.
 - `runq export <ex…> [-o file]` writes an experiment back in this form —
   fixed_params from the baseline, each row only what differs, one row per cell
   from the version it shows. It is a snapshot: runq's ledger keeps the full

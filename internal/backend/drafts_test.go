@@ -344,3 +344,90 @@ func TestGetDraftPreviewCarriesPreviewAndYAML(t *testing.T) {
 		t.Fatalf("GetDraftPreview: preview %q, preflight %v, yaml same rev: %v", got.Preview, got.Preflight, got.YAML == plain.YAML)
 	}
 }
+
+// A draft is the plan it was created with: the -t target that overrode the
+// file's target: and the job file's path both survive an unchanged edit,
+// and submit uses them.
+func TestDraftKeepsResolvedTargetAndSourceAcrossEdit(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	a := &countingLane{v2PreviewLane: v2PreviewLane{UnavailableBackend: NewUnavailableBackend(nil)}}
+	b := &countingLane{v2PreviewLane: v2PreviewLane{UnavailableBackend: NewUnavailableBackend(nil)}}
+	m, err := NewMultiBackend(map[string]Backend{"a": a, "b": b}, st, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.CreateProject(ctx, project.Config{ProjectName: "kl", Target: "a", Targets: []string{"a", "b"},
+		WorkingDir: t.TempDir(), CmdTemplate: "python t.py {{args}}"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreateSection(ctx, "kl", "probe"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.AddSectionRule(ctx, "kl", "probe", "path", "experiments/probe/*"); err != nil {
+		t.Fatal(err)
+	}
+	d, err := m.CreateDraft(ctx, DraftRequest{JobYAML: "project: kl\ntarget: b\nfixed_params: {x: 1}\n",
+		Target: "a", SourcePath: "experiments/probe/job.yaml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Draft.Target != "a" || !strings.Contains(d.YAML, "target: a") || strings.Contains(d.YAML, "target: b") {
+		t.Fatalf("the editable YAML must say the draft's target a:\n%s", d.YAML)
+	}
+	edited, err := m.EditDraft(ctx, d.Draft.ID, d.YAML)
+	if err != nil {
+		t.Fatalf("saving the draft's own YAML unchanged: %v", err)
+	}
+	row, _ := st.GetDraft(ctx, d.Draft.ID)
+	if !strings.Contains(row.ConfigJSON, `"source_path":"experiments/probe/job.yaml"`) {
+		t.Fatalf("edit dropped the source path: %s", row.ConfigJSON)
+	}
+	if !strings.Contains(edited.Preview, "section: probe (rule") {
+		t.Fatalf("the path rule must still place the edited draft:\n%s", edited.Preview)
+	}
+	if _, err := m.SubmitDraft(ctx, d.Draft.ID, DraftSubmitOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if a.submits.Load() != 1 || b.submits.Load() != 0 {
+		t.Fatalf("submit went to a=%d b=%d, want the draft's target a", a.submits.Load(), b.submits.Load())
+	}
+	if a.received.Target != "a" || a.received.SectionID == "" {
+		t.Fatalf("submitted target %q section %q", a.received.Target, a.received.SectionID)
+	}
+}
+
+// The draft names its cells as submit's plan does: a scope: scheduler param
+// is not in a generated name, and the table, rows and YAML agree.
+func TestDraftCellNamesSkipSchedulerParams(t *testing.T) {
+	ctx := context.Background()
+	m, lane, _ := newDraftBackend(t)
+	if err := m.CreateProject(ctx, project.Config{ProjectName: "hp", Target: "a", WorkingDir: t.TempDir(), CmdTemplate: "python t.py {{args}}",
+		Params: []project.ParamDef{{Name: "h_rt", Type: "int", Scope: "scheduler"}, {Name: "lr", Type: "float"}}}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := m.CreateDraft(ctx, DraftRequest{JobYAML: "project: hp\nsweep:\n  - method: list\n    parameters: {lr: [0.1, 0.2], h_rt: [1, 2]}\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Rows) != 2 || d.Rows[0].Run != "base" || d.Rows[1].Run != "lr=0.2" {
+		t.Fatalf("rows = %+v", d.Rows)
+	}
+	if strings.Contains(d.Table, "h_rt=") || strings.Contains(d.YAML, "cell: h_rt") || !strings.Contains(d.YAML, "cell: lr=0.2") {
+		t.Fatalf("table/YAML disagree with the rows:\n%s\n%s", d.Table, d.YAML)
+	}
+	if _, err := m.SubmitDraft(ctx, d.Draft.ID, DraftSubmitOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lane.received.Tasks; len(got) != 2 || got[1].Run != "lr=0.2" {
+		t.Fatalf("submitted cells = %+v", got)
+	}
+	_, err = m.CreateDraft(ctx, DraftRequest{JobYAML: "project: hp\nsweep:\n  - method: grid\n    parameters: {lr: [0.1], h_rt: [1, 2]}\n"})
+	if err == nil || !strings.Contains(err.Error(), "differ only in scheduler params (h_rt)") {
+		t.Fatalf("one cell planned twice must be a plan error, got %v", err)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 
@@ -25,16 +26,52 @@ type ExactFrame struct {
 	Records []ExactRecord `json:"records"`
 }
 type ExactSeries struct {
-	Key       string    `json:"key"`
-	Step      []float64 `json:"step"`
-	Value     []float64 `json:"value"`
-	Signature string    `json:"signature"`
+	Key string `json:"key"`
+	// Step: each point's x — its step, or for a point logged without one
+	// its position among the curve's points in write order (history.py).
+	Step      []float64   `json:"step"`
+	Value     CurveValues `json:"value"`
+	Signature string      `json:"signature"`
 	// Lo/Hi: the band of a runq.stats estimate's shown error, per point
 	// (null where a point has none). Series: the runq.stats series this
 	// curve is one index value of (runq.log writes it).
 	Lo     []*float64   `json:"lo,omitempty"`
 	Hi     []*float64   `json:"hi,omitempty"`
 	Series *CurveSeries `json:"series,omitempty"`
+}
+
+// CurveValues are a curve's y values. A gap — a NaN/Inf the SDK wrote as
+// null — is NaN in memory and null on the wire, both ways, so it reaches the
+// chart as a break in the line: never dropped, never bridged, never 0.
+type CurveValues []float64
+
+func (v CurveValues) MarshalJSON() ([]byte, error) {
+	out := make([]*float64, len(v))
+	for i := range v {
+		if !math.IsNaN(v[i]) && !math.IsInf(v[i], 0) {
+			out[i] = &v[i]
+		}
+	}
+	return json.Marshal(out)
+}
+
+func (v *CurveValues) UnmarshalJSON(data []byte) error {
+	var raw []*float64
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw == nil {
+		*v = nil
+		return nil
+	}
+	*v = make(CurveValues, len(raw))
+	for i, p := range raw {
+		(*v)[i] = math.NaN()
+		if p != nil {
+			(*v)[i] = *p
+		}
+	}
+	return nil
 }
 
 // CurveSeries places a curve within a runq.stats series logged with

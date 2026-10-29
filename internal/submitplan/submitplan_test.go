@@ -284,3 +284,44 @@ func TestPlannedTaskName(t *testing.T) {
 		t.Errorf("display name leaked into the scheduler name: task %q, job %q", plan.Tasks[0].Name, plan.Name)
 	}
 }
+
+// Cell names leave out the params only the scheduler reads, whether the
+// project declares scope: scheduler or the target's submit template reads
+// them; the names are resolved after those scopes, not before.
+func TestBuildCellNamesSkipSchedulerParams(t *testing.T) {
+	sweep := func(method string) job.JobConfig {
+		return job.JobConfig{Project: "p", Sweep: []job.SweepBlock{{Method: method, Parameters: map[string]job.ParameterSpec{
+			"lr": {Values: []any{0.1, 0.2}}, "h_rt": {Values: []any{1, 2}}}}}}
+	}
+	for _, tc := range []struct {
+		name  string
+		param project.ParamDef
+		deps  Deps
+	}{
+		{"declared scope", project.ParamDef{Name: "h_rt", Type: "int", Scope: "scheduler"}, Deps{}},
+		{"submit template", project.ParamDef{Name: "h_rt", Type: "int"}, Deps{SchedulerParams: []string{"h_rt"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proj := &project.Config{ProjectName: "p", WorkingDir: t.TempDir(), CmdTemplate: "python train.py {{args}}",
+				Params: []project.ParamDef{tc.param, {Name: "lr", Type: "float"}}}
+			plan, err := Build(context.Background(), sweep("list"), proj, tc.deps)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for _, task := range plan.Tasks {
+				names = append(names, task.RunName)
+				if task.Env["RUNQ_CELL"] != task.RunName {
+					t.Fatalf("RUNQ_CELL %q != run name %q", task.Env["RUNQ_CELL"], task.RunName)
+				}
+			}
+			if strings.Join(names, "|") != "base|lr=0.2" {
+				t.Fatalf("cell names = %v, want base|lr=0.2", names)
+			}
+			if _, err := Build(context.Background(), sweep("grid"), proj, tc.deps); err == nil ||
+				!strings.Contains(err.Error(), "differ only in scheduler params (h_rt)") {
+				t.Fatalf("rows differing only in h_rt must be a plan error, got %v", err)
+			}
+		})
+	}
+}

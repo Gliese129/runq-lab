@@ -167,8 +167,8 @@ func (m *MultiBackend) CreateDraft(ctx context.Context, req DraftRequest) (*Draf
 
 // planDraft validates cfg exactly as submit would (target, section, rows,
 // templates, choices, types; preflight warns) without side effects, and returns
-// the frozen form: every row explicit under tasks:, sweep and fixed_params
-// folded in.
+// the frozen form: the resolved target, every row explicit under tasks:,
+// sweep and fixed_params folded in.
 func (m *MultiBackend) planDraft(ctx context.Context, cfg job.JobConfig, target string) (PreviewResult, job.JobConfig, error) {
 	if len(m.snapshot()) == 0 { // nothing could run it: say what to do first
 		return PreviewResult{}, job.JobConfig{}, noTargetConfiguredError()
@@ -186,15 +186,28 @@ func (m *MultiBackend) planDraft(ctx context.Context, cfg job.JobConfig, target 
 		return PreviewResult{}, job.JobConfig{}, err
 	}
 	cfg.Project = name
-	rows, err := job.Rows(&cfg)
-	if err != nil {
-		return PreviewResult{}, job.JobConfig{}, err
-	}
 	out, err := m.PreviewSubmitForTarget(ctx, target, cfg)
 	if err != nil {
 		return PreviewResult{}, job.JobConfig{}, err
 	}
+	// The draft freezes the plan the preview built: its resolved target,
+	// and its rows named as that plan names them (scheduler params are not
+	// part of a cell's name).
+	var sched map[string]bool
+	if out.Plan != nil {
+		sched = map[string]bool{}
+		for _, n := range out.Plan.SchedulerParams {
+			sched[n] = true
+		}
+	} else {
+		sched = m.schedulerParams(ctx, cfg.Project, out.Target)
+	}
+	rows, err := job.PlanRows(&cfg, sched)
+	if err != nil {
+		return PreviewResult{}, job.JobConfig{}, err
+	}
 	frozen := cfg
+	frozen.Target = out.Target
 	frozen.Sweep, frozen.FixedParams, frozen.Tasks = nil, nil, make([]job.TaskRow, len(rows))
 	for i, r := range rows {
 		frozen.Tasks[i] = job.TaskRow{Run: r.Run, NeedsCode: r.NeedsCode, Params: r.Params}
@@ -342,7 +355,7 @@ func (m *MultiBackend) DraftYAML(ctx context.Context, ref string) ([]byte, error
 
 func (m *MultiBackend) draftYAML(ctx context.Context, d *store.DraftRow, cfg job.JobConfig, rows []job.Row) ([]byte, error) {
 	in := job.ExportInput{DraftID: d.ID, Rev: d.Rev, Into: cfg.Into, Rerun: cfg.Rerun, Project: d.Project, Name: cfg.Name, Description: cfg.Description,
-		Section: cfg.Section, Target: cfg.Target, Command: cfg.Command, Overrides: cfg.Overrides,
+		Section: cfg.Section, Target: d.Target, Command: cfg.Command, Overrides: cfg.Overrides,
 		Baseline: cfg.Baseline, Rows: rows}
 	if proj, err := m.registry.GetCached(ctx, d.Project); err == nil {
 		for _, p := range proj.Params {
@@ -378,6 +391,9 @@ func (m *MultiBackend) EditDraft(ctx context.Context, ref, yamlText string) (*Dr
 	if cfg.Target != "" && cfg.Target != d.Target {
 		return nil, fmt.Errorf("a draft keeps its target (%s); start a new draft for another target", d.Target)
 	}
+	// The editable YAML has no source metadata: the draft keeps the job
+	// file it came from, so path section rules still apply after an edit.
+	cfg.SourcePath = d.SourcePath
 	out, frozen, err := m.planDraft(ctx, cfg, d.Target)
 	if err != nil {
 		return nil, err

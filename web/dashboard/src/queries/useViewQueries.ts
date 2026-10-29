@@ -1,11 +1,18 @@
-import { computed, toValue, type MaybeRefOrGetter } from 'vue'
+import { computed, toValue, watch, type MaybeRefOrGetter } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { viewsApi } from '@/apis/views'
+import type { ViewResult } from '@/types/views'
 import { qk } from './keys'
 
 /** A view whose sources are still producing data refreshes on this
  *  cadence; settled views render once. */
-const LIVE_VIEW_MS = 30_000
+export const LIVE_VIEW_MS = 30_000
+
+/** A view is live while one of its experiments has a running version:
+ *  its table and its curves then refresh together. */
+export function viewIsLive(result?: Pick<ViewResult, 'sources'> | null): boolean {
+  return !!result?.sources?.some((s) => s.running > 0)
+}
 
 export function useViewsQuery(project: MaybeRefOrGetter<string>) {
   return useQuery({
@@ -31,10 +38,7 @@ export function useViewRenderQuery(
   return useQuery({
     queryKey: computed(() => qk.viewRender(toValue(project), toValue(name), toValue(jobs))),
     queryFn: () => viewsApi.render(toValue(project), toValue(name), toValue(jobs)),
-    refetchInterval: (q) => {
-      const live = q.state.data?.sources.some((s) => s.running > 0)
-      return live ? LIVE_VIEW_MS : false
-    },
+    refetchInterval: (q) => (viewIsLive(q.state.data) ? LIVE_VIEW_MS : false),
   })
 }
 
@@ -44,13 +48,21 @@ export function useViewSeriesQuery(
   chart: MaybeRefOrGetter<number>,
   enabled: MaybeRefOrGetter<boolean>,
   jobs: MaybeRefOrGetter<string[]> = [],
+  /** the table's live state (viewIsLive of its render): curves follow
+   *  the table's refresh, and read once more when the run settles */
+  live: MaybeRefOrGetter<boolean> = false,
 ) {
-  return useQuery({
+  const query = useQuery({
     queryKey: computed(() => qk.viewSeries(toValue(project), toValue(name), toValue(chart), toValue(jobs))),
     queryFn: () => viewsApi.series(toValue(project), toValue(name), toValue(chart), 400, toValue(jobs)),
     enabled: computed(() => toValue(enabled)),
     staleTime: 60_000,
+    refetchInterval: computed(() => (toValue(live) ? LIVE_VIEW_MS : false)),
   })
+  watch(() => toValue(live), (now, was) => {
+    if (was && !now && toValue(enabled)) void query.refetch()
+  })
+  return query
 }
 
 /** The views that make up a job's Results: every project view rendered

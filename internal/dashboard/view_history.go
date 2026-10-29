@@ -19,7 +19,9 @@ type sourceHistorian interface {
 	SourceFramesAt(context.Context, string, string, []float64) (*workspace.ExactHistory, error)
 }
 
-func (s *Server) viewSeries(ctx context.Context, spec views.Spec, input views.Input, metrics []string, points int, chart map[string]any) (any, error) {
+// viewSeries draws the curves of a view scope: the versions the table
+// reads (same experiments, selected versions, filter), each one's metrics.
+func (s *Server) viewSeries(ctx context.Context, scope *store.ViewScope, metrics []string, points int, chart map[string]any) (any, error) {
 	if points == 0 {
 		points = 400
 	}
@@ -30,92 +32,75 @@ func (s *Server) viewSeries(ctx context.Context, spec views.Spec, input views.In
 	if !ok {
 		return nil, fmt.Errorf("history queries unavailable")
 	}
-	provider, ok := s.backend.(interface{ ViewStore() *store.Store })
-	if !ok {
-		return nil, fmt.Errorf("history store unavailable")
-	}
-	var override []string
-	if selected, ok := spec.Jobs.([]string); ok {
-		override = selected
-	}
-	jobs, err := provider.ViewStore().ViewJobs(ctx, spec, override)
-	if err != nil {
-		return nil, err
-	}
+	// Value/Mean/Std: a gap (null value, NaN in memory) stays a gap — a
+	// mean over a step where any line has a gap is a gap too.
 	type line struct {
-		TaskID    string    `json:"task_id"`
-		Step      []float64 `json:"step"`
-		Value     []float64 `json:"value"`
+		TaskID    string                `json:"task_id"`
+		Step      []float64             `json:"step"`
+		Value     workspace.CurveValues `json:"value"`
 		signature string
 	}
 	type series struct {
-		Key     map[string]any `json:"key"`
-		Metric  string         `json:"metric"`
-		Tasks   []string       `json:"tasks"`
-		Aligned bool           `json:"aligned"`
-		Step    []float64      `json:"step,omitempty"`
-		Mean    []float64      `json:"mean,omitempty"`
-		Std     []float64      `json:"std,omitempty"`
-		N       []int          `json:"n,omitempty"`
-		PerTask []line         `json:"per_task,omitempty"`
-		Warning string         `json:"warning,omitempty"`
+		Key     map[string]any        `json:"key"`
+		Metric  string                `json:"metric"`
+		Tasks   []string              `json:"tasks"`
+		Aligned bool                  `json:"aligned"`
+		Step    []float64             `json:"step,omitempty"`
+		Mean    workspace.CurveValues `json:"mean,omitempty"`
+		Std     workspace.CurveValues `json:"std,omitempty"`
+		N       []int                 `json:"n,omitempty"`
+		PerTask []line                `json:"per_task,omitempty"`
+		Warning string                `json:"warning,omitempty"`
 		lines   []line
 	}
 	groups := map[string]*series{}
 	order := []string{}
-	for _, j := range jobs {
-		tasks, err := provider.ViewStore().ListTasks(ctx, store.TaskFilter{JobID: j.ID, LiveOnly: true})
+	for _, t := range scope.Shown() {
+		params := t.Params
+		key := map[string]any{}
+		for _, slot := range []string{"color", "facet"} {
+			if name, ok := chart[slot].(string); ok {
+				if len(name) < 7 || name[:6] != "param." {
+					return nil, &views.Invalid{Errors: []string{"curves color/facet must reference param.<name>"}}
+				}
+				key[name] = params[name[6:]]
+			}
+		}
+		history, err := h.SourceHistory(ctx, t.ID, "metrics", "step", points)
 		if err != nil {
 			return nil, err
 		}
-		for _, t := range tasks {
-			var params map[string]any
-			_ = json.Unmarshal([]byte(t.ParamsJSON), &params)
-			key := map[string]any{}
-			for _, slot := range []string{"color", "facet"} {
-				if name, ok := chart[slot].(string); ok {
-					if len(name) < 7 || name[:6] != "param." {
-						return nil, &views.Invalid{Errors: []string{"curves color/facet must reference param.<name>"}}
-					}
-					key[name] = params[name[6:]]
+		for _, raw := range history.Series {
+			selected := false
+			for _, m := range metrics {
+				if m == raw.Key {
+					selected = true
 				}
 			}
-			history, err := h.SourceHistory(ctx, t.ID, "metrics", "step", points)
-			if err != nil {
-				return nil, err
+			if !selected {
+				continue
 			}
-			for _, raw := range history.Series {
-				selected := false
-				for _, m := range metrics {
-					if m == raw.Key {
-						selected = true
+			identity, _ := json.Marshal([]any{raw.Key, key})
+			id := string(identity)
+			g := groups[id]
+			if g == nil {
+				g = &series{Key: key, Metric: raw.Key, Aligned: true}
+				groups[id] = g
+				order = append(order, id)
+			}
+			l := line{TaskID: t.ID, Step: raw.Step, Value: raw.Value, signature: raw.Signature}
+			if maxStep, ok := chart["max_step"].(float64); ok {
+				l.Step = nil
+				l.Value = nil
+				for i, step := range raw.Step {
+					if step <= maxStep {
+						l.Step = append(l.Step, step)
+						l.Value = append(l.Value, raw.Value[i])
 					}
 				}
-				if !selected {
-					continue
-				}
-				identity, _ := json.Marshal([]any{raw.Key, key})
-				id := string(identity)
-				g := groups[id]
-				if g == nil {
-					g = &series{Key: key, Metric: raw.Key, Aligned: true}
-					groups[id] = g
-					order = append(order, id)
-				}
-				l := line{TaskID: t.ID, Step: raw.Step, Value: raw.Value, signature: raw.Signature}
-				if maxStep, ok := chart["max_step"].(float64); ok {
-					l.Step = nil
-					l.Value = nil
-					for i, step := range raw.Step {
-						if step <= maxStep {
-							l.Step = append(l.Step, step)
-							l.Value = append(l.Value, raw.Value[i])
-						}
-					}
-				}
-				g.lines = append(g.lines, l)
-				g.Tasks = append(g.Tasks, t.ID)
 			}
+			g.lines = append(g.lines, l)
+			g.Tasks = append(g.Tasks, t.ID)
 		}
 	}
 	out := []*series{}
@@ -190,11 +175,12 @@ func (s *Server) handleViewSeries(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Has("points") {
 		points, _ = strconv.Atoi(r.URL.Query().Get("points"))
 	}
-	spec := v.Spec
-	if ids := r.URL.Query()["job"]; len(ids) > 0 {
-		spec.Jobs = ids
+	scope, err := st.ViewScope(r.Context(), v.Spec, r.URL.Query()["job"])
+	if err != nil {
+		viewError(w, err)
+		return
 	}
-	out, err := s.viewSeries(r.Context(), spec, views.Input{}, []string{metric}, points, chart)
+	out, err := s.viewSeries(r.Context(), scope, []string{metric}, points, chart)
 	if err != nil {
 		viewError(w, err)
 		return
@@ -238,43 +224,21 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 501, "unsupported", "history unavailable")
 		return
 	}
-	jobs, err := st.ViewJobs(r.Context(), v.Spec, nil)
+	// The frames read the table's scope, ?job= included: same experiments,
+	// selected versions, filter and producer.
+	scope, err := st.ViewScope(r.Context(), v.Spec, q["job"])
 	if err != nil {
 		viewError(w, err)
 		return
 	}
-	type source struct {
-		id, producer, job, cell string
-		params                  map[string]any
-	}
-	sources := []source{}
-	for _, j := range jobs {
-		tasks, err := st.ListTasks(r.Context(), store.TaskFilter{JobID: j.ID, LiveOnly: true})
-		if err != nil {
-			viewError(w, err)
-			return
-		}
-		params, cells := map[string]map[string]any{}, map[string]string{}
-		for _, t := range tasks {
-			var p map[string]any
-			_ = json.Unmarshal([]byte(t.ParamsJSON), &p)
-			params[t.ID], cells[t.ID] = p, t.CellName()
-			sources = append(sources, source{t.ID, "", j.ID, t.CellName(), p})
-		}
-		// Results scripts wrote per task with runq.job() animate too.
-		producers, err := st.ProducerSources(r.Context(), j.ID)
-		if err != nil {
-			viewError(w, err)
-			return
-		}
-		for _, id := range producers {
-			taskID, producer := store.SplitSourceID(id)
-			sources = append(sources, source{id, producer, j.ID, cells[taskID], params[taskID]})
-		}
+	sources, err := st.ViewSources(r.Context(), scope)
+	if err != nil {
+		viewError(w, err)
+		return
 	}
 	lo, hi := math.Inf(1), math.Inf(-1)
 	for _, src := range sources {
-		history, err := h.SourceHistory(r.Context(), src.id, "results", by, 2)
+		history, err := h.SourceHistory(r.Context(), src.ID, "results", by, 2)
 		if err != nil {
 			viewError(w, err)
 			return
@@ -302,7 +266,7 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 	}
 	inputs := make([]views.Input, len(ats))
 	for _, src := range sources {
-		history, err := h.SourceFramesAt(r.Context(), src.id, by, ats)
+		history, err := h.SourceFramesAt(r.Context(), src.ID, by, ats)
 		if err != nil {
 			viewError(w, err)
 			return
@@ -312,7 +276,7 @@ func (s *Server) handleViewFrames(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			for _, rec := range f.Records {
-				inputs[i].Records = append(inputs[i].Records, views.Record{SourceID: src.id, Producer: src.producer, JobID: src.job, Section: rec.Section, TS: rec.TS, Axes: rec.Axes, Metrics: rec.Metrics, Params: src.params, Cell: src.cell})
+				inputs[i].Records = append(inputs[i].Records, src.Record(rec.Section, rec.TS, rec.Axes, rec.Metrics))
 			}
 		}
 	}

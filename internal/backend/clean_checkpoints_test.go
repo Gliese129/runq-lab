@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gliese129/runq-lab/internal/rfs"
 	"github.com/gliese129/runq-lab/internal/store"
 )
 
@@ -145,5 +146,85 @@ func TestCleanCheckpointsReportsFailures(t *testing.T) {
 	}
 	if len(res.Failures) == 0 || res.FreedBytes != 0 {
 		t.Fatalf("result = %+v, want a failure and nothing freed", res)
+	}
+}
+
+// flipOnFirstExecFS is the local filesystem, but its first Exec (the du
+// pass of a checkpoints clean) first runs hook: a status change landing
+// between selection and the rm.
+type flipOnFirstExecFS struct {
+	*rfs.LocalFS
+	hook  func()
+	calls int
+}
+
+func (f *flipOnFirstExecFS) Exec(ctx context.Context, cmd string, args ...string) ([]byte, []byte, int, error) {
+	f.calls++
+	if f.calls == 1 {
+		f.hook()
+	}
+	return f.LocalFS.Exec(ctx, cmd, args...)
+}
+
+// A task selected as failed (inferred) that reconciliation moves back to
+// running before the rm keeps its checkpoints, and comes back as skipped;
+// the other selected task is still cleaned.
+func TestCleanCheckpointsRechecksStatusBeforeDeleting(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if _, err := st.DB().Exec(`INSERT INTO projects (name, config_json) VALUES ('p', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.InsertJob(ctx, &store.JobRow{ID: "jbdone", ProjectName: "p", ConfigJSON: "{}", Status: "failed", TotalTasks: 2, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	mk := func(task, status, source string) string {
+		dir := filepath.Join(root, "pj1", "jbdone", task)
+		ck := filepath.Join(dir, "checkpoints", "weights.pt")
+		_ = os.MkdirAll(filepath.Dir(ck), 0o755)
+		if err := os.WriteFile(ck, make([]byte, 4096), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.InsertTask(ctx, &store.TaskRow{ID: task, JobID: "jbdone", ProjectName: "p", Command: "true", ParamsJSON: "{}",
+			Status: status, StatusSource: source, TaskDir: dir, EnqueuedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		return ck
+	}
+	flipped := mk("tkflip", "failed", "inferred")
+	done := mk("tkdone", "success", "wrapper")
+
+	fsys := &flipOnFirstExecFS{LocalFS: rfs.NewLocalFS(), hook: func() {
+		if _, err := st.DB().Exec(`UPDATE tasks SET status = 'running', status_source = 'wrapper' WHERE id = 'tkflip'`); err != nil {
+			t.Error(err)
+		}
+	}}
+	res, err := PerformClean(ctx, st, func(store.TaskRow) (rfs.FS, error) { return fsys, nil },
+		CleanOptions{Checkpoints: true, TaskIDs: []string{"tkflip", "tkdone"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fsys.calls == 0 {
+		t.Fatal("the clean never measured: the status change did not land mid-clean")
+	}
+	if _, err := os.Stat(flipped); err != nil {
+		t.Fatalf("checkpoint of a task that is running again was deleted: %v", err)
+	}
+	if _, err := os.Stat(done); !os.IsNotExist(err) {
+		t.Fatalf("checkpoint of the still-terminal task kept: %v", err)
+	}
+	if res.Tasks != 1 || res.Jobs != 1 {
+		t.Fatalf("result = %+v, want 1 version in 1 experiment cleaned", res)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].TaskID != "tkflip" || res.Skipped[0].Status != "running" {
+		t.Fatalf("skipped = %+v, want tkflip (running)", res.Skipped)
+	}
+	if res.FreedBytes < 4096 || res.FreedBytes >= 2*4096 {
+		t.Fatalf("freed = %d, want only the cleaned task's checkpoint", res.FreedBytes)
 	}
 }

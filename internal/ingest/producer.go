@@ -67,7 +67,12 @@ func ReapProducerResults(ctx context.Context, st *store.Store, target Target, pr
 	if err != nil || sc.missing || sc.skip {
 		return 0, err
 	}
-	err = st.ApplyProducerResultsDelta(ctx, target.TaskID, producer, sc.rebuild, c.rows,
-		store.FileIngestMark{Size: sc.size, Offset: sc.consumed})
-	return c.parsed, err
+	// After a failed read the mark covers only the consumed bytes, so the
+	// next listing (same size) differs from it and resumes the read.
+	size, offset, _ := sc.mark(false)
+	if err = st.ApplyProducerResultsDelta(ctx, target.TaskID, producer, sc.rebuild, c.rows,
+		store.FileIngestMark{Size: size, Offset: offset}); err != nil {
+		return 0, err
+	}
+	return c.parsed, sc.readErr
 }

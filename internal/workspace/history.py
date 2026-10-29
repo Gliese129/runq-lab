@@ -3,7 +3,14 @@
 Uses the metrics pyramid's 32-point base / fanout-4 layout. Nodes store
 coordinate ranges and byte offsets, not averaged values: frames need exact
 as-of records. All indexing and seeks happen on the data-owning machine.
+
+Curves (the metrics stream) are drawn honestly: a value written as null
+(NaN / Inf) stays in its series as a gap, never removed or bridged, and a
+point logged without a step is placed at x = its position among that curve's
+points in metrics.jsonl (0, 1, 2, ... in write order, i.e. ts order for one
+process). A step, when given, is the x.
 """
+import bisect
 import fcntl
 import hashlib
 import json
@@ -15,6 +22,10 @@ root, stream, count, axis = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3]), sy
 raw_path = root / (stream + ".jsonl")
 cache = root / (stream + ".exact.pyr.json")
 BASE, FANOUT = 32, 4
+# Bumped when what the index keeps changes; an older cache is rebuilt.
+# 2: metric points with a null value (a gap) are indexed, flagged by a 5th
+#    point field (1 = gap).
+VERSION = 2
 
 def keys(value):
     return sorted(value)
@@ -23,7 +34,7 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 def tree(points, coordinate):
-    # points: [offset, length, step-or-null, ts]. Leaf coordinates preserve
+    # points: [offset, length, step-or-null, ts, gap]. Leaf coordinates preserve
     # file order for deterministic timestamp/step ties.
     entries = [[p[coordinate], p[0], p[1]] for p in points if p[coordinate] is not None]
     entries.sort(key=lambda p: (p[0], p[1]))
@@ -56,15 +67,15 @@ def run():
         return {"by": axis, "frames": [], "series": []}
     with (root / (stream + ".exact.pyr.lock")).open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        index = {"offset": 0, "series": {}, "schemas": {}}
+        index = {"version": VERSION, "offset": 0, "series": {}, "schemas": {}}
         try:
             index = json.loads(cache.read_text())
         except (OSError, ValueError):
             pass
         stat = raw_path.stat()
         fingerprint = [stat.st_dev, stat.st_ino]
-        if index.get("file") != fingerprint or index["offset"] > stat.st_size:
-            index = {"offset": 0, "series": {}, "schemas": {}}
+        if index.get("version") != VERSION or index.get("file") != fingerprint or index["offset"] > stat.st_size:
+            index = {"version": VERSION, "offset": 0, "series": {}, "schemas": {}}
         changed = False
         with raw_path.open("rb") as raw:
             raw.seek(index["offset"])
@@ -87,9 +98,15 @@ def run():
                         identity = {k: axes.get(k) for k in frozen[0]}
                         key = canonical([section, identity])
                         step = axes.get("step")
+                        gap = 0
                     else:
-                        if rec.get("type") != "metric" or not isinstance(rec.get("value"), (int, float)):
+                        # null = a NaN/Inf the SDK wrote as null: kept as a gap.
+                        if rec.get("type") != "metric" or "value" not in rec:
                             continue
+                        value = rec["value"]
+                        if value is not None and not isinstance(value, (int, float)):
+                            continue
+                        gap = 1 if value is None else 0
                         key = rec["key"]
                         step = rec.get("step")
                     if not isinstance(step, (int, float)) or isinstance(step, bool) or not math.isfinite(step):
@@ -98,7 +115,7 @@ def run():
                     if not isinstance(ts, (int, float)) or not math.isfinite(ts):
                         continue
                     item = index["series"].setdefault(key, {"points": []})
-                    item["points"].append([offset, len(line), step, ts])
+                    item["points"].append([offset, len(line), step, ts, gap])
                     changed = True
                 except (ValueError, TypeError, KeyError):
                     continue
@@ -132,15 +149,25 @@ def run():
             if stream == "metrics":
                 series = []
                 for key, item in sorted(index["series"].items()):
-                    points = [p for p in item["points"] if p[2] is not None]
-                    # Alignment is based on the complete actual step sequence,
+                    # x: the step, else the point's write-order position.
+                    points = [[p[2] if p[2] is not None else i, p[0], p[1]] for i, p in enumerate(item["points"])]
+                    # Alignment is based on the complete actual x sequence,
                     # before display decimation. No interpolation or averaging.
-                    signature = hashlib.sha256(canonical([p[2] for p in points]).encode()).hexdigest()
+                    signature = hashlib.sha256(canonical([p[0] for p in points]).encode()).hexdigest()
                     if len(points) > count:
-                        points = [points[round(i*(len(points)-1)/(count-1))] for i in range(count)]
-                    records = [record([p[2], p[0], p[1]]) for p in points]
-                    item = {"key": key, "step": [r["step"] for r in records],
-                            "value": [r["value"] for r in records], "signature": signature}
+                        picks = [round(i*(len(points)-1)/(count-1)) for i in range(count)]
+                        # Decimation must not bridge a gap: between two kept
+                        # points that skip over gaps, keep the first gap too.
+                        gaps = [i for i, p in enumerate(item["points"]) if p[4]]
+                        keep = set(picks)
+                        for a, b in zip(picks, picks[1:]):
+                            j = bisect.bisect_right(gaps, a)
+                            if j < len(gaps) and gaps[j] < b:
+                                keep.add(gaps[j])
+                        points = [points[i] for i in sorted(keep)]
+                    records = [record(p) for p in points]
+                    item = {"key": key, "step": [p[0] for p in points],
+                            "value": [r.get("value") for r in records], "signature": signature}
                     bands = [band(r) for r in records]
                     if any(b is not None for b in bands):
                         item["lo"] = [b and b[0] for b in bands]

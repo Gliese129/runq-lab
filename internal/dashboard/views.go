@@ -211,7 +211,13 @@ func (s *Server) handleRenderView(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "not_found", "view not found")
 		return
 	}
-	input, err := st.ViewInput(r.Context(), v.Spec, r.URL.Query()["job"])
+	// One scope for the table and its report sources (curves).
+	scope, err := st.ViewScope(r.Context(), v.Spec, r.URL.Query()["job"])
+	if err != nil {
+		viewError(w, err)
+		return
+	}
+	input, err := st.ScopeInput(r.Context(), scope)
 	if err != nil {
 		viewError(w, err)
 		return
@@ -221,7 +227,7 @@ func (s *Server) handleRenderView(w http.ResponseWriter, r *http.Request) {
 		viewError(w, err)
 		return
 	}
-	if err := s.resolveViewSources(r, st, v, input, result); err != nil {
+	if err := s.resolveViewSources(r, st, v, scope, input, result); err != nil {
 		viewError(w, err)
 		return
 	}

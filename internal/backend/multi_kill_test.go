@@ -58,3 +58,48 @@ func TestKillJobAttemptsEveryGenerationAndJoinsErrors(t *testing.T) {
 		}
 	}
 }
+
+// A target-scoped kill reaches only that target's lanes, and an experiment
+// with no versions on the target is refused instead of killed elsewhere.
+func TestKillJobOnTargetReachesOnlyThatTarget(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if _, err := st.DB().Exec(`INSERT INTO projects (name, config_json) VALUES ('p', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, j := range []struct{ id, target string }{{"exm", "a"}, {"exb", "b"}} {
+		if err := st.InsertJob(ctx, &store.JobRow{ID: j.id, ProjectName: "p", ConfigJSON: "{}", Status: "running", Target: j.target, CreatedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// exm: first submission on a, an append on b. exb: only on b.
+	for _, tk := range []struct{ id, job, target string }{{"tka1", "exm", "a"}, {"tkb2", "exm", "b"}, {"tkb1", "exb", "b"}} {
+		if err := st.InsertTask(ctx, &store.TaskRow{ID: tk.id, JobID: tk.job, ProjectName: "p", Command: "true", ParamsJSON: "{}",
+			Status: "running", Target: tk.target, EnqueuedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := &killRecordingLane{UnavailableBackend: NewUnavailableBackend(nil)}
+	b := &killRecordingLane{UnavailableBackend: NewUnavailableBackend(nil)}
+	m, err := NewMultiBackend(map[string]Backend{"a": a, "b": b}, st, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.KillJobOnTarget(ctx, "exb", "a"); !errors.Is(err, ErrNotOnTarget) {
+		t.Fatalf("KillJobOnTarget(exb, a) = %v, want ErrNotOnTarget", err)
+	}
+	if a.calls != 0 || b.calls != 0 {
+		t.Fatalf("refused kill reached lanes: a=%d b=%d", a.calls, b.calls)
+	}
+	if err := m.KillJobOnTarget(ctx, "exm", "a"); err != nil {
+		t.Fatal(err)
+	}
+	if a.calls != 1 || b.calls != 0 {
+		t.Fatalf("kill exm on a reached a=%d b=%d, want a only", a.calls, b.calls)
+	}
+}

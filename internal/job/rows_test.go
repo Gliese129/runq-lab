@@ -136,3 +136,75 @@ func TestLegacyRunNamesFollowTheStoredPlan(t *testing.T) {
 		t.Fatalf("names = %v (planned rows by params, else diff from the first task)", got)
 	}
 }
+
+// Sweep names come only from non-scheduler params (approach
+// append-cell-rules): changing walltime alone does not make another cell.
+func TestPlanRowsLeaveSchedulerParamsOutOfNames(t *testing.T) {
+	sched := map[string]bool{"h_rt": true}
+	// A zip block led (alphabetically) by the scheduler param: the cell
+	// param leads the name instead.
+	c := parseJob(t, `
+sweep:
+  - method: list
+    parameters: { lr: [0.1, 0.2], h_rt: [1, 2] }
+`)
+	rows, err := PlanRows(&c, sched)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{rows[0].Run, rows[1].Run}; got[0] != "base" || got[1] != "lr=0.2" {
+		t.Fatalf("names = %v, want [base lr=0.2]", got)
+	}
+	if rows[1].Params["h_rt"] != 2 {
+		t.Fatalf("scheduler params stay in the row's params: %v", rows[1].Params)
+	}
+
+	// The same cell planned with another walltime keeps its name, which is
+	// what --into matches on.
+	again := parseJob(t, `
+fixed_params: { h_rt: 9 }
+sweep:
+  - method: grid
+    parameters: { lr: [0.1, 0.2] }
+`)
+	other, err := PlanRows(&again, sched)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other[1].Run != rows[1].Run {
+		t.Fatalf("walltime changed the cell: %q vs %q", other[1].Run, rows[1].Run)
+	}
+	existing := []ExistingCell{{Name: rows[1].Run, TaskID: "t1", Status: "failed", Params: rows[1].Params}}
+	cells, err := ClassifyCells(other[1:], existing, sched, nil, "")
+	if err != nil || cells[0].Class == CellNew {
+		t.Fatalf("append should version the existing cell, got %+v, %v", cells, err)
+	}
+
+	// Without the scheduler set, Rows still names by every param (the
+	// zip block's first key leads).
+	if plain, _ := Rows(&c); plain[1].Run != "h_rt=2" {
+		t.Fatalf("Rows = %q", plain[1].Run)
+	}
+}
+
+func TestPlanRowsRefuseCellsDifferingOnlyInScheduler(t *testing.T) {
+	c := parseJob(t, `
+sweep:
+  - method: grid
+    parameters: { lr: [0.1, 0.2], h_rt: [1, 2] }
+`)
+	_, err := PlanRows(&c, map[string]bool{"h_rt": true})
+	if err == nil || !strings.Contains(err.Error(), "differ only in scheduler params (h_rt)") {
+		t.Fatalf("want a plan error naming h_rt, got %v", err)
+	}
+	// Fully identical rows are not a scheduler collision: " #2" as before.
+	dup := parseJob(t, `
+sweep:
+  - method: list
+    parameters: { lr: [0.1, 0.1], h_rt: [1, 1] }
+`)
+	rows, err := PlanRows(&dup, map[string]bool{"h_rt": true})
+	if err != nil || rows[1].Run != "base #2" {
+		t.Fatalf("rows = %+v, err = %v", rows, err)
+	}
+}

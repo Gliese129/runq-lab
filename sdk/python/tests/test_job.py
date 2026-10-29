@@ -116,6 +116,55 @@ def test_job_read_on_the_second_target(clean_env, tmp_path):
     assert (t3.local, t3.task_dir) == (True, d / "tk3")
 
 
+def _two_targets_one_path(d, published_for=None, generations=("ga", "gb")):
+    """Targets a and b both use the same absolute experiment path; only a's
+    version directory is on this machine."""
+    (d / "tka").mkdir(parents=True)
+    snap = {"version": 2, "job": {"id": "ex1", "target": "a"}, "tasks": [
+        {"id": "tka", "target": "a", "generation": generations[0], "task_dir": str(d / "tka")},
+        {"id": "tkb", "target": "b", "generation": generations[1], "task_dir": str(d / "tkb")}]}
+    if published_for is not None:
+        snap["published_for"] = published_for
+    (d / "job.json").write_text(json.dumps(snap))
+
+
+def test_job_same_path_on_two_targets_uses_published_for(clean_env, tmp_path):
+    """A path under the experiment dir does not prove the files are here."""
+    d = tmp_path / "ex1"
+    _two_targets_one_path(d, {"target": "a", "generation": "ga"})
+    exp = runq.experiment(d, producer="score")
+    va, vb = exp.versions
+    assert exp.published_for == {"target": "a", "generation": "ga"}
+    assert (va.local, va.generation) == (True, "ga")
+    assert (vb.local, vb.task_dir) == (False, d / "tkb")
+    with pytest.raises(FileNotFoundError, match="target b"):
+        vb.result({"acc": 1.0})
+
+
+def test_job_same_path_without_published_for_checks_the_dirs(clean_env, tmp_path):
+    """An older snapshot (no published_for): a target is here when a version dir is."""
+    d = tmp_path / "ex1"
+    _two_targets_one_path(d)
+    va, vb = runq.experiment(d, producer="score").versions
+    assert (va.local, vb.local) == (True, False)
+
+
+def test_job_other_generation_of_this_target(clean_env, tmp_path):
+    """Another generation of the published target is local only where its dir is
+    (the same machine after a config change), not after a move to another host."""
+    d = tmp_path / "ex1"
+    (d / "tkold").mkdir(parents=True)
+    (d / "tknew").mkdir()
+    snap = {"version": 2, "job": {"id": "ex1", "target": "a"}, "published_for": {"target": "a", "generation": "g2"},
+            "tasks": [{"id": t, "target": "a", "generation": g, "task_dir": f"/old/host/ex1/{t}"}
+                      for t, g in (("tkold", "g1"), ("tknew", "g2"), ("tkgone", "g1"))]}
+    (d / "job.json").write_text(json.dumps(snap))
+    old, new, gone = runq.experiment(d, producer="score").versions
+    assert (old.local, old.task_dir) == (True, d / "tkold")
+    assert (new.local, new.task_dir) == (True, d / "tknew")
+    assert (gone.local, gone.task_dir) == (False, Path("/old/host/ex1/tkgone"))
+
+
 def test_job_without_ref_inside_a_task_reads_its_own_job(clean_env, job_dir, monkeypatch):
     monkeypatch.setenv("RUNQ_TASK_DIR", str(job_dir / "tk1"))
     assert runq.experiment(producer="score").id == "jb1"

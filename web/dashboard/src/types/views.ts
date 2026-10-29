@@ -133,10 +133,11 @@ export interface CurveSeries {
   tasks: string[]
   aligned: boolean
   step?: number[]
-  mean?: number[]
-  std?: number[]
+  /** null: a gap (some line has no value at that step) */
+  mean?: (number | null)[]
+  std?: (number | null)[]
   n?: number[]
-  per_task?: { task_id: string; step: number[]; value: number[] }[]
+  per_task?: { task_id: string; step: number[]; value: (number | null)[] }[]
 }
 export interface SeriesResult {
   metric: string
@@ -160,8 +161,10 @@ export interface JobDefaultViews {
 export interface CurveLine {
   task_id: string
   cell: string
+  /** a step, or for a point logged without one its write-order position */
   step: number[]
-  value: number[]
+  /** null: a NaN/Inf written as null — a gap, never bridged */
+  value: (number | null)[]
   lo?: (number | null)[]
   hi?: (number | null)[]
   series?: { name: string; axis: string; at: unknown }

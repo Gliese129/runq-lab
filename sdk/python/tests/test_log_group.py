@@ -11,6 +11,7 @@ Contract:
 - Validation: prefix must be a non-empty string, no '/' inside.
 - Backed by contextvars — concurrent tasks don't bleed prefixes.
 """
+import asyncio
 import json
 import threading
 
@@ -143,6 +144,68 @@ def test_log_group_decorator_preserves_fn_metadata(clean_env):
 
     assert my_step.__name__ == "my_step"
     assert my_step.__doc__ == "My docstring."
+
+
+# ---- async decorator form ----
+
+def test_log_group_decorator_async_holds_group_across_awaits(clean_env, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runq.context()
+
+    @runq.log_group("eval")
+    async def evaluate():
+        await asyncio.sleep(0)
+        runq.log({"loss": 0.5}, step=1)
+        return "done"
+
+    assert asyncio.iscoroutinefunction(evaluate) and evaluate.__name__ == "evaluate"
+    assert asyncio.run(evaluate()) == "done"
+    runq.log({"after": 1.0}, step=2)
+    events = _read_events(tmp_path / "runq_metrics.jsonl")
+    assert [e["key"] for e in events] == ["eval/loss", "after"]
+
+
+def test_log_group_decorator_async_tasks_do_not_bleed(clean_env):
+    from runq._prefix import current_prefix
+
+    @runq.log_group("a")
+    async def a(started, release):
+        started.set()
+        await release.wait()
+        return current_prefix()
+
+    @runq.log_group("b")
+    async def b():
+        await asyncio.sleep(0)
+        return current_prefix()
+
+    async def main():
+        started, release = asyncio.Event(), asyncio.Event()
+        ta = asyncio.create_task(a(started, release))
+        await started.wait()
+        got_b = await b()          # runs while a() holds its group
+        release.set()
+        return await ta, got_b, current_prefix()
+
+    assert asyncio.run(main()) == ("a", "b", "")
+
+
+def test_log_group_decorator_async_generator(clean_env):
+    from runq._prefix import current_prefix
+
+    @runq.log_group("eval")
+    async def batches():
+        for i in range(2):
+            await asyncio.sleep(0)
+            yield i, current_prefix()
+
+    async def main():
+        out = []
+        async for item in batches():
+            out.append((item, current_prefix()))   # the consumer is outside the group
+        return out
+
+    assert asyncio.run(main()) == [((0, "eval"), ""), ((1, "eval"), "")]
 
 
 # ---- report() prefixing ----

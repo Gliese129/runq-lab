@@ -25,9 +25,12 @@ views tell producers apart.
 
 Run the script where the job directory is readable (the cluster's login
 node for an HPC target). An experiment that ran on several targets lists
-every version in each target's job.json; a version from another target
-keeps its recorded paths, has ``v.local`` false, and ``v.result`` raises
-naming ``v.target`` — score it on that target. No runq service is needed,
+every version in each target's job.json, and each copy names the lane it was
+published for (``published_for``: target and generation). A version of
+another target — or of another generation of this target whose directory is
+not here (the target moved host or data path) — keeps its recorded paths,
+has ``v.local`` false, and ``v.result`` raises naming ``v.target`` — score it
+where it ran. No runq service is needed,
 except to resolve an ``ex…`` (or older ``jb…``) id instead of a path. ``runq.job()`` is the
 older name of ``runq.experiment()``; ``JobTask``, ``exp.tasks`` and
 ``.record()`` are the older names of ``Version``, the cells' selected
@@ -73,6 +76,7 @@ class Version:
     # Its directory is on the filesystem the experiment was read from. False
     # for another target's version: its paths are that target's, unread here.
     local: bool = True
+    generation: str = ""  # the target configuration generation that ran it
 
     @property
     def results_file(self) -> Path:
@@ -133,6 +137,9 @@ class Experiment:
     updated_at: int | None
     observed_at: int | None
     observation_state: str
+    # The lane this job.json copy was written for: {"target", "generation"};
+    # empty for a snapshot from an older runq.
+    published_for: dict = field(default_factory=dict)
 
     @property
     def tasks(self) -> list[Version]:
@@ -184,7 +191,8 @@ def experiment(ref: str | os.PathLike | None = None, *, producer: str | None = N
     if not isinstance(data, dict) or not isinstance(data.get("tasks"), list):
         raise ValueError(f"runq.experiment: {path} is not an experiment snapshot")
     head = data.get("job") or {}
-    here = _targets_here(job_dir, data["tasks"], head.get("target", ""))
+    published_for = data.get("published_for") if isinstance(data.get("published_for"), dict) else {}
+    is_local = _locality(job_dir, data["tasks"], head.get("target", ""), published_for)
     return Experiment(
         id=head.get("id", ""),
         name=head.get("name", ""),
@@ -193,10 +201,11 @@ def experiment(ref: str | os.PathLike | None = None, *, producer: str | None = N
         target=head.get("target", ""),
         created_at=head.get("created_at"),
         dir=job_dir,
-        versions=[_task(job_dir, t, producer, head.get("target", ""), here) for t in data["tasks"]],
+        versions=[_task(job_dir, t, producer, head.get("target", ""), is_local) for t in data["tasks"]],
         updated_at=data.get("updated_at"),
         observed_at=data.get("observed_at"),
         observation_state=data.get("observation_state", ""),
+        published_for=dict(published_for),
     )
 
 
@@ -206,29 +215,44 @@ def job(ref: str | os.PathLike | None = None, *, producer: str | None = None) ->
     return experiment(ref, producer=producer)
 
 
-def _targets_here(job_dir: Path, tasks: list, default: str) -> set[str]:
-    """The targets whose versions live in job_dir: those with a version
-    recorded in it or a version directory present in it (the same directory
-    read through another mount point). Falls back to the experiment's target."""
+def _locality(job_dir: Path, tasks: list, default: str, published_for: dict):
+    """Which versions live in job_dir, as ``is_local(task) -> bool``.
+
+    job.json names the lane its copy was published for: a version is local
+    when its target matches and its generation does too, or (another
+    generation of the same target, e.g. before a config change on the same
+    machine) its directory is here. A path recorded under job_dir proves
+    nothing: two machines may use the same absolute path. A snapshot without
+    ``published_for`` (older runq) falls back to the targets with a version
+    directory present here, else the experiment's target."""
     try:
         present = {p.name for p in job_dir.iterdir()}
     except OSError:
         present = set()
-    here = set()
-    for t in tasks:
-        recorded = Path(t.get("task_dir") or t["id"])
-        if recorded.parent == job_dir or recorded.name in present:
-            here.add(t.get("target") or default)
-    return here or {default}
+
+    def name(t: dict) -> str:
+        return Path(t.get("task_dir") or t["id"]).name
+
+    if published_for.get("target"):
+        target, generation = published_for["target"], published_for.get("generation", "")
+
+        def is_local(t: dict) -> bool:
+            if (t.get("target") or default) != target:
+                return False
+            return t.get("generation", "") == generation or name(t) in present
+
+        return is_local
+    here = {t.get("target") or default for t in tasks if name(t) in present} or {default}
+    return lambda t: (t.get("target") or default) in here
 
 
 def _task(job_dir: Path, t: dict, producer: str, default_target: str = "",
-          here: set[str] | None = None) -> Version:
-    # job.json records target paths. Rebase this target's on the directory
-    # actually read, so a job read through another mount point still writes
-    # in place; another target's versions keep their recorded paths.
+          is_local=None) -> Version:
+    # job.json records target paths. Rebase the local versions' on the
+    # directory actually read, so a job read through another mount point
+    # still writes in place; the others keep their recorded paths.
     target = t.get("target") or default_target
-    local = here is None or target in here
+    local = is_local is None or is_local(t)
     recorded = t.get("task_dir") or t["id"]
     task_dir = job_dir / Path(recorded).name if local else Path(recorded)
 
@@ -258,6 +282,7 @@ def _task(job_dir: Path, t: dict, producer: str, default_target: str = "",
         producer=producer,
         target=target,
         local=local,
+        generation=t.get("generation", ""),
     )
 
 

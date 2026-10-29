@@ -110,7 +110,17 @@ func (r TaskRow) MarshalJSON() ([]byte, error) { return json.Marshal(r.toMap()) 
 // names; sweep rows are named by what differs from the baseline row
 // ("kl=0.1, seed=2"; the baseline itself is "base"). Validation errors say
 // which row is wrong.
-func Rows(cfg *JobConfig) ([]Row, error) {
+//
+// Rows names sweep rows from every param; a plan that knows its scheduler
+// params (scope: scheduler, or read by the target's submit template) names
+// them with PlanRows, which is what submit, preview and drafts use.
+func Rows(cfg *JobConfig) ([]Row, error) { return PlanRows(cfg, nil) }
+
+// PlanRows is Rows for a plan whose scheduler params are known: they are
+// left out of generated sweep names, since walltime or a reservation does
+// not make another cell. Sweep rows that then differ only in scheduler
+// params would be one cell twice, which is an error naming them.
+func PlanRows(cfg *JobConfig, scheduler map[string]bool) ([]Row, error) {
 	if len(cfg.Tasks) > 0 && len(cfg.Sweep) > 0 {
 		return nil, fmt.Errorf("job has both sweep: and cells: — use one (sweep generates rows, cells lists them)")
 	}
@@ -152,7 +162,13 @@ func Rows(cfg *JobConfig) ([]Row, error) {
 	for _, p := range expanded {
 		rows = append(rows, Row{Params: p})
 	}
-	quiet := zipFollowers(cfg.Sweep)
+	if err := sameCellOnlyBySchedule(rows, scheduler); err != nil {
+		return nil, err
+	}
+	quiet := zipFollowers(cfg.Sweep, scheduler)
+	for k := range scheduler {
+		quiet[k] = true
+	}
 	nameRowsQuiet(rows, 0, quiet)
 	if cfg.Baseline != "" {
 		b, err := baselineIndex(rows, cfg.Baseline)
@@ -164,10 +180,45 @@ func Rows(cfg *JobConfig) ([]Row, error) {
 	return rows, nil
 }
 
+// sameCellOnlyBySchedule refuses sweep rows that differ only in scheduler
+// params: without them the rows are one cell, so they would get one name.
+func sameCellOnlyBySchedule(rows []Row, scheduler map[string]bool) error {
+	if len(scheduler) == 0 {
+		return nil
+	}
+	first := map[string]int{} // cell params → its first row
+	for i, r := range rows {
+		cell := make(TaskParams, len(r.Params))
+		var sched []string
+		for k, v := range r.Params {
+			if scheduler[k] {
+				sched = append(sched, k)
+			} else {
+				cell[k] = v
+			}
+		}
+		key := paramsKey(cell)
+		j, seen := first[key]
+		if !seen {
+			first[key] = i
+			continue
+		}
+		if paramsKey(rows[j].Params) == paramsKey(r.Params) {
+			continue // fully identical rows keep the usual " #2" naming
+		}
+		sort.Strings(sched)
+		return fmt.Errorf("sweep rows %d and %d differ only in scheduler params (%s), so they are the same cell; "+
+			"cell names come from the other params: set the scheduler param once (fixed_params or overrides), "+
+			"or list the cells under cells: with names of their own", j+1, i+1, strings.Join(sched, ", "))
+	}
+	return nil
+}
+
 // zipFollowers are the keys of list (zip) blocks other than the block's
 // first key: they move together with it, so naming a row by the first key
 // says it all ("condition_id=f2", not "condition_id=f2, query_language=…").
-func zipFollowers(sweep []SweepBlock) map[string]bool {
+// A scheduler param never leads: it is not part of a cell's name.
+func zipFollowers(sweep []SweepBlock, scheduler map[string]bool) map[string]bool {
 	quiet := map[string]bool{}
 	for _, b := range sweep {
 		if b.Method != "list" || len(b.Parameters) < 2 {
@@ -175,7 +226,12 @@ func zipFollowers(sweep []SweepBlock) map[string]bool {
 		}
 		var keys []string
 		for k := range b.Parameters {
-			keys = append(keys, k)
+			if !scheduler[k] {
+				keys = append(keys, k)
+			}
+		}
+		if len(keys) < 2 {
+			continue
 		}
 		sort.Strings(keys)
 		for _, k := range keys[1:] {

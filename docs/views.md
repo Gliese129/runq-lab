@@ -169,6 +169,11 @@ Curves only aggregate identical full step sequences; differing sequences return
 per-version recorded points with `aligned: false`, without interpolation. Bounded
 series and animation frames use a target-side prefix/tail pyramid of exact record
 positions; averages are never substituted for progress snapshots.
+Curves and animation frames read the table's scope: the same experiments (the
+`job` override included), each cell's selected version, the `filter` (on
+`param.<name>` and `cell`; result-axis filters apply per frame row) and, for
+frames, the `producer`. In the dashboard, curves refresh with the table while a
+version runs.
 
 ### In the dashboard
 
@@ -277,7 +282,7 @@ their `consumers/` directories stay on disk untouched.
 | GET/DELETE `/projects/{p}/views/{name}` | Read spec/templates or delete |
 | GET `/projects/{p}/views/{name}/render` | Rows/cells, sources, freshness, attention, chart metadata, custom data |
 | GET `/projects/{p}/views/{name}/charts/{i}/series` | Curves; `points=2..2000`, repeatable `job` |
-| GET `/projects/{p}/views/{name}/frames` | `chart`, `by=step|time`, `count=2..300`; exact rows per frame |
+| GET `/projects/{p}/views/{name}/frames` | `chart`, `by=step|time`, `count=2..300`, repeatable `job`; exact rows per frame |
 
 Render accepts repeated `job`, `refresh=true`, `format=json|text|latex|markdown|csv`,
 `wide=true`, `latex_color=true`. Invalid specs return HTTP 400 `invalid_view`.

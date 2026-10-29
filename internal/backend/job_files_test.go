@@ -196,3 +196,118 @@ func TestJobFilesIngestProducerResults(t *testing.T) {
 		t.Fatalf("producer sources = %v, %v", sources, err)
 	}
 }
+
+func newJobFilesLane(t *testing.T, st *store.Store, name, workspace string) *SSHBackend {
+	t.Helper()
+	target := config.TargetConfig{Name: name, Workspace: workspace, SubmitTemplate: "true", MaxInflight: 1}
+	lane, err := NewSSHBackend(SSHBackendConfig{Target: target, Store: st, GlobalCfg: &config.GlobalConfig{}, FS: rfs.NewLocalFS()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lane
+}
+
+// A version owned by a retiring lane generation (the target moved host or
+// data path) is that lane's: the active lane neither publishes job.json for
+// it nor ingests its producer files; the retiring lane does both, into its
+// own copy.
+func TestJobFilesFollowLaneGeneration(t *testing.T) {
+	ctx := context.Background()
+	f := newJobFilesFixture(t)
+	retiring := newJobFilesLane(t, f.st, "local", t.TempDir())
+	retiring.MarkRetiring()
+	if retiring.Generation() == f.lane.Generation() {
+		t.Fatal("fixture: generations must differ")
+	}
+	if _, err := f.st.DB().ExecContext(ctx, `UPDATE tasks SET target_generation = ?`, retiring.Generation()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.lane.GetTask(ctx, "task"); err == nil {
+		t.Fatal("active lane point read should refuse a retiring generation's task")
+	}
+	if err := os.WriteFile(filepath.Join(f.taskDir, "results.scorer.jsonl"),
+		[]byte(`{"ts":1,"section":"eval","axes":{},"metrics":{"acc":0.9}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f.lane.reconcileJobFiles(ctx, true, true)
+	if _, err := os.Stat(filepath.Join(f.jobDir, "job.json")); !os.IsNotExist(err) {
+		t.Fatalf("active lane published job.json for another generation's versions: %v", err)
+	}
+	if rows, err := f.st.ListResultRecords(ctx, "job"); err != nil || len(rows) != 0 {
+		t.Fatalf("active lane ingested another generation's producer results: %+v, %v", rows, err)
+	}
+
+	retiring.reconcileJobFiles(ctx, true, true)
+	snap := readSnapshot(t, f.jobDir)
+	if snap.PublishedFor != (JobSnapshotCopy{Target: "local", Generation: retiring.Generation()}) {
+		t.Fatalf("published_for = %+v", snap.PublishedFor)
+	}
+	for _, task := range snap.Tasks {
+		if task.Generation != retiring.Generation() {
+			t.Fatalf("task generation = %+v", task)
+		}
+	}
+	if rows, err := f.st.ListResultRecords(ctx, "job"); err != nil || len(rows) != 1 || rows[0].TaskID != "task@scorer" {
+		t.Fatalf("retiring lane did not ingest its version's producer results: %+v, %v", rows, err)
+	}
+}
+
+// An experiment on two targets has a job.json copy on each; each copy is
+// rewritten only when its own content changes, not every pass.
+func TestJobFilesCopyPerTarget(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	a := newJobFilesLane(t, st, "a", t.TempDir())
+	b := newJobFilesLane(t, st, "b", t.TempDir())
+	if err := st.InsertJob(ctx, &store.JobRow{ID: "job", ProjectName: "project", Name: "sweep", ConfigJSON: "{}",
+		Status: "done", TotalTasks: 2, Target: "a", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	dirs := map[string]string{}
+	for _, lane := range []*SSHBackend{a, b} {
+		name := lane.targetName
+		dirs[name] = filepath.Join(lane.backend.Cfg.Workspace, "job")
+		taskDir := filepath.Join(dirs[name], "tk"+name)
+		if err := os.MkdirAll(taskDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.InsertTask(ctx, &store.TaskRow{ID: "tk" + name, RunName: "R" + name, JobID: "job", ProjectName: "project",
+			Command: "true", ParamsJSON: "{}", Status: "success", Target: name, BatchSeq: 1,
+			TargetGeneration: lane.Generation(), TaskDir: taskDir, EnqueuedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pass := func() {
+		a.reconcileJobFiles(ctx, true, false)
+		b.reconcileJobFiles(ctx, true, false)
+	}
+	pass()
+	for name, dir := range dirs {
+		if snap := readSnapshot(t, dir); snap.PublishedFor.Target != name || len(snap.Tasks) != 2 {
+			t.Fatalf("copy on %s: %+v", name, snap)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "job.json"), []byte("sentinel"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pass()
+	for name, dir := range dirs {
+		if raw, _ := os.ReadFile(filepath.Join(dir, "job.json")); string(raw) != "sentinel" {
+			t.Fatalf("unchanged copy on %s rewritten", name)
+		}
+	}
+	if _, err := st.RenameJob(ctx, "job", "sweep v2"); err != nil {
+		t.Fatal(err)
+	}
+	pass()
+	for name, dir := range dirs {
+		if snap := readSnapshot(t, dir); snap.Job.Name != "sweep v2" {
+			t.Fatalf("changed copy on %s not republished: %+v", name, snap.Job)
+		}
+	}
+}

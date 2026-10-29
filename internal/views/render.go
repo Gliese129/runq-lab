@@ -586,6 +586,24 @@ func Render(s Spec, in Input, now int64) (*Result, error) {
 	}
 	return out, nil
 }
+
+// KeepsCell reports whether the view's filter keeps a cell with these
+// params and name. Only the keys a cell decides (param.<name>, cell)
+// count: filters on result axes apply per record in Render. Curves and
+// animation frames scope their versions with it, as the table's rows are.
+func (s Spec) KeepsCell(params map[string]any, cell string) bool {
+	vals := map[string]any{CellKey: cell}
+	for k, v := range params {
+		vals["param."+k] = v
+	}
+	filter := map[string][]any{}
+	for k, options := range s.Filter {
+		if isCellKey(k) {
+			filter[k] = options
+		}
+	}
+	return matches(vals, filter)
+}
 func matches(values map[string]any, filter map[string][]any) bool {
 	for k, options := range filter {
 		ok := false

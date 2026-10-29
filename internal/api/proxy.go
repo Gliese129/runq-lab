@@ -535,6 +535,17 @@ func (p *Proxy) KillJob(ctx context.Context, jobID string) error {
 	return p.do(ctx, "POST", "/api/v1/jobs/"+url.PathEscape(jobID)+"/kill", nil, nil)
 }
 
+// KillJobOnTarget kills only the experiment's versions on target; the
+// service refuses (409) when it has none there. TargetFilter is a query
+// scope and never narrows a kill by itself — callers pass the target.
+func (p *Proxy) KillJobOnTarget(ctx context.Context, jobID, target string) error {
+	path := "/api/v1/jobs/" + url.PathEscape(jobID) + "/kill"
+	if target != "" {
+		path += "?" + url.Values{"target": {target}}.Encode()
+	}
+	return p.do(ctx, "POST", path, nil, nil)
+}
+
 // ── Submit: only through a draft (POST /drafts, /drafts/{id}/submit) ──
 
 // errDraftOnly: the service takes jobs from drafts only; the CLI never

@@ -6,6 +6,7 @@ The prefix ContextVar lives in :mod:`runq._prefix` to dodge the
 from __future__ import annotations
 
 import functools
+import inspect
 
 from ._prefix import _prefix_stack
 
@@ -23,10 +24,14 @@ def log_group(prefix: str):
         with runq.log_group("train"):
             runq.log({"loss": l})   # key → "train/loss"
 
-        # Decorator
+        # Decorator — plain, ``async def`` and async generator functions
         @runq.log_group("train")
         def train_one_epoch():
             runq.log({"loss": l})   # key → "train/loss"
+
+        @runq.log_group("eval")
+        async def evaluate():
+            runq.log({"loss": await score()})   # key → "eval/loss"
 
     Nesting composes — inner prefixes append with ``/`` separator::
 
@@ -54,7 +59,9 @@ def log_group(prefix: str):
     ``__call__`` against ``_prefix_stack`` via ``ContextVar.set`` +
     ``ContextVar.reset`` tokens. The decorator path constructs a fresh
     ``_LogGroup`` per invocation so concurrent calls don't clobber
-    each other's tokens.
+    each other's tokens. An ``async def`` function holds the group
+    across its awaits; an async generator holds it while its body runs
+    (each step), not while the consumer handles a yielded item.
     """
     if not isinstance(prefix, str):
         raise TypeError(
@@ -83,6 +90,35 @@ class _LogGroup:
         return False
     def __call__(self, fn):
         pfx = self._prefix
+        if inspect.isasyncgenfunction(fn):
+            @functools.wraps(fn)
+            async def agen_wrapper(*args, **kwargs):
+                agen = fn(*args, **kwargs)
+                step, arg = agen.asend, None
+                try:
+                    while True:
+                        with _LogGroup(pfx):
+                            try:
+                                item = await step(arg)
+                            except StopAsyncIteration:
+                                return
+                        try:
+                            arg = yield item
+                            step = agen.asend
+                        except GeneratorExit:
+                            raise
+                        except BaseException as e:  # athrow() into the body
+                            step, arg = agen.athrow, e
+                finally:
+                    with _LogGroup(pfx):
+                        await agen.aclose()
+            return agen_wrapper
+        if inspect.iscoroutinefunction(fn):
+            @functools.wraps(fn)
+            async def async_wrapper(*args, **kwargs):
+                with _LogGroup(pfx):
+                    return await fn(*args, **kwargs)
+            return async_wrapper
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
             # Fresh CM per call so concurrent invocations don't

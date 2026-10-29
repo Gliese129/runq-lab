@@ -18,7 +18,7 @@ type viewSourceLock struct {
 	completed time.Time
 }
 
-func (s *Server) resolveViewSources(r *http.Request, st *store.Store, v *store.SavedView, input views.Input, result *views.Result) error {
+func (s *Server) resolveViewSources(r *http.Request, st *store.Store, v *store.SavedView, scope *store.ViewScope, input views.Input, result *views.Result) error {
 	if len(v.Spec.Sources) == 0 {
 		return nil
 	}
@@ -64,11 +64,7 @@ func (s *Server) resolveViewSources(r *http.Request, st *store.Store, v *store.S
 			}
 			result.Data[name] = views.Data{State: state, UpdatedAt: ts, Value: rendered.Rows}
 		case "report":
-			spec := v.Spec
-			if ids := r.URL.Query()["job"]; len(ids) > 0 {
-				spec.Jobs = ids
-			}
-			value, err := s.viewSeries(r.Context(), spec, input, source.Metric, source.Points, nil)
+			value, err := s.viewSeries(r.Context(), scope, source.Metric, source.Points, nil)
 			if err != nil {
 				return err
 			}
