@@ -6,6 +6,7 @@ package backend
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -442,7 +443,7 @@ func TestResultsGroupBySectionAndProducer(t *testing.T) {
 func TestResultsFlattenEst(t *testing.T) {
 	st := seedResultsStore(t, "t1")
 	insertRecords(t, st, "t1", [][2]string{
-		{`{"k":1}`, `{"acc":{"value":0.5,"stderr":0.04,"n":125,"ci95":[0.42,0.58],"show":["STDERR"]},"loss":1.5}`},
+		{`{"k":1}`, `{"loss":1.5,"acc":{"value":0.5,"stderr":0.04,"n":125,"ci95":[0.42,0.58],"show":["STDERR"]}}`},
 	}, 100)
 	res, err := jobResultsFromDB(context.Background(), st, "j1")
 	if err != nil {
@@ -454,5 +455,9 @@ func TestResultsFlattenEst(t *testing.T) {
 		if len(col) != 1 || col[0] == nil || *col[0] != v {
 			t.Errorf("%s = %v, want %v", k, col, v)
 		}
+	}
+	// As written, an estimate's parts right after it.
+	if got := strings.Join(res.Schema.Metrics, ","); got != "loss,acc,acc.stderr,acc.n,acc.ci95_lo,acc.ci95_hi" {
+		t.Errorf("metric order %s", got)
 	}
 }

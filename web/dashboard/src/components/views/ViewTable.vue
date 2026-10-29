@@ -159,6 +159,7 @@ const rowMeta = computed(() => {
 
 function cellTitle(cell: ViewCell): string {
   const parts: string[] = []
+  if (cell.exact) parts.push(cell.exact)
   if (cell.n !== undefined) parts.push(`n = ${cell.n}`)
   if (cell.contributors?.length) parts.push(cell.contributors.map((c) => c.source_id).join(', '))
   return parts.join('\n')

@@ -266,6 +266,7 @@ func (s *Store) ViewInput(ctx context.Context, spec views.Spec, override []strin
 				if err := json.Unmarshal([]byte(r.MetricsJSON), &v.Metrics); err != nil {
 					return in, err
 				}
+				v.MetricOrder = ObjectKeys(r.MetricsJSON)
 				if r.IndexJSON != "" {
 					_ = json.Unmarshal([]byte(r.IndexJSON), &v.Index)
 				}

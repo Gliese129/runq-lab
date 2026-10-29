@@ -38,8 +38,9 @@ Each (scoring script, section) gets a view laid out from the rows themselves:
 
 Several cells add their varying params as row keys (rows grouped by metric, then
 cell; `cell` too when two cells share every param). Every value prints with its own `show` (± stderr, ± std, [CI95], n), `unit`
-(pct) and `better` (the best cell per metric and column is bold), rounded to the
-error's second significant digit (`43.0% ± 2.3%`).
+(pct) and `better` (the best cell per metric and column is bold): the value in
+full, the error with two significant digits (`43.05% ± 2.3%`; hover shows it in
+full). Metrics keep the order of the section's first call.
 `runq view --experiment <ex…> --spec` prints these views as view YAML (with
 `producer:` naming whose rows they read) — save one,
 edit it (e.g. `format: pct2` on a column for fixed decimals), then `runq view <file>`.

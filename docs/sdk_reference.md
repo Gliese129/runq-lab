@@ -133,7 +133,9 @@ runq.result({"准确率": stats.pass_at_k(correct, unit=stats.PCT)}, section="Po
 ```
 
 Omitting `section` derives `auto-<8 SHA1 hex>` from sorted axis and metric key
-names. The first record freezes each source/section's keys: supply the same keys
+names. The first record freezes each source/section's keys (metrics in the order
+it gives them; tables list them that way, and a later call may give them in any
+order): supply the same keys
 every time, using `None` for unknown values. Missing keys become null; new keys
 are ignored with a warning. Axis values are strings, booleans, finite numbers
 or null; values are finite numbers, null, or `runq.stats` estimates. Across

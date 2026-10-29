@@ -138,7 +138,8 @@ def result(values: dict | None = None, *, section: str | None = None, **axes) ->
     section :
         Explicit section name, or a hash of the axis and metric key names.
         First keys are frozen: missing keys become null, extra keys warn and
-        are ignored. Step is excluded from the signature.
+        are ignored. Step is excluded from the signature. Metrics keep the
+        order of the section's first call; tables list them that way.
     **axes :
         Identity / coordinate keys for this datapoint, e.g.
         ``model="baseline-8b"``, ``step=2000``, ``data="dclm"``. Values
@@ -194,9 +195,10 @@ class _ResultsWriter:
                         old = json.loads(line)
                         name = old.get("section")
                         if name and name not in self.schemas:
+                            keys = old.get("section_keys") or {}
                             self.schemas[name] = [
                                 sorted(k for k in old.get("axes", {}) if k != "step"),
-                                sorted(old.get("metrics", {})),
+                                list(keys.get("metrics") or old.get("metrics", {})),
                             ]
                     except (ValueError, TypeError, AttributeError):
                         continue
@@ -259,17 +261,19 @@ class _ResultsWriter:
             kept_axes["step"] = current_step
 
         axis_keys = sorted(k for k in kept_axes if k != "step")
-        metric_keys = sorted(kept_metrics)
+        # Metrics keep the order of the section's first call: tables list
+        # them as written. The section's name and its key check ignore order.
+        metric_keys = list(kept_metrics)
         signature = [axis_keys, metric_keys]
         if section is None:
-            raw = json.dumps(signature, separators=(",", ":"), ensure_ascii=False)
+            raw = json.dumps([axis_keys, sorted(metric_keys)], separators=(",", ":"), ensure_ascii=False)
             section = "auto-" + hashlib.sha1(raw.encode()).hexdigest()[:8]
         elif not isinstance(section, str) or not section.strip():
             warnings.warn("runq.result: section must be a non-empty string", stacklevel=stacklevel)
             return
         schemas = self.schemas if self.schemas is not None else self._load_schemas()
         frozen = schemas.setdefault(section, signature)
-        if frozen != signature:
+        if frozen[0] != axis_keys or set(frozen[1]) != set(metric_keys):
             warning = (section, "schema")
             if warning not in self.warned:
                 warnings.warn(f"runq.result: section {section!r} keys changed; missing keys become null, new keys are ignored", stacklevel=stacklevel)

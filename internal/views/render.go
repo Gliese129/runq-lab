@@ -21,7 +21,10 @@ type Record struct {
 	// pass@k): the default view lays out and plots along these only.
 	Index   []string       `json:"index,omitempty"`
 	Metrics map[string]any `json:"metrics"`
-	Params  map[string]any `json:"params,omitempty"`
+	// MetricOrder is the order the writer gave Metrics (runq.result keeps
+	// a section's first call's order); default views list metrics in it.
+	MetricOrder []string       `json:"metric_order,omitempty"`
+	Params      map[string]any `json:"params,omitempty"`
 	// Cell is the name of the cell the record's version belongs to: its
 	// identity, which params alone are not (two cells may share them).
 	Cell string `json:"cell,omitempty"`
@@ -82,8 +85,11 @@ type Cell struct {
 	Lo     *float64 `json:"lo,omitempty"`
 	Hi     *float64 `json:"hi,omitempty"`
 	// CILo / CIHi are an estimate's 95% interval, shown or not.
-	CILo         *float64      `json:"ci95_lo,omitempty"`
-	CIHi         *float64      `json:"ci95_hi,omitempty"`
+	CILo *float64 `json:"ci95_lo,omitempty"`
+	CIHi *float64 `json:"ci95_hi,omitempty"`
+	// Exact is an estimate's text in full decimal when Text rounds its
+	// error (the dashboard shows it on hover).
+	Exact        string        `json:"exact,omitempty"`
 	Contributors []Contributor `json:"contributors,omitempty"`
 }
 type Row struct {

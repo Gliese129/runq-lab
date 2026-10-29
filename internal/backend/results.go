@@ -37,9 +37,10 @@ type resultRec struct {
 	ts       int64
 	axes     map[string]any // float64 | string | bool | (non-scalar → nulled)
 	metrics  map[string]any
-	identity string // internal TYPED grouping key (see identityKey)
-	label    string // display projection → schema.groups[].key
-	order    int    // ingest order within the query (ties stay stable)
+	keys     []string // metrics' keys as written (before flattenEst)
+	identity string   // internal TYPED grouping key (see identityKey)
+	label    string   // display projection → schema.groups[].key
+	order    int      // ingest order within the query (ties stay stable)
 }
 
 // axisType classifies one JSON value: "num" / "str" / "bool", "" = non-scalar.
@@ -107,7 +108,7 @@ func jobResultsFromDB(ctx context.Context, st *store.Store, jobID string) (*JobR
 		if producer != "" { // a script's results for this task (runq.job())
 			axes["producer"] = producer
 		}
-		rec := &resultRec{taskID: taskID, ts: row.TS, axes: axes, metrics: flattenEst(metrics), order: i}
+		rec := &resultRec{taskID: taskID, ts: row.TS, axes: axes, metrics: flattenEst(metrics), keys: store.ObjectKeys(row.MetricsJSON), order: i}
 		rec.identity, rec.label = identityKey(axes["model"], taskID)
 		// A section or a scoring script is its own series: two producers
 		// scoring one model must not collapse into one "latest" row.
@@ -188,18 +189,28 @@ func jobResultsFromDB(ctx context.Context, st *store.Store, jobID string) (*JobR
 		winner[k] = best
 	}
 
-	// ---- metric key discovery (sorted: stable display order) ----
+	// ---- metric key discovery (as written: an est's parts follow it) ----
 	metricSeen := map[string]bool{}
 	metricKeys := []string{}
 	for _, rec := range recs {
+		rest := make([]string, 0, len(rec.metrics))
 		for k := range rec.metrics {
-			if !metricSeen[k] {
+			rest = append(rest, k)
+		}
+		sort.Strings(rest)
+		ordered := []string{}
+		for _, k := range rec.keys {
+			for _, part := range []string{"", ".std", ".stderr", ".n", ".ci95_lo", ".ci95_hi"} {
+				ordered = append(ordered, k+part)
+			}
+		}
+		for _, k := range append(ordered, rest...) {
+			if _, ok := rec.metrics[k]; ok && !metricSeen[k] {
 				metricSeen[k] = true
 				metricKeys = append(metricKeys, k)
 			}
 		}
 	}
-	sort.Strings(metricKeys)
 
 	// ---- x candidacy: numeric axis varying within at least one series ----
 	numVal := func(rec *resultRec, k string) (float64, bool) {

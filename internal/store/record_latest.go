@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -48,6 +49,49 @@ func RecordIdentity(r ResultRecordRow) (section, identity string, step *float64,
 	}
 	return
 }
+
+// ObjectKeys lists the keys of a JSON object in the order they are written
+// (nil when raw is not an object): a section's metrics keep the order the
+// SDK wrote them in.
+func ObjectKeys(raw string) []string {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil
+	}
+	var out []string
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return nil
+		}
+		k, _ := t.(string)
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return nil
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
+// orderedObject is m as a JSON object with its keys in order.
+func orderedObject(order []string, m map[string]any) string {
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, k := range order {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		key, _ := json.Marshal(k)
+		val, _ := json.Marshal(m[k])
+		b.Write(key)
+		b.WriteByte(':')
+		b.Write(val)
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
 func recordKeys(m map[string]any) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -96,12 +140,25 @@ func upsertLatest(ctx context.Context, tx *sql.Tx, r ResultRecordRow) error {
 	for _, k := range fm {
 		outMetrics[k] = metrics[k]
 	}
+	// The frozen metrics in the order the record wrote them; frozen ones it
+	// left out (null) go last.
+	order := []string{}
+	for _, k := range ObjectKeys(r.MetricsJSON) {
+		if _, ok := outMetrics[k]; ok && !slices.Contains(order, k) {
+			order = append(order, k)
+		}
+	}
+	for _, k := range fm {
+		if !slices.Contains(order, k) {
+			order = append(order, k)
+		}
+	}
 	key, _ := json.Marshal(id)
 	if v, ok := axes["step"]; ok {
 		id["step"] = v
 	}
 	aJSON, _ = json.Marshal(id)
-	mJSON, _ = json.Marshal(outMetrics)
+	mJSON = []byte(orderedObject(order, outMetrics))
 	index := r.IndexJSON
 	if index == "" {
 		index = "[]"

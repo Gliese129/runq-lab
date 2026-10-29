@@ -36,12 +36,16 @@ Several cells add their varying params as row keys, so rows group by metric,
 then cell; when two cells share every param (a rerun under another name), the
 `cell` key (the cell's name) is added so both rows stay. Each value prints with its own `show` (± std, ± stderr, [CI95], n),
 `unit` (pct: ×100 with %, the decimal point moved in the digits) and `better`
-(the best cell per metric and column in bold), rounded to the place of the
-error's second significant digit: `43.0% ± 2.3%`, `1235 ± 23` (the error is
-the stderr, else the shown std or CI half-width; a value without one prints in
-full decimal). In the
+(the best cell per metric and column in bold). The value prints in full
+decimal and its error with two significant digits: `43.05% ± 2.3%`,
+`1234.567 ± 23`; a CI's bounds go to the place of its half-width's second
+digit (`43% [38.5%, 47.5%]`). Hovering the value (table cell or chart point)
+shows the error in full. A column `format` (e.g. `pct1`) prints every number in
+the cell its way. Metrics list in the order the writer first gave them. In the
 dashboard (Results → By section) hovering a table cell marks the chart point and
-the other way round; each block copies as LaTeX / Markdown / CSV.
+the other way round; each block copies as LaTeX / Markdown (the same text as
+the table) or CSV (every number in full, the error's parts in columns of their
+own).
 
 A default view reads one writer's rows: its spec says `producer: ""` (the
 versions' own `runq.result`) or `producer: <script>`; a saved view without
@@ -54,7 +58,8 @@ renders it like any view.
 
 An omitted section is `auto-<8 SHA1 hex>`, hashing the compact JSON pair of sorted
 axis and metric key lists. Explicit names are easier to maintain in views.
-The first record freezes the keys for each source/section. Always send all keys;
+The first record freezes the keys for each source/section (metrics in the order
+it gives them, which tables keep). Always send all keys;
 use null for unknown values. Missing keys become null; extra keys warn and are
 ignored. A newer snapshot never borrows missing fields from an older snapshot.
 

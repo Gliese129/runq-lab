@@ -77,15 +77,13 @@ func DefaultSpecs(project string, in Input, varying []string) (specs []Spec, gro
 		if len(jobs) == 1 {
 			spec.Jobs = jobs
 		}
-		axes, metrics, params, index := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+		axes, params, index := map[string]bool{}, map[string]bool{}, map[string]bool{}
+		metrics := metricOrder(records)
 		for _, r := range records {
 			for k := range r.Axes {
 				if k != "step" {
 					axes[k] = true
 				}
-			}
-			for k := range r.Metrics {
-				metrics[k] = true
 			}
 			for k := range r.Params {
 				params[k] = true
@@ -112,7 +110,7 @@ func DefaultSpecs(project string, in Input, varying []string) (specs []Spec, gro
 			cells = append(cells, CellKey)
 		}
 		spec.Rows = append(append(append([]string{}, plainAxes...), indexAxes...), cells...)
-		for _, m := range keys(metrics) {
+		for _, m := range metrics {
 			// Section-qualified: a metric may share its name with an axis.
 			spec.Columns = append(spec.Columns, Column{Name: m, Value: "`" + g.section + "." + m + "`"})
 		}
@@ -127,10 +125,10 @@ func DefaultSpecs(project string, in Input, varying []string) (specs []Spec, gro
 			spec.MetricRows = byMetric
 			color := append(append([]string{}, plainAxes...), cells...)
 			if len(color) == 0 && byMetric {
-				ys := keys(metrics)
+				ys := metrics
 				spec.Charts = []map[string]any{{"template": "sweep", "x": axis, "y": ys, "color": MetricKey}}
 			} else {
-				for _, m := range keys(metrics) {
+				for _, m := range metrics {
 					chart := map[string]any{"template": "sweep", "x": axis, "y": m}
 					if len(color) > 0 {
 						chart["color"] = slotValue(color)
@@ -148,6 +146,32 @@ func DefaultSpecs(project string, in Input, varying []string) (specs []Spec, gro
 // paramsSeparate reports whether the param keys tell every two cells in
 // records apart. Cells may share all their params (a rerun under another
 // name); then the cell's name has to be a row key too.
+// metricOrder lists the records' metrics in the order they were written:
+// each record's MetricOrder (its keys sorted when it has none), first
+// appearance across records.
+func metricOrder(records []Record) []string {
+	out, seen := []string{}, map[string]bool{}
+	for _, r := range records {
+		order := r.MetricOrder
+		if len(order) == 0 {
+			order = keys(r.Metrics)
+		}
+		for _, k := range order {
+			if _, ok := r.Metrics[k]; ok && !seen[k] {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+		for _, k := range keys(r.Metrics) {
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+	}
+	return out
+}
+
 func paramsSeparate(records []Record, keys []string) bool {
 	seen := map[string]string{}
 	for _, r := range records {

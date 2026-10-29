@@ -138,3 +138,43 @@ func TestCurvePinsKeepOrderPerProject(t *testing.T) {
 		t.Fatalf("another project's pins = %v", other)
 	}
 }
+
+// A record's metrics keep the order they were written in; the section's
+// key check does not care about order.
+func TestRecordLatestKeepsMetricOrder(t *testing.T) {
+	st, ctx := seedRecordJob(t)
+	rows := []ResultRecordRow{
+		rec(1, `{"split":"a"}`, `{"准确率":0.5,"交付率":{"value":0.4,"stderr":0.01},"b":1}`),
+		rec(2, `{"split":"b"}`, `{"准确率":0.6,"b":2}`), // 交付率 left out: null, last
+	}
+	if err := st.ApplyResultsIngestDelta(ctx, "t1", false, rows, len(rows), FileIngestMark{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ListResultRecords(ctx, "j")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("rows = %d", len(got))
+	}
+	if k := strings.Join(ObjectKeys(got[0].MetricsJSON), ","); k != "准确率,交付率,b" {
+		t.Fatalf("first record keys %s (%s)", k, got[0].MetricsJSON)
+	}
+	if k := strings.Join(ObjectKeys(got[1].MetricsJSON), ","); k != "准确率,b,交付率" {
+		t.Fatalf("second record keys %s", k)
+	}
+	var warning string
+	_ = st.DB().QueryRowContext(ctx, `SELECT warning FROM record_schema WHERE source_id='t1'`).Scan(&warning)
+	if !strings.Contains(warning, "keys changed") {
+		t.Fatalf("a left-out key still warns: %q", warning)
+	}
+	rows = []ResultRecordRow{rec(3, `{"split":"c"}`, `{"b":3,"交付率":0.1,"准确率":0.2}`)}
+	st2, ctx2 := seedRecordJob(t)
+	if err := st2.ApplyResultsIngestDelta(ctx2, "t1", false, append([]ResultRecordRow{rec(1, `{"split":"a"}`, `{"准确率":0.5,"交付率":0.4,"b":1}`)}, rows...), 2, FileIngestMark{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = st2.DB().QueryRowContext(ctx2, `SELECT warning FROM record_schema WHERE source_id='t1'`).Scan(&warning)
+	if warning != "" {
+		t.Fatalf("the same keys in another order are no change: %q", warning)
+	}
+}

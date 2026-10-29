@@ -43,8 +43,9 @@ func asEst(v any) (map[string]any, bool) {
 
 // applyEst fills a cell from an estimate: its value, spread and the error
 // it shows. format (the column's) wins over the estimate's unit; without
-// one, every number in the cell is rounded to the place of the error's
-// second significant digit (errorDecimals).
+// one, the value prints in full decimal and its error with two significant
+// digits (43.05319148936170% ± 2.3%; a CI's bounds to the place of its
+// half-width's second digit), and Exact holds the same text in full.
 func applyEst(cell *Cell, est map[string]any, format string, now int64) error {
 	value, ok := est["value"].(float64)
 	cell.Value = nil
@@ -80,21 +81,30 @@ func applyEst(cell *Cell, est map[string]any, format string, now int64) error {
 	}
 	cell.Value = value
 	pct := cell.Unit == "pct"
-	decimals, rounded := errorDecimals(est, cell, pct)
-	num := func(v float64) (string, error) {
-		switch {
-		case format != "":
-			return Format(v, format, now)
-		case rounded:
-			return fixed(v, decimals, pct), nil
-		case pct:
-			return PlainPct(v), nil
+	full := func(v float64) string {
+		if pct {
+			return PlainPct(v)
 		}
-		return Plain(v), nil
+		return Plain(v)
 	}
-	text, err := num(value)
-	if err != nil {
-		return err
+	// errText prints v, an error whose second significant digit sits at
+	// the place of err.
+	errText := func(v, err float64) (string, error) {
+		if format != "" {
+			return Format(v, format, now)
+		}
+		if d, ok := sigDecimals(err, pct); ok {
+			return fixed(v, d, pct), nil
+		}
+		return full(v), nil
+	}
+	text, exact := full(value), full(value)
+	if format != "" {
+		t, err := Format(value, format, now)
+		if err != nil {
+			return err
+		}
+		text = t
 	}
 	for _, s := range cell.Show {
 		var lo, hi float64
@@ -108,59 +118,46 @@ func applyEst(cell *Cell, est map[string]any, format string, now int64) error {
 				continue
 			}
 			lo, hi = value-*spread, value+*spread
-			t, err := num(*spread)
+			t, err := errText(*spread, *spread)
 			if err != nil {
 				return err
 			}
 			text += " ± " + t
+			exact += " ± " + full(*spread)
 		case "CI95":
-			bounds, ok := est["ci95"].([]any)
-			if !ok || len(bounds) != 2 {
+			if cell.CILo == nil || cell.CIHi == nil {
 				continue
 			}
-			l, lok := bounds[0].(float64)
-			h, hok := bounds[1].(float64)
-			if !lok || !hok {
-				continue
-			}
-			lo, hi = l, h
-			lt, err := num(l)
+			lo, hi = *cell.CILo, *cell.CIHi
+			half := (hi - lo) / 2
+			lt, err := errText(lo, half)
 			if err != nil {
 				return err
 			}
-			ht, _ := num(h)
+			ht, _ := errText(hi, half)
 			text += " [" + lt + ", " + ht + "]"
+			exact += " [" + full(lo) + ", " + full(hi) + "]"
 		default:
 			continue
 		}
 		cell.Lo, cell.Hi = &lo, &hi
 	}
 	if contains(cell.Show, "N") && cell.N != nil {
-		text += fmt.Sprintf(" (n=%d)", *cell.N)
+		n := fmt.Sprintf(" (n=%d)", *cell.N)
+		text += n
+		exact += n
 	}
 	cell.Text = text
+	if exact != text {
+		cell.Exact = exact
+	}
 	return nil
 }
 
-// errorDecimals is the decimal place (in the printed unit, so ×100 for a
-// pct) of the error's second significant digit: the value's stderr, else
-// the spread or CI half-width it shows. false when it has no error.
-func errorDecimals(est map[string]any, cell *Cell, pct bool) (int, bool) {
-	err := 0.0
-	switch {
-	case cell.SEM != nil:
-		err = *cell.SEM
-	case cell.Std != nil && contains(cell.Show, "STD"):
-		err = *cell.Std
-	default:
-		if b, ok := est["ci95"].([]any); ok && len(b) == 2 {
-			l, lok := b[0].(float64)
-			h, hok := b[1].(float64)
-			if lok && hok {
-				err = (h - l) / 2
-			}
-		}
-	}
+// sigDecimals is the decimal place (in the printed unit, so ×100 for a
+// pct) of err's second significant digit; false when err is not a
+// positive finite number.
+func sigDecimals(err float64, pct bool) (int, bool) {
 	if pct {
 		err *= 100
 	}

@@ -17,7 +17,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { ChartSpec, ViewResult } from '@/types/views'
+import type { ChartSpec, ViewCell, ViewResult } from '@/types/views'
 import XYFrame from './XYFrame.vue'
 import { DASHES, MARKERS, linear, logScale, markerPath, tickLabel, type WidthPreset } from './chartGeom'
 import { useChartTheme } from './chartGeom'
@@ -83,11 +83,14 @@ function colorLabel(c: unknown): string {
   return `${keyLabel(keys[0])} = ${formatKey(c, props.result.key_formats?.[keys[0]])}`
 }
 
+// A point's tooltip gives the estimate's error in full.
+const pointText = (cell?: ViewCell) => cell?.exact || cell?.text || ''
+
 const series = computed(() => colors.value.map((c) => {
   const ps = pts.value.filter((p) => p.color === c).sort((a, b) => (a.x as number) - (b.x as number))
   const at = ps.map((p) => ({
     px: x.value(p.x as number), py: y.value(p.y!), lo: y.value(lo(p)), hi: y.value(hi(p)), row: p.row, col: p.col,
-    title: `${colorLabel(c)} · ${keyLabel(xKey.value)} = ${formatKey(p.x)}: ${props.result.rows[p.row]?.cells[p.col]?.text ?? ''}`,
+    title: `${colorLabel(c)} · ${keyLabel(xKey.value)} = ${formatKey(p.x)}: ${pointText(props.result.rows[p.row]?.cells[p.col])}`,
   }))
   const line = at.map((p, i) => `${i ? 'L' : 'M'}${p.px},${p.py}`).join('')
   const hasErr = ps.some((p) => p.err || p.lo !== null)

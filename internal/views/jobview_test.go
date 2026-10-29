@@ -87,11 +87,11 @@ func TestDefaultViewOneIndexSeveralCells(t *testing.T) {
 		t.Fatalf("columns = %v", names)
 	}
 	first := r.Rows[0]
-	if first.Key["metric"] != "交付率" || first.Key["param.model"] != "A1" || first.Cells[0].Text != "45.0% ± 3.0%" {
+	if first.Key["metric"] != "交付率" || first.Key["param.model"] != "A1" || first.Cells[0].Text != "45% ± 3.0%" {
 		t.Fatalf("first row %v: %q", first.Key, first.Cells[0].Text)
 	}
 	acc := r.Rows[7] // 准确率, base-ja (rows sort by their keys in rows order: A1-en, A1-ja, base-en, base-ja)
-	if acc.Key["metric"] != "准确率" || acc.Cells[2].Text != "50.0% ± 4.0%" || *acc.Cells[2].Lo != 0.46 || acc.Cells[2].Rank != 0 {
+	if acc.Key["metric"] != "准确率" || acc.Cells[2].Text != "50% ± 4.0%" || *acc.Cells[2].Lo != 0.46 || acc.Cells[2].Rank != 0 {
 		t.Fatalf("准确率 base-ja k=4: %+v", acc.Cells[2])
 	}
 	if best := r.Rows[5]; best.Key["param.model"] != "A1" || best.Key["param.lang"] != "ja" || best.Cells[0].Rank != 1 {
@@ -129,26 +129,27 @@ func TestDefaultViewOneIndexOneCellAndTwoIndexes(t *testing.T) {
 	}
 }
 
-// Without a column format an estimate is rounded to its error's second
-// significant digit; every number in the cell shares that place.
-func TestEstRoundsToError(t *testing.T) {
+// Without a column format an estimate's value prints in full and its error
+// with two significant digits (a CI's bounds to the half-width's place);
+// Exact keeps every digit for the hover.
+func TestEstErrorTwoDigits(t *testing.T) {
 	cases := []struct {
-		est  map[string]any
-		want string
+		est         map[string]any
+		want, exact string
 	}{
-		{est(0.4305, 0.02298553191508421, 125), "43.0% ± 2.3%"},
-		{map[string]any{"value": 1234.567, "stderr": 23.456, "show": []any{"STDERR"}}, "1235 ± 23"},
-		{map[string]any{"value": 12345.0, "stderr": 234.0, "show": []any{"STDERR", "N"}, "n": 9.0}, "12350 ± 230 (n=9)"},
-		{map[string]any{"value": 0.5, "stderr": 0.0996, "show": []any{"STDERR"}}, "0.50 ± 0.10"},
-		{map[string]any{"value": 0.43, "stderr": 0.0228, "ci95": []any{0.3853, 0.4747}, "show": []any{"CI95"}, "unit": "pct"}, "43.0% [38.5%, 47.5%]"},
-		{map[string]any{"value": 0.43, "std": 0.2547, "show": []any{"STD"}, "unit": "pct"}, "43% ± 25%"},
-		{map[string]any{"value": 0.4305, "show": []any{}, "unit": "pct"}, "43.05%"},
-		{map[string]any{"value": -0.00001, "stderr": 0.01, "show": []any{"STDERR"}}, "0.000 ± 0.010"},
+		{est(0.4305, 0.02298553191508421, 125), "43.05% ± 2.3%", "43.05% ± 2.298553191508421%"},
+		{map[string]any{"value": 1234.567, "stderr": 23.456, "show": []any{"STDERR"}}, "1234.567 ± 23", "1234.567 ± 23.456"},
+		{map[string]any{"value": 12345.0, "stderr": 234.0, "show": []any{"STDERR", "N"}, "n": 9.0}, "12345 ± 230 (n=9)", "12345 ± 234 (n=9)"},
+		{map[string]any{"value": 0.5, "stderr": 0.0996, "show": []any{"STDERR"}}, "0.5 ± 0.10", "0.5 ± 0.0996"},
+		{map[string]any{"value": 0.43, "stderr": 0.0228, "ci95": []any{0.3853, 0.4747}, "show": []any{"CI95"}, "unit": "pct"}, "43% [38.5%, 47.5%]", "43% [38.53%, 47.47%]"},
+		{map[string]any{"value": 0.43, "std": 0.2547, "show": []any{"STD"}, "unit": "pct"}, "43% ± 25%", "43% ± 25.47%"},
+		{map[string]any{"value": 0.4305, "show": []any{}, "unit": "pct"}, "43.05%", ""},
+		{map[string]any{"value": -0.00001, "stderr": 0.01, "show": []any{"STDERR"}}, "-0.00001 ± 0.010", "-0.00001 ± 0.01"},
 	}
 	for _, c := range cases {
 		var cell Cell
-		if err := applyEst(&cell, c.est, "", 0); err != nil || cell.Text != c.want {
-			t.Errorf("%v: %q (%v), want %q", c.est, cell.Text, err, c.want)
+		if err := applyEst(&cell, c.est, "", 0); err != nil || cell.Text != c.want || cell.Exact != c.exact {
+			t.Errorf("%v: %q / %q (%v), want %q / %q", c.est, cell.Text, cell.Exact, err, c.want, c.exact)
 		}
 	}
 	var cell Cell
@@ -255,5 +256,34 @@ func TestCSVKeepsEstParts(t *testing.T) {
 	}
 	if !strings.Contains(csv, "value.stderr,value.ci95_lo,value.ci95_hi") || !strings.Contains(csv, ",0.5,,,125,0.04,0.42,0.58") {
 		t.Fatalf("csv:\n%s", csv)
+	}
+}
+
+// Metrics list in the order the writer gave them, not by name.
+func TestDefaultViewKeepsMetricOrder(t *testing.T) {
+	var records []Record
+	for _, c := range []string{"A1", "base"} {
+		for _, k := range []float64{1, 2} {
+			records = append(records, Record{SourceID: "tk-" + c, Cell: c, JobID: "ex1", Section: "PolyMath high", TS: 1,
+				Axes: map[string]any{"k": k}, Index: []string{"k"}, Params: map[string]any{"model": c},
+				Metrics:     map[string]any{"准确率": est(0.5, 0.04, 125), "交付率": est(0.4, 0.03, 125), "a": 1.0},
+				MetricOrder: []string{"准确率", "交付率", "a"}})
+		}
+	}
+	out, specs, err := JobViews("p", Input{Records: records}, []string{"model"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{}
+	for _, r := range out[0].Rows {
+		if m := r.Key["metric"].(string); len(got) == 0 || got[len(got)-1] != m {
+			got = append(got, m)
+		}
+	}
+	if strings.Join(got, ",") != "准确率,交付率,a" {
+		t.Fatalf("row metrics %v", got)
+	}
+	if specs[0].Charts[0]["y"] != "准确率" || specs[0].Columns[0].Name != "准确率" {
+		t.Fatalf("charts %v columns %v", specs[0].Charts, specs[0].Columns)
 	}
 }

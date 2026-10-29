@@ -85,6 +85,27 @@ def test_record_explicit_section_freezes_first_schema(clean_env, tmp_path, monke
     assert second["metrics"] == {"loss": None, "score": 9.0}
 
 
+def test_result_keeps_first_metric_order(clean_env, tmp_path, monkeypatch, recwarn):
+    monkeypatch.chdir(tmp_path)
+    runq.context()
+    runq.result({"准确率": 0.5, "交付率": 0.4, "a": 1}, section="eval", split="x")
+    runq.result({"a": 2, "交付率": 0.3, "准确率": 0.6}, section="eval", split="y")  # same keys: no warning
+    runq.result({"准确率": 0.5, "a": 1}, split="x")
+    runq.result({"a": 1, "准确率": 0.5}, split="y")
+    first, second, auto1, auto2 = _read_records(tmp_path / "runq_results.jsonl")
+    assert first["section_keys"]["metrics"] == ["准确率", "交付率", "a"]
+    assert list(first["metrics"]) == list(second["metrics"]) == ["准确率", "交付率", "a"]
+    # The auto section's name does not depend on the order.
+    assert auto1["section"] == auto2["section"]
+    assert list(auto2["metrics"]) == ["准确率", "a"]
+    assert not [w for w in recwarn if "keys changed" in str(w.message)]
+    # A restarted writer keeps the order the file has.
+    runq._result._reset_for_tests()
+    runq.context()
+    runq.result({"a": 3, "准确率": 0.1, "交付率": 0.2}, section="eval", split="z")
+    assert list(_read_records(tmp_path / "runq_results.jsonl")[-1]["metrics"]) == ["准确率", "交付率", "a"]
+
+
 def test_record_writes_to_results_not_metrics(clean_env, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runq.context()

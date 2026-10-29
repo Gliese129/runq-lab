@@ -44,9 +44,11 @@
 - Results store est values and index axes; a section remembers each metric's
   kind, unit and better and warns when they change. Views print an est by its
   own show / unit / better (bold best per metric and column), and draw its
-  shown error as a band. Without a column `format`, an est prints rounded to
-  its error's second significant digit (`43.0% ± 2.3%`); other numbers stay in
-  full decimal. View spec: `producer` (`""` = the versions' own results, a
+  shown error as a band. Without a column `format`, an est's value prints in
+  full decimal and its error with two significant digits (`43.05% ± 2.3%`; a
+  CI's bounds to the half-width's place); hovering it shows the error in full.
+  Metrics list in the order a section's first `runq.result` call gave them
+  (the SDK freezes that order; files written before keep name order). View spec: `producer` (`""` = the versions' own results, a
   script's name = its results; default views always write it), the `cell` row
   key (a cell's name, added by default views when cells share every param),
   `metric_rows`, chart `y` / `color` lists. CSV adds `.stderr`, `.ci95_lo`,

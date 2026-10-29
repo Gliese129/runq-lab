@@ -50,6 +50,8 @@ export interface ViewCell {
   better?: 'higher' | 'lower'
   lo?: number
   hi?: number
+  /** the estimate's text in full decimal when `text` rounds its error */
+  exact?: string
   contributors?: Contributor[]
 }
 
