@@ -23,6 +23,9 @@ export const qk = {
   view: (project: string, name: string) => ['views', project, name] as const,
   viewRender: (project: string, name: string, jobs: readonly string[]) => ['views', project, name, 'render', ...jobs] as const,
   viewSeries: (project: string, name: string, chart: number, jobs: readonly string[]) => ['views', project, name, 'series', chart, ...jobs] as const,
+  // A job's Results list: the object sits where a view name would, so no
+  // view name (not even "for-job") reads as it.
+  viewsForJob: (project: string, jobId: string, metricKeys: readonly string[]) => ['views', project, { forJob: jobId }, ...metricKeys] as const,
 }
 
 /** Matches the cached view results a change to job id can alter: renders
@@ -32,7 +35,8 @@ export function viewsOfJob(id: string) {
   return (q: { queryKey: readonly unknown[] }) => {
     const k = q.queryKey
     if (k[0] !== 'views') return false
-    if (k[2] === 'for-job') return k[3] === id
+    const forJob = k[2]
+    if (typeof forJob === 'object' && forJob !== null) return (forJob as { forJob?: string }).forJob === id
     const jobs = k[3] === 'render' ? k.slice(4) : k[3] === 'series' ? k.slice(5) : null
     return jobs !== null && (jobs.length === 0 || jobs.includes(id))
   }

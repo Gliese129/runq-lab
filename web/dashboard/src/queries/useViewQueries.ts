@@ -78,7 +78,7 @@ export function useJobViewsQuery(
 ) {
   const qc = useQueryClient()
   return useQuery({
-    queryKey: computed(() => [...qk.views(toValue(project)), 'for-job', toValue(jobId), ...toValue(metricKeys)] as const),
+    queryKey: computed(() => qk.viewsForJob(toValue(project), toValue(jobId), toValue(metricKeys))),
     queryFn: async () => {
       const p = toValue(project)
       const jobs = [toValue(jobId)]

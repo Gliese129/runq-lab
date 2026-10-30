@@ -29,9 +29,11 @@ type Row struct {
 	Params    TaskParams `json:"params"`
 	Command   string     `json:"-"`
 	// Export only: the row's submission ran on another target, or with
-	// other overrides, than the file's (shown as a comment).
-	Target    string     `json:"-"`
-	Overrides *Overrides `json:"-"`
+	// other overrides, than the file's (shown as a comment); Rules are what
+	// its command rendered under (nil: the file's).
+	Rules     *CommandRules `json:"-"`
+	Target    string        `json:"-"`
+	Overrides *Overrides    `json:"-"`
 }
 
 // ReservedRowKeys never become params. cell names the row; run is its

@@ -2023,27 +2023,30 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 		command, target string
 		overrides       *job.Overrides
 		needs           map[string][]string
+		rules           job.CommandRules
 	}
-	snapshot := func(c job.JobConfig, target string) submission {
-		sub := submission{command: c.Command, target: target, overrides: c.Overrides, needs: map[string][]string{}}
+	batches, _ := m.store.ListJobBatches(ctx, j.ID)
+	rules := m.commandRules(ctx, j.ProjectName, batches, j.Target)
+	snapshot := func(c job.JobConfig, raw, target string) submission {
+		sub := submission{command: c.Command, target: target, overrides: c.Overrides, needs: map[string][]string{}, rules: job.SubmittedRules(raw, rules)}
 		for _, tr := range c.Tasks {
 			sub.needs[tr.Run] = tr.NeedsCode
 		}
 		return sub
 	}
-	subs := map[int]submission{1: snapshot(cfg, j.Target)}
+	subs := map[int]submission{1: snapshot(cfg, j.ConfigJSON, j.Target)}
 	latest := 1
-	batches, _ := m.store.ListJobBatches(ctx, j.ID)
 	for _, b := range batches {
-		bc := cfg
+		bc, raw := cfg, j.ConfigJSON
 		if b.ConfigJSON != "" {
+			raw = b.ConfigJSON
 			bc = job.JobConfig{}
 			_ = json.Unmarshal([]byte(b.ConfigJSON), &bc)
 		}
 		if b.Command != "" {
 			bc.Command = b.Command
 		}
-		subs[b.Seq] = snapshot(bc, b.Target)
+		subs[b.Seq] = snapshot(bc, raw, b.Target)
 		latest = max(latest, b.Seq)
 	}
 	type exported struct {
@@ -2071,7 +2074,7 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 	for i, p := range picked {
 		sub := subs[p.seq]
 		r := p.row
-		r.NeedsCode, r.Command = sub.needs[r.Run], sub.command
+		r.NeedsCode, r.Command, r.Rules = sub.needs[r.Run], sub.command, &sub.rules
 		if r.Command == "" && file.command != "" {
 			r.Command = "(not recorded)" // say so rather than guess today's
 		}
@@ -2100,7 +2103,7 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 		JobID: j.ID, ExportedAt: time.Now(), Project: j.ProjectName,
 		Name: j.Name, Description: j.Description, Section: exportSection(*j),
 		Overrides: file.overrides, Baseline: cfg.Baseline, Rows: rows,
-		Command: file.command, Rules: m.commandRules(ctx, j.ProjectName, batches, j.Target),
+		Command: file.command, Rules: rules,
 	}
 	if proj, err := m.registry.GetCached(ctx, j.ProjectName); err == nil {
 		for _, d := range proj.Params {

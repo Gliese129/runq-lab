@@ -443,3 +443,29 @@ func writeScorerResults(t *testing.T, taskDir string) {
 		t.Fatal(err)
 	}
 }
+
+// A refresh returns once the pass has read the experiment's result files:
+// the caller re-reads right after, and a finished experiment is not polled
+// again.
+func TestRefreshJobReturnsAfterResultScan(t *testing.T) {
+	f := newJobFilesFixture(t)
+	writeScorerResults(t, f.taskDir)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- f.lane.RefreshJob(ctx, "job") }()
+	select {
+	case <-f.lane.nudgeCh:
+	case <-ctx.Done():
+		t.Fatal("refresh not issued")
+	}
+	if f.lane.forcedSync(ctx) {
+		t.Fatal("a one-experiment refresh scanned every job before waking")
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("RefreshJob: %v", err)
+	}
+	if records, err := f.st.ListResultRecords(ctx, "job"); err != nil || len(records) != 1 {
+		t.Fatalf("records when refresh returned = %+v, %v", records, err)
+	}
+}

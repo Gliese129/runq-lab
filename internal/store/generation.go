@@ -78,17 +78,38 @@ func (s *LaneScope) Owns(target, generation string) bool {
 	return generation == "" || generation == s.Generation
 }
 
+// OwnsTask is Owns plus the filesystem: a lane settles, probes and kills
+// only versions on the filesystem it reads. An ssh alias that now resolves
+// to another host keeps the generation but not the location; that
+// version's status, results and scheduler id belong to the old host.
+func (s *LaneScope) OwnsTask(t TaskRow) bool {
+	if s == nil {
+		return true
+	}
+	return s.Owns(t.Target, t.TargetGeneration) && s.onFilesystem(t.Location)
+}
+
+func (s *LaneScope) onFilesystem(location string) bool {
+	return location == "" || s.Location == "" || location == s.Location
+}
+
 // whereClause renders the ownership predicate: the lane's target (an
 // experiment's submissions may run on several targets, so a job id alone
-// does not confine rows to one lane), then generation ownership.
+// does not confine rows to one lane), generation ownership, then the
+// filesystem (OwnsTask).
 func (s *LaneScope) whereClause() (string, []any) {
-	if s.IsRetiring() {
-		return "target = ? AND COALESCE(target_generation,'') = ?", []any{s.Target, s.Generation}
-	}
-	return `target = ? AND (COALESCE(target_generation,'') = ? OR COALESCE(target_generation,'') = ''
+	cl, args := `target = ? AND (COALESCE(target_generation,'') = ? OR COALESCE(target_generation,'') = ''
 		OR target_generation NOT IN (
 			SELECT generation FROM target_generations WHERE target = ?))`,
 		[]any{s.Target, s.Generation, s.Target}
+	if s.IsRetiring() {
+		cl, args = "target = ? AND COALESCE(target_generation,'') = ?", []any{s.Target, s.Generation}
+	}
+	if s.Location != "" {
+		cl += " AND (COALESCE(location,'') = '' OR location = ?)"
+		args = append(args, s.Location)
+	}
+	return cl, args
 }
 
 // TargetGenerationRow is one retired (possibly still-retiring) generation.

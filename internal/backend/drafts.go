@@ -558,7 +558,7 @@ func (m *MultiBackend) storedAppendSummary(ctx context.Context, cfg job.JobConfi
 	if command == "" {
 		command = projectCmd
 	}
-	cells, err := job.ClassifyCells(rows, remote.ExistingCells(tasks, picks, batches), rules, cfg.Rerun, command)
+	cells, err := job.ClassifyCells(rows, remote.ExistingCells(tasks, picks, batches, rules), rules, cfg.Rerun, command)
 	if err != nil {
 		return nil, err
 	}

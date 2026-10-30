@@ -3,6 +3,7 @@ package job
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 )
@@ -28,6 +29,9 @@ type ExistingCell struct {
 	InFlight bool   // some version is still queued or running
 	Params   TaskParams
 	Command  string // the command template its version was submitted with
+	// Rules its version's command rendered under (SubmittedRules); nil:
+	// the planned rules.
+	Rules *CommandRules
 }
 
 // CellClass is the verdict for one planned row.
@@ -72,15 +76,34 @@ func (s AppendSummary) Line() string {
 // and `--sample=true`; a template that cannot render (an unknown
 // placeholder) is compared as written.
 func SameCommand(a, b string, params TaskParams, rules CommandRules) bool {
-	if a == b {
+	return SameCommandUnder(a, rules, b, rules, params)
+}
+
+// SameCommandUnder is SameCommand for two submissions, each rendered under
+// the rules it ran with (SubmittedRules): a flag spelled `--sample` then
+// and `--sample=true` now differs even after the project changes style.
+func SameCommandUnder(a string, ra CommandRules, b string, rb CommandRules, params TaskParams) bool {
+	if a == b && sameRules(ra, rb) {
 		return true
 	}
-	ra, errA := rules.Render(a, params)
-	rb, errB := rules.Render(b, params)
+	outA, errA := ra.Render(a, params)
+	outB, errB := rb.Render(b, params)
 	if errA != nil || errB != nil {
 		return false
 	}
-	return ra == rb
+	return outA == outB
+}
+
+// deref is *p, or def when p is nil.
+func deref[T any](p *T, def T) T {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+func sameRules(a, b CommandRules) bool {
+	return maps.Equal(a.Exclude, b.Exclude) && maps.Equal(a.Flags, b.Flags)
 }
 
 // paramDiff lists the params (scheduler-only ones left out) whose values
@@ -154,7 +177,7 @@ func ClassifyCells(rows []Row, existing []ExistingCell, rules CommandRules, reru
 			default:
 				c.Class = CellNewVersion
 			}
-			if c.Class != CellSkipped && command != "" && e.Command != "" && !SameCommand(command, e.Command, r.Params, rules) {
+			if c.Class != CellSkipped && command != "" && e.Command != "" && !SameCommandUnder(command, rules, e.Command, deref(e.Rules, rules), r.Params) {
 				c.CommandChanged = true
 			}
 		}

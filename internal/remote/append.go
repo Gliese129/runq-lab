@@ -91,9 +91,14 @@ func (b *Backend) loadAppendTarget(ctx context.Context, jobID, project string) (
 // submission whose snapshot does not say its command (one from before the
 // template was stored ran "the project's command then") has none: it is
 // never compared with today's project command.
-func ExistingCells(tasks []store.TaskRow, picks map[string]string, batches []store.JobBatch) []job.ExistingCell {
+// Each version's command keeps the rules its submission rendered it under
+// (job.SubmittedRules; rules fill what it did not record).
+func ExistingCells(tasks []store.TaskRow, picks map[string]string, batches []store.JobBatch, rules job.CommandRules) []job.ExistingCell {
 	commands := make(map[int]string, len(batches))
+	ruled := make(map[int]*job.CommandRules, len(batches))
 	for _, b := range batches {
+		r := job.SubmittedRules(b.ConfigJSON, rules)
+		ruled[b.Seq] = &r
 		cmd := b.Command
 		if cmd == "" {
 			var cfg job.JobConfig
@@ -114,7 +119,7 @@ func ExistingCells(tasks []store.TaskRow, picks map[string]string, batches []sto
 				e.InFlight = true
 			}
 			if v.ID == c.Selected {
-				e.TaskID, e.Status, e.Command = v.ID, v.Status, commands[v.BatchSeq]
+				e.TaskID, e.Status, e.Command, e.Rules = v.ID, v.Status, commands[v.BatchSeq], ruled[v.BatchSeq]
 				_ = json.Unmarshal([]byte(v.ParamsJSON), &e.Params)
 			}
 		}
@@ -139,11 +144,11 @@ func classifyAppend(plan *submitplan.Plan, t *appendTarget, rerun []string) (job
 	for i, task := range plan.Tasks {
 		rows[i] = job.Row{Run: task.RunName, Params: task.Params}
 	}
-	existing := ExistingCells(t.tasks, t.picks, t.batches)
 	rules := job.CommandRules{Exclude: exclude}
 	if plan.EffectiveConfig != nil {
 		rules.Flags = plan.EffectiveConfig.FlagParams()
 	}
+	existing := ExistingCells(t.tasks, t.picks, t.batches, rules)
 	cells, err := job.ClassifyCells(rows, existing, rules, rerun, plan.CommandTemplate)
 	if err != nil {
 		return job.AppendSummary{}, fmt.Errorf("--into %s: %w", t.job.ID, err)

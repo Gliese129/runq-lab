@@ -130,7 +130,8 @@ type SSHBackend struct {
 	// Issued/completed tickets fence a refresh against an older in-flight pass.
 	// A pass captures the issued ticket before starting its remote observations.
 
-	refreshJobs   map[string]bool
+	refreshJobs   map[string]bool // experiments a waiting RefreshJob asked for
+	refreshAll    bool            // a waiting ForceRefresh asked for every job
 	syncMu        sync.Mutex
 	syncGen       uint64
 	syncIssued    uint64
@@ -438,8 +439,9 @@ func (b *SSHBackend) sensorLoop(ctx context.Context) {
 			// cheap honest answer. Completes a sync generation so
 			// ForceRefresh waiters wake.
 			pass, cancel := context.WithTimeout(ctx, 30*time.Second)
-			b.forcedSync(pass)
-			b.reconcileJobFiles(pass, true, true)
+			if !b.forcedSync(pass) {
+				b.reconcileJobFiles(pass, true, true)
+			}
 			lastProducerScan = time.Now()
 			cancel()
 		case <-ticker.C:
@@ -738,7 +740,7 @@ func (b *SSHBackend) RefreshJob(ctx context.Context, jobID string) error {
 	}
 	b.refreshJobs[jobID] = true
 	b.syncMu.Unlock()
-	receipt, err := b.ForceRefresh(ctx)
+	receipt, err := b.forceRefresh(ctx)
 	if err != nil {
 		return err
 	}
@@ -957,7 +959,7 @@ func (b *SSHBackend) loadOwnedTask(ctx context.Context, taskID, operation string
 	if task == nil {
 		return nil, fmt.Errorf("task %q: %w", taskID, ErrNotFound)
 	}
-	if !b.scope.Owns(task.Target, task.TargetGeneration) {
+	if !b.scope.OwnsTask(*task) {
 		return nil, fmt.Errorf("task %q moved to target generation %q; lane %q no longer owns it",
 			taskID, task.TargetGeneration, b.scope.Generation)
 	}
@@ -1044,14 +1046,17 @@ func (b *SSHBackend) completeSyncCycle(ticket uint64) {
 
 // forcedSync runs one full pass NOW (marker scan always; SchedulerProbe
 // respects schedProbeFloor — a forced refresh bypasses the 15min ALIGNMENT
-// cadence, never the qstat etiquette floor),
-// records the outcome, and completes a generation. Runs on the sensor
-// goroutine — serialized with regular ticks by construction.
-func (b *SSHBackend) forcedSync(ctx context.Context) {
+// cadence, never the qstat etiquette floor), then the job-files scan, records
+// the outcome, and completes a generation — so a waiter that wakes reads the
+// results the pass found. Only the experiments RefreshJob asked for are
+// scanned before waking when no waiter asked for every job; scannedAll says
+// whether the full scan already ran. Runs on the sensor goroutine —
+// serialized with regular ticks by construction.
+func (b *SSHBackend) forcedSync(ctx context.Context) (scannedAll bool) {
 	b.syncMu.Lock()
 	ticket := b.syncIssued
-	jobs := b.refreshJobs
-	b.refreshJobs = nil
+	jobs, all := b.refreshJobs, b.refreshAll
+	b.refreshJobs, b.refreshAll = nil, false
 	b.syncMu.Unlock()
 	var refreshErrs []error
 	for id := range jobs {
@@ -1065,8 +1070,21 @@ func (b *SSHBackend) forcedSync(ctx context.Context) {
 	if markerErr == nil || errors.Is(markerErr, remote.ErrMarkerDetectionDisabled) {
 		err = probeErr
 	}
+	scannedAll = all || len(jobs) == 0
+	if scannedAll {
+		b.reconcileJobFiles(ctx, true, true)
+	} else {
+		var rows []store.JobRow
+		for id := range jobs {
+			if j, gerr := b.store.GetJob(ctx, id); gerr == nil && j != nil {
+				rows = append(rows, *j)
+			}
+		}
+		b.jobFilesPass(ctx, rows, true)
+	}
 	b.recordTasksSync(errors.Join(append(refreshErrs, err)...))
 	b.completeSyncCycle(ticket)
+	return scannedAll
 }
 
 // SyncInfo reports this lane's data freshness (envelope refreshed_at/stale)
@@ -1101,6 +1119,15 @@ func (b *SSHBackend) SyncInfo(ctx context.Context) (refreshedAt int64, stale boo
 // after the kick completes (generation fence), the min_interval floor
 // rejects it, or ctx times out. Every exit returns an honest receipt.
 func (b *SSHBackend) ForceRefresh(ctx context.Context) (*RefreshReceipt, error) {
+	b.syncMu.Lock()
+	b.refreshAll = true
+	b.syncMu.Unlock()
+	return b.forceRefresh(ctx)
+}
+
+// forceRefresh is ForceRefresh without asking for every job's files
+// (RefreshJob names its experiment in refreshJobs first).
+func (b *SSHBackend) forceRefresh(ctx context.Context) (*RefreshReceipt, error) {
 
 	b.syncMu.Lock()
 	if since := time.Since(b.lastForced); since < refreshMinInterval {
@@ -1237,7 +1264,7 @@ func (b *SSHBackend) KillTask(ctx context.Context, taskID string) error {
 	if task == nil {
 		return fmt.Errorf("task %q: %w", taskID, ErrNotFound)
 	}
-	if !b.scope.Owns(task.Target, task.TargetGeneration) {
+	if !b.scope.OwnsTask(*task) {
 		return fmt.Errorf("task %q moved to target generation %q; lane %q no longer owns it",
 			taskID, task.TargetGeneration, b.scope.Generation)
 	}
@@ -1277,7 +1304,7 @@ func (b *SSHBackend) KillTask(ctx context.Context, taskID string) error {
 	if task == nil || task.Settled(time.Now()) {
 		return nil
 	}
-	if !b.scope.Owns(task.Target, task.TargetGeneration) {
+	if !b.scope.OwnsTask(*task) {
 		return fmt.Errorf("task %q moved to target generation %q during kill; lane %q no longer owns it",
 			taskID, task.TargetGeneration, b.scope.Generation)
 	}
@@ -1324,7 +1351,7 @@ func (b *SSHBackend) cancelRetryIntent(ctx context.Context, taskID string) (bool
 			if row == nil || row.Status != "submitting" || row.StatusSource != "retry" || row.ExternalID != "" {
 				return nil
 			}
-			if !b.scope.Owns(row.Target, row.TargetGeneration) {
+			if !b.scope.OwnsTask(*row) {
 				return nil
 			}
 			fields := map[string]any{

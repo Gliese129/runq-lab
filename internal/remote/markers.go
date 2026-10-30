@@ -70,7 +70,7 @@ func (b *Backend) ScanDoneMarkers(ctx context.Context) error {
 		// active and retiring lanes see the SAME done dir — only the
 		// owning lane may read, settle and delete a task's marker.
 		// (Adoption restamps rows at restore, so exact match suffices.)
-		if b.Scope != nil && tk.TargetGeneration != b.Scope.Generation {
+		if b.Scope != nil && (tk.TargetGeneration != b.Scope.Generation || !b.Scope.OwnsTask(*tk)) {
 			continue
 		}
 		if awaitingLaunch(*tk) {

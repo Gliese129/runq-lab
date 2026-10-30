@@ -84,21 +84,25 @@ const jobsQuery = useJobsListQuery()
 const views = computed(() => (viewsQuery.data.value ?? []).map((v) => ({ ...v, title: v.title || v.name })))
 const projectJobs = computed(() => (jobsQuery.data.value ?? []).filter((j) => j.project === props.project))
 
-// Selection: ?jobs=a,b in the URL, else last time's choice for this view,
-// else the view's explicit job list. Note-pattern selectors are not used.
+// Selection: ?jobs=a,b in the URL, else last time's choice for this view
+// (none chosen is a choice too), else the view's explicit job list.
+// Note-pattern selectors are not used.
 const storeKey = () => `runq-view-jobs:${props.project}/${props.name}`
 const selected = ref<string[]>([])
+const urlJobs = () => String(route.query.jobs ?? '')
 function initial(): string[] {
-  const q = String(route.query.jobs ?? '').split(',').filter(Boolean)
+  const q = urlJobs().split(',').filter(Boolean)
   if (q.length) return q
   try {
-    const saved = JSON.parse(localStorage.getItem(storeKey()) ?? '[]')
-    if (Array.isArray(saved) && saved.length) return saved
+    const saved = JSON.parse(localStorage.getItem(storeKey()) ?? 'null')
+    if (Array.isArray(saved)) return saved.map(String)
   } catch { /* private mode */ }
   const jobs = savedQuery.data.value?.spec.jobs
   return Array.isArray(jobs) ? jobs.map(String) : []
 }
 watch(() => [props.name, savedQuery.data.value] as const, () => { selected.value = initial() }, { immediate: true })
+// A link or back/forward that changes ?jobs on this view picks again.
+watch(urlJobs, (jobs) => { if (jobs !== selected.value.join(',')) selected.value = initial() })
 watch(selected, (ids) => {
   try { localStorage.setItem(storeKey(), JSON.stringify(ids)) } catch { /* private mode */ }
   router.replace({ query: { ...route.query, jobs: ids.length ? ids.join(',') : undefined } })

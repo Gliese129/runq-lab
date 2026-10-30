@@ -152,7 +152,7 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 			m.Content = append(m.Content, str("needs_code"), nc)
 		}
 		var differs []string
-		if r.Command != "" && !SameCommand(r.Command, in.Command, r.Params, in.Rules) {
+		if r.Command != "" && !SameCommandUnder(r.Command, deref(r.Rules, in.Rules), in.Command, in.Rules, r.Params) {
 			differs = append(differs, "command: "+r.Command)
 		}
 		if r.Target != "" {

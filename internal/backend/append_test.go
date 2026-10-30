@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gliese129/runq-lab/internal/job"
+	"github.com/gliese129/runq-lab/internal/remote"
 	"github.com/gliese129/runq-lab/internal/store"
 	"gopkg.in/yaml.v3"
 )
@@ -201,6 +202,39 @@ func TestVersionChangesCommand(t *testing.T) {
 	}
 	if c := commandChanged(batches, views, job.CommandRules{}); !c[2] || !c[3] || c[4] {
 		t.Fatalf("command changed per submission = %v", c)
+	}
+}
+
+// Each submission's command renders under the rules it ran with: a flag
+// that ran as `--sample` and then, after the project dropped `style: flag`,
+// as `--sample=true` is a command change, whatever the project says today.
+func TestVersionChangesUseEachSubmissionsRules(t *testing.T) {
+	flag := `{"scheduler_params":[],"effective_config":{"params":[{"name":"sample","style":"flag"}]}}`
+	plain := `{"scheduler_params":[],"effective_config":{"params":[{"name":"sample"}]}}`
+	batches := []store.JobBatch{
+		{Seq: 1, Command: "python t.py {{args}}", ConfigJSON: flag},
+		{Seq: 2, Command: "python t.py {{args}}", ConfigJSON: plain},
+		{Seq: 3, Command: "python t.py --sample=true", ConfigJSON: plain},
+	}
+	params := map[string]any{"sample": true}
+	views := []TaskView{
+		{ID: "v1", RunName: "c", Version: 1, BatchSeq: 1, Params: params},
+		{ID: "v2", RunName: "c", Version: 2, BatchSeq: 2, Params: params},
+		{ID: "v3", RunName: "c", Version: 3, BatchSeq: 3, Params: params},
+	}
+	today := job.CommandRules{} // the project has no flags now
+	attachVersionChanges(views, batches, today)
+	if len(views[1].Changes) != 1 || views[1].Changes[0].Key != "command" || len(views[2].Changes) != 0 {
+		t.Fatalf("changes = %+v / %+v", views[1].Changes, views[2].Changes)
+	}
+	if c := commandChanged(batches, views, today); !c[2] || c[3] {
+		t.Fatalf("command changed per submission = %v", c)
+	}
+	// an --into plan compares against the version as it ran
+	existing := remote.ExistingCells([]store.TaskRow{{ID: "v1", RunName: "c", Status: "failed", BatchSeq: 1, ParamsJSON: `{"sample":true}`}}, nil, batches[:1], today)
+	cells, err := job.ClassifyCells([]job.Row{{Run: "c", Params: job.TaskParams(params)}}, existing, today, nil, "python t.py {{args}}")
+	if err != nil || !cells[0].CommandChanged {
+		t.Fatalf("cells = %+v, %v", cells, err)
 	}
 }
 

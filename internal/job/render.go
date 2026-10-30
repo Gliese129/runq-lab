@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gliese129/runq-lab/internal/project"
 	"github.com/gliese129/runq-lab/internal/utils"
 )
 
@@ -66,6 +67,30 @@ func TruthyFlag(v any) bool { return utils.Truthy(FormatValue(v)) }
 type CommandRules struct {
 	Exclude map[string]bool
 	Flags   map[string]bool
+}
+
+// SubmittedRules are the rules a submission's commands rendered under, from
+// its stored config: the scheduler-only params and the project flags it
+// recorded. What it did not record comes from fallback (today's rules).
+func SubmittedRules(configJSON string, fallback CommandRules) CommandRules {
+	var c struct {
+		SchedulerParams []string        `json:"scheduler_params"`
+		EffectiveConfig *project.Config `json:"effective_config"`
+	}
+	if json.Unmarshal([]byte(configJSON), &c) != nil {
+		return fallback
+	}
+	rules := fallback
+	if c.SchedulerParams != nil {
+		rules.Exclude = make(map[string]bool, len(c.SchedulerParams))
+		for _, name := range c.SchedulerParams {
+			rules.Exclude[name] = true
+		}
+	}
+	if c.EffectiveConfig != nil {
+		rules.Flags = c.EffectiveConfig.FlagParams()
+	}
+	return rules
 }
 
 // Render is RenderWithFlags under these rules.

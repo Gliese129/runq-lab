@@ -118,9 +118,9 @@ func (b *Backend) resolveTargets(ctx context.Context, target string) ([]store.Ta
 	if tk == nil {
 		return nil, "", fmt.Errorf("no job or task with id %q", target)
 	}
-	if b.Scope != nil && !b.Scope.Owns(tk.Target, tk.TargetGeneration) {
-		return nil, "", fmt.Errorf("task %q belongs to target generation %q, not this lane generation %q",
-			target, tk.TargetGeneration, b.Scope.Generation)
+	if b.Scope != nil && !b.Scope.OwnsTask(*tk) {
+		return nil, "", fmt.Errorf("task %q belongs to target generation %q on %q, not this lane generation %q on %q",
+			target, tk.TargetGeneration, tk.Location, b.Scope.Generation, b.Scope.Location)
 	}
 	return []store.TaskRow{*tk}, tk.JobID, nil
 }
