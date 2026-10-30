@@ -24,3 +24,16 @@ export const qk = {
   viewRender: (project: string, name: string, jobs: readonly string[]) => ['views', project, name, 'render', ...jobs] as const,
   viewSeries: (project: string, name: string, chart: number, jobs: readonly string[]) => ['views', project, name, 'series', chart, ...jobs] as const,
 }
+
+/** Matches the cached view results a change to job id can alter: renders
+ *  and series over a job set that names it — or over the view's own set
+ *  (none given) — and the job's Results list. */
+export function viewsOfJob(id: string) {
+  return (q: { queryKey: readonly unknown[] }) => {
+    const k = q.queryKey
+    if (k[0] !== 'views') return false
+    if (k[2] === 'for-job') return k[3] === id
+    const jobs = k[3] === 'render' ? k.slice(4) : k[3] === 'series' ? k.slice(5) : null
+    return jobs !== null && (jobs.length === 0 || jobs.includes(id))
+  }
+}

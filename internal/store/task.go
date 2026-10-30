@@ -826,30 +826,25 @@ func nullInt64(n int64) sql.NullInt64 {
 	return sql.NullInt64{Int64: n, Valid: true}
 }
 
-// TaskDirRef is one task directory and the target whose filesystem holds it.
-type TaskDirRef struct {
-	Target  string
-	TaskDir string
-}
-
-// TaskDirs lists the recorded task directories of a project, or of one job
-// when jobID is set. Used to find id-named directories on disk (markers).
-func (s *Store) TaskDirs(ctx context.Context, projectName, jobID string) ([]TaskDirRef, error) {
-	q := `SELECT DISTINCT target, task_dir FROM tasks WHERE project_name = ? AND task_dir IS NOT NULL AND task_dir != ''`
-	args := []any{projectName}
+// TaskDirs lists the tasks with a recorded directory of a project, or of
+// one job when jobID is set — the fields that say which filesystem holds the
+// directory (target, generation, location) and the directory. Used to find
+// id-named directories on disk (markers).
+func (s *Store) TaskDirs(ctx context.Context, projectName, jobID string) ([]TaskRow, error) {
+	where, arg := "project_name = ?", projectName
 	if jobID != "" {
-		q = `SELECT DISTINCT target, task_dir FROM tasks WHERE job_id = ? AND task_dir IS NOT NULL AND task_dir != ''`
-		args = []any{jobID}
+		where, arg = "job_id = ?", jobID
 	}
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, COALESCE(target, ''), COALESCE(target_generation, ''), COALESCE(location, ''), task_dir FROM tasks WHERE `+where+
+		` AND task_dir IS NOT NULL AND task_dir != ''`, arg)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []TaskDirRef
+	var out []TaskRow
 	for rows.Next() {
-		var r TaskDirRef
-		if err := rows.Scan(&r.Target, &r.TaskDir); err != nil {
+		var r TaskRow
+		if err := rows.Scan(&r.ID, &r.Target, &r.TargetGeneration, &r.Location, &r.TaskDir); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

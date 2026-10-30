@@ -180,6 +180,21 @@ type ParamDef struct {
 	Style   string   `yaml:"style,omitempty" json:"style,omitempty"`
 }
 
+// FlagParams names the params declared `style: flag` (store_true switches):
+// a submission renders a truthy one as a bare `--name` and omits a falsy one.
+func (c *Config) FlagParams() map[string]bool {
+	var flags map[string]bool
+	for _, def := range c.Params {
+		if def.Style == "flag" {
+			if flags == nil {
+				flags = map[string]bool{}
+			}
+			flags[def.Name] = true
+		}
+	}
+	return flags
+}
+
 // Legacy command_template is read-only; simultaneous keys are ambiguous.
 func (c *Config) UnmarshalYAML(n *yaml.Node) error {
 	type plain Config

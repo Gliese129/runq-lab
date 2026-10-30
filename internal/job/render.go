@@ -59,6 +59,20 @@ func RenderExcluding(template string, params TaskParams, exclude map[string]bool
 // is on". Anything else — false/0/no/None/empty — means off.
 func TruthyFlag(v any) bool { return utils.Truthy(FormatValue(v)) }
 
+// CommandRules are how a submission turns a command template into what
+// runs: params only the scheduler reads stay out of {{args}} (Exclude), and
+// `style: flag` params render as bare switches (Flags). Submitting and
+// comparing commands (SameCommand) both render through them.
+type CommandRules struct {
+	Exclude map[string]bool
+	Flags   map[string]bool
+}
+
+// Render is RenderWithFlags under these rules.
+func (r CommandRules) Render(template string, params TaskParams) (string, error) {
+	return RenderWithFlags(template, params, r.Exclude, r.Flags)
+}
+
 // RenderWithFlags is RenderExcluding plus store_true semantics:
 // `flagParams` names params declared `style: flag` (argparse store_true
 // switches). In {{args}}, a truthy flag renders as a bare `--name` and a

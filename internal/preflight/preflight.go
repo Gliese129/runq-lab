@@ -524,16 +524,7 @@ func renderSampleCommand(proj *project.Config, taskParams []job.TaskParams, excl
 	if len(taskParams) == 0 {
 		return "", nil
 	}
-	var flags map[string]bool
-	for _, def := range proj.Params {
-		if def.Style == "flag" {
-			if flags == nil {
-				flags = map[string]bool{}
-			}
-			flags[def.Name] = true
-		}
-	}
-	return job.RenderWithFlags(proj.CmdTemplate, taskParams[0], exclude, flags)
+	return job.CommandRules{Exclude: exclude, Flags: proj.FlagParams()}.Render(proj.CmdTemplate, taskParams[0])
 }
 
 // Format renders results one line each (✓ passed, ! warning, - skipped),

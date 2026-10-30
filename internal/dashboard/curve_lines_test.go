@@ -8,7 +8,9 @@ import (
 )
 
 // Lines decimated (or logged) at different steps are averaged at the steps
-// they share, never by position: step 4 is 5 in both, so its mean is 5.
+// they share, never by position: step 4 is 5 in both, so its mean is 5. A's
+// logged gap at step 1, a step b never logged, stays a gap in the mean: the
+// mean is not drawn through it.
 func TestMeanLineAlignsBySteps(t *testing.T) {
 	nan := math.NaN()
 	a := curveLine{TaskID: "a", Step: []float64{0, 1, 4, 9}, Value: workspace.CurveValues{1, nan, 5, 7}}
@@ -17,22 +19,25 @@ func TestMeanLineAlignsBySteps(t *testing.T) {
 	if !ok || !partial {
 		t.Fatalf("ok=%v partial=%v", ok, partial)
 	}
-	want := map[float64]float64{0: 2, 4: 5, 9: 8}
-	if len(mean.Step) != 3 {
-		t.Fatalf("steps = %v, want the shared 0, 4, 9", mean.Step)
+	want := map[float64]float64{0: 2, 1: nan, 4: 5, 9: 8}
+	if len(mean.Step) != 4 || mean.Step[1] != 1 {
+		t.Fatalf("steps = %v, want the shared 0, 4, 9 and a's gap at 1", mean.Step)
 	}
 	for i, s := range mean.Step {
-		if mean.Value[i] != want[s] || n[i] != 2 {
+		if v := mean.Value[i]; !(v == want[s] || math.IsNaN(v) && math.IsNaN(want[s])) || n[i] != 2 {
 			t.Errorf("step %v: mean %v n %d, want %v", s, mean.Value[i], n[i], want[s])
 		}
 	}
-	if lo, hi := *mean.Lo[1], *mean.Hi[1]; lo != 5 || hi != 5 {
+	if mean.Lo[1] != nil {
+		t.Error("a gap has no band")
+	}
+	if lo, hi := *mean.Lo[2], *mean.Hi[2]; lo != 5 || hi != 5 {
 		t.Errorf("equal values have no spread: %v..%v", lo, hi)
 	}
 
 	// a gap in any line is a gap in the mean
 	b.Value[1] = nan
-	if mean, _, _, _ := meanLine([]curveLine{a, b}, 400); !math.IsNaN(mean.Value[1]) || mean.Lo[1] != nil {
+	if mean, _, _, _ := meanLine([]curveLine{a, b}, 400); !math.IsNaN(mean.Value[2]) || mean.Lo[2] != nil {
 		t.Errorf("gap at step 4 lost: %v", mean.Value)
 	}
 

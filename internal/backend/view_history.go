@@ -19,7 +19,7 @@ func (m *MultiBackend) sourceLane(ctx context.Context, id string) (*SSHBackend, 
 	if row == nil {
 		return nil, "", "", ErrNotFound
 	}
-	be, err := m.resolveTaskRow(row)
+	be, err := m.filesLane(row)
 	if err != nil {
 		return nil, "", "", err
 	}

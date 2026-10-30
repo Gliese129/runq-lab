@@ -66,16 +66,17 @@ func (s AppendSummary) Line() string {
 
 // SameCommand reports whether two command templates run the same command
 // for a cell with these params: both are rendered as a submission renders
-// them (RenderWithFlags, the one path from template to what runs) and the
-// results compared as written. '$VAR' and "$VAR" differ, as do 'a  b' and
-// 'a b'; a template that cannot render (an unknown placeholder) is compared
-// as written.
-func SameCommand(a, b string, params TaskParams) bool {
+// them (rules.Render, the one path from template to what runs: scheduler
+// params left out, flags as bare switches) and the results compared as
+// written. '$VAR' and "$VAR" differ, as do 'a  b' and 'a b', and `--sample`
+// and `--sample=true`; a template that cannot render (an unknown
+// placeholder) is compared as written.
+func SameCommand(a, b string, params TaskParams, rules CommandRules) bool {
 	if a == b {
 		return true
 	}
-	ra, errA := Render(a, params)
-	rb, errB := Render(b, params)
+	ra, errA := rules.Render(a, params)
+	rb, errB := rules.Render(b, params)
 	if errA != nil || errB != nil {
 		return false
 	}
@@ -117,7 +118,7 @@ func paramDiff(row, cell TaskParams, exclude map[string]bool) []string {
 // succeeded cells to run again; command is this submission's template. A row
 // that names a cell with other params, or a rerun of a cell that is not
 // there or still running, is a plan error.
-func ClassifyCells(rows []Row, existing []ExistingCell, exclude map[string]bool, rerun []string, command string) ([]CellClass, error) {
+func ClassifyCells(rows []Row, existing []ExistingCell, rules CommandRules, rerun []string, command string) ([]CellClass, error) {
 	byName := make(map[string]ExistingCell, len(existing))
 	for _, e := range existing {
 		byName[e.Name] = e
@@ -139,7 +140,7 @@ func ClassifyCells(rows []Row, existing []ExistingCell, exclude map[string]bool,
 		c := CellClass{Run: r.Run, Class: CellNew}
 		e, ok := byName[r.Run]
 		if ok {
-			if diff := paramDiff(r.Params, e.Params, exclude); len(diff) > 0 {
+			if diff := paramDiff(r.Params, e.Params, rules.Exclude); len(diff) > 0 {
 				problems = append(problems, fmt.Sprintf("row %q names an existing cell with other params: %s — give the row a new name, or keep the cell's params", r.Run, strings.Join(diff, ", ")))
 			}
 			c.TaskID, c.Status = e.TaskID, e.Status
@@ -153,7 +154,7 @@ func ClassifyCells(rows []Row, existing []ExistingCell, exclude map[string]bool,
 			default:
 				c.Class = CellNewVersion
 			}
-			if c.Class != CellSkipped && command != "" && e.Command != "" && !SameCommand(command, e.Command, r.Params) {
+			if c.Class != CellSkipped && command != "" && e.Command != "" && !SameCommand(command, e.Command, r.Params, rules) {
 				c.CommandChanged = true
 			}
 		}

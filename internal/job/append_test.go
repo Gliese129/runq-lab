@@ -21,7 +21,7 @@ func TestClassifyCells(t *testing.T) {
 		{Run: "again", Params: TaskParams{"lr": 4}}, // same params, another name: another cell
 	}
 	exclude := map[string]bool{"h_rt": true}
-	got, err := ClassifyCells(rows, existing, exclude, nil, "python a.py")
+	got, err := ClassifyCells(rows, existing, CommandRules{Exclude: exclude}, nil, "python a.py")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestClassifyCells(t *testing.T) {
 		t.Errorf("lr=2: %+v (the same command)", got[1])
 	}
 
-	got, err = ClassifyCells(rows[:2], existing, exclude, []string{"base"}, "venv/bin/python a.py")
+	got, err = ClassifyCells(rows[:2], existing, CommandRules{Exclude: exclude}, []string{"base"}, "venv/bin/python a.py")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestClassifyCellsRefuses(t *testing.T) {
 		"rerun unknown cell": {nil, []string{"nope"}, `--rerun "nope": the job has no such cell`},
 		"rerun running cell": {nil, []string{"run"}, `still queued or running`},
 	} {
-		_, err := ClassifyCells(tc.rows, existing, nil, tc.rerun, "")
+		_, err := ClassifyCells(tc.rows, existing, CommandRules{}, tc.rerun, "")
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
 		}

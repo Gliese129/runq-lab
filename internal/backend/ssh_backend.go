@@ -91,6 +91,9 @@ type SSHBackend struct {
 	transportCloser io.Closer        // SSHFS, or an injected closeable transport
 	targetName      string           // this lane's target name (tasks.target scope)
 	scope           *store.LaneScope // RQ-75: generation-ownership predicate, SHARED with remote.Backend
+	// router, once the lane is routed, decides which lane reads a version's
+	// files (MultiBackend.filesLane); scans follow it.
+	router atomic.Pointer[MultiBackend]
 
 	// Per-target scheduler lane (RQ-46): queue + submission slots + scheduler
 	// instance + remote launcher.
@@ -655,9 +658,10 @@ func (b *SSHBackend) closeTransportIfIdle() error {
 // Close quiesces the lane immediately, then releases its transport once all
 // returned log followers have closed. Must be called on daemon shutdown.
 // StartFileScan runs this lane's job-files pass on its own (every
-// idleProducerScanInterval) — for a kept generation on a filesystem no live
-// lane reads (the target moved host): late scorer results written there
-// are still ingested. ScanFiles is the same pass, once, for a forced refresh.
+// idleProducerScanInterval) — for a kept generation, whose sensor loop is
+// stopped: late scorer results for the versions whose files it reads are
+// still ingested. ScanFiles is the same pass, once, for a forced refresh;
+// ScanJobFiles, for one experiment's refresh.
 func (b *SSHBackend) StartFileScan(ctx context.Context) {
 	b.loopMu.Lock()
 	defer b.loopMu.Unlock()
@@ -686,6 +690,17 @@ func (b *SSHBackend) ScanFiles(ctx context.Context, all bool) {
 	pass, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	b.reconcileJobFiles(pass, all, true)
+}
+
+// ScanJobFiles is one job-files pass over one experiment.
+func (b *SSHBackend) ScanJobFiles(ctx context.Context, jobID string) {
+	pass, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	j, err := b.store.GetJob(pass, jobID)
+	if err != nil || j == nil {
+		return
+	}
+	b.jobFilesPass(pass, []store.JobRow{*j}, true)
 }
 
 func (b *SSHBackend) Close() error {
@@ -899,14 +914,39 @@ func (b *SSHBackend) loadReadableTask(ctx context.Context, taskID, operation str
 	if task == nil {
 		return nil, fmt.Errorf("task %q: %w", taskID, ErrNotFound)
 	}
-	if !b.scope.ReadsFiles(*task) {
-		if task.Location == "" { // unlocated: generation ownership decided
-			return nil, fmt.Errorf("task %q moved to target generation %q; lane %q no longer owns it",
-				taskID, task.TargetGeneration, b.scope.Generation)
-		}
-		return nil, fmt.Errorf("task %q is on another filesystem (%s); lane %q (%s) no longer owns it", taskID, task.Location, b.scope.Generation, b.scope.Location)
+	if err := b.readsFilesOf(*task); err != nil {
+		return nil, err
 	}
 	return task, nil
+}
+
+// scansFiles reports whether this lane is the one that reads task's files:
+// its scope reads them and, once routed, file access for task routes here —
+// so two lanes on one filesystem never both scan a version, and every
+// version is scanned by the lane its reads go to.
+func (b *SSHBackend) scansFiles(task store.TaskRow) bool {
+	if !b.scope.ReadsFiles(task) {
+		return false
+	}
+	m := b.router.Load()
+	if m == nil {
+		return true
+	}
+	be, err := m.filesLane(&task)
+	return err == nil && be == Backend(b)
+}
+
+// readsFilesOf says why this lane may not touch task's files (nil: it may) —
+// the one check every file access goes through, read or delete.
+func (b *SSHBackend) readsFilesOf(task store.TaskRow) error {
+	if b.scope.ReadsFiles(task) {
+		return nil
+	}
+	if task.Location == "" { // unlocated: generation ownership decided
+		return fmt.Errorf("task %q moved to target generation %q; lane %q no longer owns it: %w",
+			task.ID, task.TargetGeneration, b.scope.Generation, ErrFilesElsewhere)
+	}
+	return fmt.Errorf("task %q is on another filesystem (%s); lane %q (%s) no longer owns it: %w", task.ID, task.Location, b.scope.Generation, b.scope.Location, ErrFilesElsewhere)
 }
 
 func (b *SSHBackend) loadOwnedTask(ctx context.Context, taskID, operation string) (*store.TaskRow, error) {

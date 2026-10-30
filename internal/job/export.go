@@ -34,6 +34,8 @@ type ExportInput struct {
 	Baseline       string // run name; left out when it is the first row
 	Rows           []Row
 	ParamOrder     []string // project param order; others follow sorted
+	// Rules: how a row's command and the file's are compared (SameCommand).
+	Rules CommandRules
 }
 
 // ExportYAML renders the job as `cells:` rows (grid/list blocks are not
@@ -150,7 +152,7 @@ func ExportYAML(in ExportInput) ([]byte, error) {
 			m.Content = append(m.Content, str("needs_code"), nc)
 		}
 		var differs []string
-		if r.Command != "" && !SameCommand(r.Command, in.Command, r.Params) {
+		if r.Command != "" && !SameCommand(r.Command, in.Command, r.Params, in.Rules) {
 			differs = append(differs, "command: "+r.Command)
 		}
 		if r.Target != "" {

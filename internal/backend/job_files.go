@@ -107,12 +107,12 @@ type JobSnapshotTask struct {
 }
 
 // jobSnapshot builds the job.json copy the lane with this scope publishes;
-// dirs are the job's directories whose versions this lane reads (one, or
+// dirs are the job's directories whose versions it reads (reads; one, or
 // more after a data_path move), none when no such version recorded a
 // workspace (nothing to publish into). An experiment that ran on
 // several targets (or lane generations) gets one copy per owning lane, the
 // same listing with its own published_for.
-func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow, scope *store.LaneScope) (snap JobSnapshot, dirs []string, err error) {
+func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow, scope *store.LaneScope, reads func(store.TaskRow) bool) (snap JobSnapshot, dirs []string, err error) {
 	tasks, err := st.JobTasksInOrder(ctx, j.ID)
 	if err != nil {
 		return snap, nil, err
@@ -139,7 +139,7 @@ func jobSnapshot(ctx context.Context, st *store.Store, j store.JobRow, scope *st
 		generation := t.TargetGeneration
 		owned := t
 		owned.Target = taskTarget
-		if scope.ReadsFiles(owned) {
+		if reads(owned) {
 			if generation == "" {
 				generation = scope.Generation // a legacy unstamped row is the active lane's
 			}
@@ -187,7 +187,7 @@ func (b *SSHBackend) publishJobSnapshot(ctx context.Context, jobID string) error
 }
 
 func (b *SSHBackend) publishJob(ctx context.Context, j store.JobRow) (JobSnapshot, error) {
-	snap, dirs, err := jobSnapshot(ctx, b.store, j, b.scope)
+	snap, dirs, err := jobSnapshot(ctx, b.store, j, b.scope, b.scansFiles)
 	if err != nil || len(dirs) == 0 {
 		return snap, err
 	}
@@ -208,7 +208,8 @@ func (b *SSHBackend) publishJob(ctx context.Context, j store.JobRow) (JobSnapsho
 // reconcileJobFiles is one job-files pass: publish changed job.json files,
 // then (scan) ingest grown producer results. all widens the pass from recent
 // jobs to every unarchived job (forced refresh). Every lane runs it for the
-// versions it owns: the active lane and each retiring generation alike.
+// versions whose files it reads (scansFiles): active, retiring and kept
+// generations alike.
 func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
 	jobs, err := b.store.ListJobs(ctx, "", b.targetName)
 	if err != nil {
@@ -216,13 +217,21 @@ func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
 		return
 	}
 	cutoff := time.Now().Add(-recentJobWindow)
+	picked := jobs[:0]
+	for _, j := range jobs {
+		recent := !store.IsTerminalJobStatus(j.Status) || j.CreatedAt.After(cutoff) || (j.FinishedAt != nil && j.FinishedAt.After(cutoff))
+		if j.ArchivedAt == nil && (all || recent) {
+			picked = append(picked, j)
+		}
+	}
+	b.jobFilesPass(ctx, picked, scan)
+}
+
+// jobFilesPass is reconcileJobFiles over the given jobs.
+func (b *SSHBackend) jobFilesPass(ctx context.Context, jobs []store.JobRow, scan bool) {
 	dirs := map[string]map[string]string{} // job dir → task dir → task id
 	order := []string{}
 	for _, j := range jobs {
-		recent := !store.IsTerminalJobStatus(j.Status) || j.CreatedAt.After(cutoff) || (j.FinishedAt != nil && j.FinishedAt.After(cutoff))
-		if j.ArchivedAt != nil || !(all || recent) {
-			continue
-		}
 		snap, err := b.publishJob(ctx, j)
 		if err != nil {
 			b.logger.Debug("job files: publish job.json", "job", j.ID, "error", err)
@@ -232,8 +241,8 @@ func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
 			if t.Target != b.scope.Target {
 				continue // another target's version: not on this filesystem
 			}
-			if !b.scope.ReadsFiles(store.TaskRow{Target: t.Target, TargetGeneration: t.Generation, Location: t.Location}) {
-				foreign++ // on another filesystem (or an unlocated version of another generation)
+			if !b.scansFiles(store.TaskRow{ID: t.ID, Target: t.Target, TargetGeneration: t.Generation, Location: t.Location}) {
+				foreign++ // another lane reads it (another filesystem or generation)
 				continue
 			}
 			dir := path.Dir(t.TaskDir)
@@ -268,7 +277,7 @@ func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
 				if err != nil || row == nil {
 					return err
 				}
-				if !b.scope.ReadsFiles(*row) {
+				if !b.scansFiles(*row) {
 					return nil // moved since the snapshot: no longer this lane's files
 				}
 				_, err = ingest.ReapProducerResults(ctx, b.store, ingest.Target{TaskID: row.ID, JobID: row.JobID, Dir: row.TaskDir, FS: fsys}, f.Producer, f.Size)

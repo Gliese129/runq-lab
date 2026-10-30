@@ -55,7 +55,8 @@ func submissionSnaps(batches []store.JobBatch) map[int]submissionSnap {
 
 // attachVersionChanges fills each version's Changes against the previous
 // version of its cell; a cell's first version has none.
-func attachVersionChanges(views []TaskView, batches []store.JobBatch) {
+// Commands are compared under the experiment's rules.
+func attachVersionChanges(views []TaskView, batches []store.JobBatch, rules job.CommandRules) {
 	snaps := submissionSnaps(batches)
 	cells := map[string][]int{}
 	var order []string
@@ -74,7 +75,7 @@ func attachVersionChanges(views []TaskView, batches []store.JobBatch) {
 		sort.SliceStable(idx, func(a, b int) bool { return views[idx[a]].Version < views[idx[b]].Version })
 		for k := 1; k < len(idx); k++ {
 			prev, cur := &views[idx[k-1]], &views[idx[k]]
-			cur.Changes = versionChanges(*prev, *cur, snaps[seqOf(*prev)], snaps[seqOf(*cur)])
+			cur.Changes = versionChanges(*prev, *cur, snaps[seqOf(*prev)], snaps[seqOf(*cur)], rules)
 		}
 	}
 }
@@ -86,7 +87,7 @@ func seqOf(v TaskView) int {
 	return v.BatchSeq
 }
 
-func versionChanges(prev, cur TaskView, ps, cs submissionSnap) []VersionChange {
+func versionChanges(prev, cur TaskView, ps, cs submissionSnap, rules job.CommandRules) []VersionChange {
 	var out []VersionChange
 	out = append(out, diffValues(paramText(prev.Params), paramText(cur.Params))...)
 	pt, ct := prev.Target, cur.Target
@@ -99,7 +100,7 @@ func versionChanges(prev, cur TaskView, ps, cs submissionSnap) []VersionChange {
 	if pt != "" && ct != "" && pt != ct {
 		out = append(out, VersionChange{Key: "target", From: pt, To: ct})
 	}
-	if ps.command != "" && cs.command != "" && !job.SameCommand(ps.command, cs.command, job.TaskParams(cur.Params)) {
+	if ps.command != "" && cs.command != "" && !job.SameCommand(ps.command, cs.command, job.TaskParams(cur.Params), rules) {
 		out = append(out, VersionChange{Key: "command"})
 	}
 	return append(out, diffValues(ps.overrides, cs.overrides)...)
@@ -148,7 +149,7 @@ func diffValues(a, b map[string]string) []VersionChange {
 // commandChanged reports, per submission, whether it ran another command
 // than the one before it (both known): the two templates rendered for one
 // of its versions' params (job.SameCommand).
-func commandChanged(batches []store.JobBatch, views []TaskView) map[int]bool {
+func commandChanged(batches []store.JobBatch, views []TaskView, rules job.CommandRules) map[int]bool {
 	snaps := submissionSnaps(batches)
 	paramsOf := map[int]job.TaskParams{}
 	for _, v := range views {
@@ -159,7 +160,7 @@ func commandChanged(batches []store.JobBatch, views []TaskView) map[int]bool {
 	out := map[int]bool{}
 	for i := 1; i < len(batches); i++ {
 		a, b := snaps[batches[i-1].Seq].command, snaps[batches[i].Seq].command
-		out[batches[i].Seq] = a != "" && b != "" && !job.SameCommand(a, b, paramsOf[batches[i].Seq])
+		out[batches[i].Seq] = a != "" && b != "" && !job.SameCommand(a, b, paramsOf[batches[i].Seq], rules)
 	}
 	return out
 }

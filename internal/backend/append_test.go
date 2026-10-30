@@ -194,12 +194,12 @@ func TestVersionChangesCommand(t *testing.T) {
 		{ID: "v3", RunName: "c", Version: 3, BatchSeq: 3},
 		{ID: "v4", RunName: "c", Version: 4, BatchSeq: 4},
 	}
-	attachVersionChanges(views, batches)
+	attachVersionChanges(views, batches, job.CommandRules{})
 	got := []int{len(views[0].Changes), len(views[1].Changes), len(views[2].Changes), len(views[3].Changes)}
 	if got[0] != 0 || got[1] != 1 || got[2] != 1 || views[2].Changes[0].Key != "command" || got[3] != 0 {
 		t.Fatalf("changes per version = %v (%+v)", got, views[2].Changes)
 	}
-	if c := commandChanged(batches, views); !c[2] || !c[3] || c[4] {
+	if c := commandChanged(batches, views, job.CommandRules{}); !c[2] || !c[3] || c[4] {
 		t.Fatalf("command changed per submission = %v", c)
 	}
 }

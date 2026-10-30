@@ -175,7 +175,7 @@ sweep:
 		t.Fatalf("walltime changed the cell: %q vs %q", other[1].Run, rows[1].Run)
 	}
 	existing := []ExistingCell{{Name: rows[1].Run, TaskID: "t1", Status: "failed", Params: rows[1].Params}}
-	cells, err := ClassifyCells(other[1:], existing, sched, nil, "")
+	cells, err := ClassifyCells(other[1:], existing, CommandRules{Exclude: sched}, nil, "")
 	if err != nil || cells[0].Class == CellNew {
 		t.Fatalf("append should version the existing cell, got %+v, %v", cells, err)
 	}

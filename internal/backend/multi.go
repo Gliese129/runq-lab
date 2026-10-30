@@ -147,6 +147,7 @@ func (m *MultiBackend) defaultName() string {
 
 // SetRetiringLane registers a superseded lane generation (RQ-75).
 func (m *MultiBackend) SetRetiringLane(name, generation string, be Backend) {
+	m.routeFiles(be)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.retiring == nil {
@@ -166,6 +167,7 @@ func (m *MultiBackend) RotateLane(name string, newBe Backend, oldGen string, old
 	if sq, ok := newBe.(interface{ setProjectRegistry(*project.Registry) }); ok {
 		sq.setProjectRegistry(m.registry)
 	}
+	m.routeFiles(newBe)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.targets[name] = newBe
@@ -239,27 +241,29 @@ func (m *MultiBackend) RemoveRetiringLane(name, generation string) {
 // routing and into artifact-only routing.
 func (m *MultiBackend) CompleteRetiringLane(name, generation string, be Backend) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if lanes := m.retiring[name]; lanes != nil {
 		delete(lanes, generation)
 		if len(lanes) == 0 {
 			delete(m.retiring, name)
 		}
 	}
-	if m.historical == nil {
-		m.historical = map[string]map[string]Backend{}
-	}
-	if m.historical[name] == nil {
-		m.historical[name] = map[string]Backend{}
-	}
-	m.historical[name][generation] = be
+	m.mu.Unlock()
+	m.keepHistorical(name, generation, be)
 }
 
 // SetHistoricalLane restores an artifact-only lane from a persisted target
 // generation snapshot during daemon startup.
 func (m *MultiBackend) SetHistoricalLane(name, generation string, be Backend) {
+	m.keepHistorical(name, generation, be)
+}
+
+// keepHistorical routes a kept generation's artifacts to be and starts its
+// own file scan (its sensor loop is stopped): late scorer results for the
+// versions whose files route to it are still ingested, whichever filesystem
+// they are on.
+func (m *MultiBackend) keepHistorical(name, generation string, be Backend) {
+	m.routeFiles(be)
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.historical == nil {
 		m.historical = map[string]map[string]Backend{}
 	}
@@ -267,40 +271,39 @@ func (m *MultiBackend) SetHistoricalLane(name, generation string, be Backend) {
 		m.historical[name] = map[string]Backend{}
 	}
 	m.historical[name][generation] = be
-	// A kept generation on another filesystem than the live lanes' (the
-	// target moved host) scans its own files: nobody else reads them.
-	if lane, ok := be.(*SSHBackend); ok && m.readsElsewhere(name, lane) {
+	m.mu.Unlock()
+	if lane, ok := be.(*SSHBackend); ok {
 		lane.StartFileScan(context.Background())
 	}
 }
 
-// readsElsewhere reports whether lane's filesystem is one no live lane of
-// target reads (caller holds m.mu).
-func (m *MultiBackend) readsElsewhere(target string, lane *SSHBackend) bool {
-	if active, ok := m.targets[target].(*SSHBackend); ok && active.Location() == lane.Location() {
-		return false
+// routeFiles makes be's file scans follow filesLane.
+func (m *MultiBackend) routeFiles(be Backend) {
+	if lane, ok := be.(*SSHBackend); ok {
+		lane.router.Store(m)
 	}
-	for _, r := range m.retiring[target] {
-		if rl, ok := r.(*SSHBackend); ok && rl.Location() == lane.Location() {
-			return false
-		}
-	}
-	return true
 }
 
-// scanKeptFilesystems runs one job-files pass on each kept generation of
-// target whose filesystem no live lane reads (forced refresh).
-func (m *MultiBackend) scanKeptFilesystems(ctx context.Context, target string) {
+// scanHistorical runs one job-files pass on each kept generation of the
+// targets — one experiment's (jobID), or every unarchived one ("") — for
+// a refresh: live lanes rescan in their own refresh.
+func (m *MultiBackend) scanHistorical(ctx context.Context, jobID string, targets ...string) {
 	m.mu.RLock()
 	var lanes []*SSHBackend
-	for _, be := range m.historical[target] {
-		if lane, ok := be.(*SSHBackend); ok && m.readsElsewhere(target, lane) {
-			lanes = append(lanes, lane)
+	for _, target := range targets {
+		for _, be := range m.historical[target] {
+			if lane, ok := be.(*SSHBackend); ok {
+				lanes = append(lanes, lane)
+			}
 		}
 	}
 	m.mu.RUnlock()
 	for _, lane := range lanes {
-		lane.ScanFiles(ctx, true)
+		if jobID != "" {
+			lane.ScanJobFiles(ctx, jobID)
+		} else {
+			lane.ScanFiles(ctx, true)
+		}
 	}
 }
 
@@ -371,6 +374,7 @@ func (m *MultiBackend) SetTarget(name string, be Backend) {
 	if sq, ok := be.(interface{ setProjectRegistry(*project.Registry) }); ok {
 		sq.setProjectRegistry(m.registry)
 	}
+	m.routeFiles(be)
 	m.mu.Lock()
 	m.targets[name] = be
 	m.mu.Unlock()
@@ -442,6 +446,7 @@ func NewMultiBackend(targets map[string]Backend, st *store.Store, defaultTarget 
 		if sq, ok := be.(interface{ setProjectRegistry(*project.Registry) }); ok {
 			sq.setProjectRegistry(reg)
 		}
+		m.routeFiles(be)
 	}
 	return m, nil
 }
@@ -508,14 +513,54 @@ func (m *MultiBackend) resolveTaskRow(t *store.TaskRow) (Backend, error) {
 	return m.resolve(t.Target)
 }
 
+// commandRules are the rules an experiment's commands render under
+// (job.CommandRules): the scheduler-only params its submissions recorded —
+// today's answer for targets when none did — and the project's flags.
+func (m *MultiBackend) commandRules(ctx context.Context, project string, batches []store.JobBatch, targets ...string) job.CommandRules {
+	rules := job.CommandRules{Exclude: job.SubmittedSchedulerParams(batchConfigJSON(batches))}
+	if rules.Exclude == nil {
+		rules.Exclude = m.schedulerParams(ctx, project, targets...)
+	}
+	if proj, err := m.registry.GetCached(ctx, project); err == nil {
+		rules.Flags = proj.FlagParams()
+	}
+	return rules
+}
+
+// filesLane resolves the lane that reads and deletes t's files (logs,
+// curves, results, checkpoints): its routed lane, when that lane's
+// filesystem is the one the version was written on; ErrFilesElsewhere
+// otherwise. Every file access goes through here.
+func (m *MultiBackend) filesLane(t *store.TaskRow) (Backend, error) {
+	be, err := m.resolveTaskRow(t)
+	if err != nil {
+		return nil, err
+	}
+	if lane, ok := be.(interface{ readsFilesOf(store.TaskRow) error }); ok {
+		if err := lane.readsFilesOf(*t); err != nil {
+			return nil, err
+		}
+	}
+	return be, nil
+}
+
+// laneFS is be's filesystem (lanes without one are local).
+func laneFS(be Backend) rfs.FS {
+	if fsp, ok := be.(interface{ FS() rfs.FS }); ok {
+		return fsp.FS()
+	}
+	return rfs.NewLocalFS()
+}
+
 type artifactTaskGroup struct {
 	fs    rfs.FS
 	tasks []store.TaskRow
 }
 
 // jobArtifactGroups partitions a job by its durable target generation and
-// resolves each partition to that generation's exact filesystem. Group order
-// follows the first task occurrence so responses stay deterministic.
+// resolves each partition to that generation's exact filesystem. A version
+// whose files no lane reads is left out of the groups. Group order follows
+// the first task occurrence so responses stay deterministic.
 func (m *MultiBackend) jobArtifactGroups(ctx context.Context, jobID string) (*store.JobRow, []store.TaskRow, []artifactTaskGroup, error) {
 	j, err := m.store.GetJob(ctx, jobID)
 	if err != nil {
@@ -531,14 +576,14 @@ func (m *MultiBackend) jobArtifactGroups(ctx context.Context, jobID string) (*st
 	groupIndex := make(map[string]int)
 	groups := make([]artifactTaskGroup, 0)
 	for i := range tasks {
-		be, err := m.resolveTaskRow(&tasks[i])
+		be, err := m.filesLane(&tasks[i])
+		if errors.Is(err, ErrFilesElsewhere) {
+			continue
+		}
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		fsys := rfs.FS(rfs.NewLocalFS())
-		if fsp, ok := be.(interface{ FS() rfs.FS }); ok {
-			fsys = fsp.FS()
-		}
+		fsys := laneFS(be)
 		if active, ok := be.(interface{ touchActivity() }); ok {
 			active.touchActivity()
 		}
@@ -780,6 +825,10 @@ func (m *MultiBackend) ReconcileAll(ctx context.Context) error {
 func (m *MultiBackend) RefreshJob(ctx context.Context, jobID string) error {
 	m.routingMu.RLock()
 	defer m.routingMu.RUnlock()
+	// versions whose files a kept generation reads are refreshed too
+	if targets, err := m.store.JobTaskTargets(ctx, jobID); err == nil {
+		m.scanHistorical(ctx, jobID, targets...)
+	}
 	_, err := m.refreshJobGenerations(ctx, jobID)
 	return err
 }
@@ -886,10 +935,8 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 	// of the project or target does not regroup old cells; the current
 	// answer only for an experiment submitted before runq kept it.
 	batches, _ := m.store.ListJobBatches(ctx, jobID)
-	schedParams := job.SubmittedSchedulerParams(batchConfigJSON(batches))
-	if schedParams == nil {
-		schedParams = m.schedulerParams(ctx, j.ProjectName, targets...)
-	}
+	rules := m.commandRules(ctx, j.ProjectName, batches, targets...)
+	schedParams := rules.Exclude
 	for name := range schedParams {
 		detail.SchedulerParams = append(detail.SchedulerParams, name)
 	}
@@ -899,8 +946,8 @@ func (m *MultiBackend) GetJob(ctx context.Context, jobID string) (*JobDetail, er
 	detail.Plan = &plan
 	attachLastOutput(ctx, m.store, detail.Tasks)
 	if batches, err := m.store.ListJobBatches(ctx, jobID); err == nil {
-		attachVersionChanges(detail.Tasks, batches)
-		changed := commandChanged(batches, detail.Tasks)
+		attachVersionChanges(detail.Tasks, batches, rules)
+		changed := commandChanged(batches, detail.Tasks, rules)
 		for _, b := range batches {
 			var bc job.JobConfig
 			_ = json.Unmarshal([]byte(b.ConfigJSON), &bc)
@@ -1226,9 +1273,8 @@ func (m *MultiBackend) ForceRefreshTarget(ctx context.Context, target string) (*
 		return nil, fmt.Errorf("refresh: %w: unknown target %q", ErrNotFound, target)
 	}
 
-	// files on a filesystem only a kept generation reads (the target moved
-	// host) are refreshed too
-	m.scanKeptFilesystems(ctx, target)
+	// versions whose files a kept generation reads are refreshed too
+	m.scanHistorical(ctx, "", target)
 	receipt := &RefreshReceipt{Refreshed: true}
 	var reasons []string
 	var refreshErrs []error
@@ -1354,18 +1400,14 @@ func (m *MultiBackend) TaskLogGrep(ctx context.Context, taskID, pattern string, 
 	if row == nil {
 		return nil, fmt.Errorf("task %q: %w", taskID, ErrNotFound)
 	}
-	be, err := m.resolveTaskRow(row)
+	be, err := m.filesLane(row)
 	if err != nil {
 		return nil, err
-	}
-	fsys := rfs.FS(rfs.NewLocalFS())
-	if fsp, ok := be.(interface{ FS() rfs.FS }); ok {
-		fsys = fsp.FS()
 	}
 	if active, ok := be.(interface{ touchActivity() }); ok {
 		active.touchActivity()
 	}
-	return taskLogGrepViaExec(ctx, fsys, *row, pattern, tail)
+	return taskLogGrepViaExec(ctx, laneFS(be), *row, pattern, tail)
 }
 
 func (m *MultiBackend) JobActivity(ctx context.Context, jobID string) (*JobActivity, error) {
@@ -1801,14 +1843,11 @@ func (m *MultiBackend) Clean(ctx context.Context, opts CleanOptions) (*CleanResu
 	// lane. (Delegating to the default lane would delete remote dirs with
 	// a local os.RemoveAll: silent no-op, artifacts left behind.)
 	return PerformClean(ctx, m.store, func(task store.TaskRow) (rfs.FS, error) {
-		be, err := m.resolveTaskRow(&task)
+		be, err := m.filesLane(&task)
 		if err != nil {
 			return nil, err
 		}
-		if fsp, ok := be.(interface{ FS() rfs.FS }); ok {
-			return fsp.FS(), nil
-		}
-		return rfs.NewLocalFS(), nil
+		return laneFS(be), nil
 	}, opts)
 }
 
@@ -1994,19 +2033,18 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 	}
 	subs := map[int]submission{1: snapshot(cfg, j.Target)}
 	latest := 1
-	if batches, err := m.store.ListJobBatches(ctx, j.ID); err == nil {
-		for _, b := range batches {
-			bc := cfg
-			if b.ConfigJSON != "" {
-				bc = job.JobConfig{}
-				_ = json.Unmarshal([]byte(b.ConfigJSON), &bc)
-			}
-			if b.Command != "" {
-				bc.Command = b.Command
-			}
-			subs[b.Seq] = snapshot(bc, b.Target)
-			latest = max(latest, b.Seq)
+	batches, _ := m.store.ListJobBatches(ctx, j.ID)
+	for _, b := range batches {
+		bc := cfg
+		if b.ConfigJSON != "" {
+			bc = job.JobConfig{}
+			_ = json.Unmarshal([]byte(b.ConfigJSON), &bc)
 		}
+		if b.Command != "" {
+			bc.Command = b.Command
+		}
+		subs[b.Seq] = snapshot(bc, b.Target)
+		latest = max(latest, b.Seq)
 	}
 	type exported struct {
 		row job.Row
@@ -2062,7 +2100,7 @@ func (m *MultiBackend) ExportJob(ctx context.Context, ref string) ([]byte, error
 		JobID: j.ID, ExportedAt: time.Now(), Project: j.ProjectName,
 		Name: j.Name, Description: j.Description, Section: exportSection(*j),
 		Overrides: file.overrides, Baseline: cfg.Baseline, Rows: rows,
-		Command: file.command,
+		Command: file.command, Rules: m.commandRules(ctx, j.ProjectName, batches, j.Target),
 	}
 	if proj, err := m.registry.GetCached(ctx, j.ProjectName); err == nil {
 		for _, d := range proj.Params {
@@ -2104,20 +2142,23 @@ func (m *MultiBackend) resolveJobSection(ctx context.Context, cfg *job.JobConfig
 }
 
 // rewriteMarkers rewrites the 0-<name> marker in each distinct directory
-// dirOf derives from a task dir ("" = no id-named directory to mark).
-func (m *MultiBackend) rewriteMarkers(ctx context.Context, refs []store.TaskDirRef, dirOf func(string) string, name string) {
+// dirOf derives from a task dir ("" = no id-named directory to mark), on
+// the filesystem the task was written on (none: skipped).
+func (m *MultiBackend) rewriteMarkers(ctx context.Context, refs []store.TaskRow, dirOf func(string) string, name string) {
 	done := map[string]bool{}
-	for _, r := range refs {
+	for i := range refs {
+		r := &refs[i]
 		dir := dirOf(r.TaskDir)
-		if dir == "" || done[r.Target+"\x00"+dir] {
+		key := r.Target + "\x00" + r.Location + "\x00" + r.TargetGeneration + "\x00" + dir
+		if dir == "" || done[key] {
 			continue
 		}
-		done[r.Target+"\x00"+dir] = true
-		fsys, err := m.TargetFS(r.Target)
+		done[key] = true
+		be, err := m.filesLane(r)
 		if err != nil {
 			continue
 		}
-		_ = workspace.WriteMarker(ctx, fsys, dir, name)
+		_ = workspace.WriteMarker(ctx, laneFS(be), dir, name)
 	}
 }
 

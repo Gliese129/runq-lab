@@ -179,21 +179,6 @@ func validateParamTypes(proj *project.Config, tasks []job.TaskParams) error {
 	return nil
 }
 
-// flagParamNames collects params declared `style: flag` (store_true
-// switches) for the renderer: truthy → bare `--name`, falsy → omitted.
-func flagParamNames(proj *project.Config) map[string]bool {
-	var flags map[string]bool
-	for _, def := range proj.Params {
-		if def.Style == "flag" {
-			if flags == nil {
-				flags = map[string]bool{}
-			}
-			flags[def.Name] = true
-		}
-	}
-	return flags
-}
-
 // resolveEnvFile applies the project's env_file semantics: nil = auto-use
 // <working_dir>/.env when present; "" = disabled; other = required path.
 // Existence questions go to fsys — the TARGET's filesystem (RQ-65): the
@@ -365,14 +350,14 @@ func Build(ctx context.Context, cfg job.JobConfig, proj *project.Config, d Deps)
 	// qsub/sbatch must never reject what runq generated. The job's display
 	// name is free text and never feeds the scheduler.
 	nameTmpl := proj.JobName
-	flagParams := flagParamNames(proj)
+	rules := job.CommandRules{Exclude: schedParams, Flags: proj.FlagParams()}
 	unconsumed := map[string]bool{}
 	tasks := make([]PlannedTask, 0, len(taskParams))
 	for i, params := range taskParams {
 		for _, key := range job.UnconsumedParams(proj.CmdTemplate, params, schedParams) {
 			unconsumed[key] = true
 		}
-		cmd, err := job.RenderWithFlags(proj.CmdTemplate, params, schedParams, flagParams)
+		cmd, err := rules.Render(proj.CmdTemplate, params)
 		if err != nil {
 			return Plan{}, fmt.Errorf("render command failed: %w", err)
 		}

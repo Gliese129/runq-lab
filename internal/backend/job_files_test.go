@@ -355,8 +355,7 @@ func TestLaneGenerationAndLocationOverride(t *testing.T) {
 
 // After the target moved host, a kept generation's lane is the only reader
 // of the old filesystem: a forced refresh scans it, so a scorer's late
-// results there are still ingested. On the active lane's filesystem it is
-// left to the active lane.
+// results there are still ingested.
 func TestKeptGenerationScansItsOwnFilesystem(t *testing.T) {
 	ctx := context.Background()
 	f := newJobFilesFixture(t)
@@ -370,10 +369,7 @@ func TestKeptGenerationScansItsOwnFilesystem(t *testing.T) {
 	if _, err := f.st.DB().ExecContext(ctx, `UPDATE tasks SET target_generation = 'old-gen', location = ?`, old.Location()); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(f.taskDir, "results.scorer.jsonl"),
-		[]byte(`{"ts":1,"section":"eval","axes":{},"metrics":{"acc":0.9}}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeScorerResults(t, f.taskDir)
 	m, err := NewMultiBackend(map[string]Backend{"local": f.lane}, f.st, "local")
 	if err != nil {
 		t.Fatal(err)
@@ -383,14 +379,67 @@ func TestKeptGenerationScansItsOwnFilesystem(t *testing.T) {
 	if rows, _ := f.st.ListResultRecords(ctx, "job"); len(rows) != 0 {
 		t.Fatalf("active lane read another filesystem's files: %+v", rows)
 	}
-	m.scanKeptFilesystems(ctx, "local")
+	m.scanHistorical(ctx, "", "local")
 	if rows, err := f.st.ListResultRecords(ctx, "job"); err != nil || len(rows) != 1 {
 		t.Fatalf("late results on the old filesystem: %+v, %v", rows, err)
 	}
-	m.mu.RLock()
-	elsewhere := m.readsElsewhere("local", f.lane)
-	m.mu.RUnlock()
-	if elsewhere {
-		t.Fatal("a lane on the active lane's filesystem must be left to it")
+}
+
+// A kept generation on the active lane's filesystem: versions without a
+// recorded location belong to it by generation, so it scans them — the
+// active lane refuses them, and "same filesystem" does not mean "the active
+// lane covers them". An experiment's refresh reaches it too. Each version is
+// scanned by exactly the lane its file reads route to.
+func TestKeptGenerationOnSameFilesystemScansItsVersions(t *testing.T) {
+	ctx := context.Background()
+	f := newJobFilesFixture(t)
+	target := config.TargetConfig{Name: "local", Workspace: t.TempDir(), SubmitTemplate: "true", MaxInflight: 1}
+	old, err := NewSSHBackend(SSHBackendConfig{Target: target, Store: f.st, GlobalCfg: &config.GlobalConfig{}, FS: rfs.NewLocalFS(),
+		Generation: "old-gen"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = old.Close() })
+	old.MarkRetiring()
+	if old.Location() != f.lane.Location() {
+		t.Fatalf("locations %q, %q", old.Location(), f.lane.Location())
+	}
+	if _, err := f.st.DB().ExecContext(ctx, `UPDATE tasks SET target_generation = 'old-gen', location = ''`); err != nil {
+		t.Fatal(err)
+	}
+	writeScorerResults(t, f.taskDir)
+	m, err := NewMultiBackend(map[string]Backend{"local": f.lane}, f.st, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.CompleteRetiringLane("local", "old-gen", old) // retired while running
+	f.lane.reconcileJobFiles(ctx, true, true)
+	if rows, _ := f.st.ListResultRecords(ctx, "job"); len(rows) != 0 {
+		t.Fatalf("active lane read another generation's unlocated version: %+v", rows)
+	}
+	// the fixture's active lane is not started: its own refresh times out
+	refreshCtx, cancel := context.WithTimeout(ctx, time.Second)
+	_ = m.RefreshJob(refreshCtx, "job")
+	cancel()
+	if rows, err := f.st.ListResultRecords(ctx, "job"); err != nil || len(rows) != 1 {
+		t.Fatalf("experiment refresh left the kept generation's results: %+v, %v", rows, err)
+	}
+	row, _ := f.st.GetTask(ctx, "task")
+	if f.lane.scansFiles(*row) || !old.scansFiles(*row) {
+		t.Fatal("the version must be scanned by the kept generation only")
+	}
+	// a located version on the shared filesystem: routed to its own
+	// generation's kept lane, never scanned twice
+	row.Location = f.lane.Location()
+	if f.lane.scansFiles(*row) == old.scansFiles(*row) {
+		t.Fatal("exactly one lane scans a located version")
+	}
+}
+
+func writeScorerResults(t *testing.T, taskDir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(taskDir, "results.scorer.jsonl"),
+		[]byte(`{"ts":1,"section":"eval","axes":{},"metrics":{"acc":0.9}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

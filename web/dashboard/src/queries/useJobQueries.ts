@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { jobsApi } from '@/apis/jobs'
 import { useConfigStore } from '@/stores/config'
 import { useCancelling } from '@/composables/useCancelling'
-import { qk } from './keys'
+import { qk, viewsOfJob } from './keys'
 import type { JobDetail } from '@/types/api'
 
 // List pages tolerate 5s freshness (the old Overview poll); detail pages
@@ -168,9 +168,11 @@ export function useJobActions() {
   const config = useConfigStore()
   const { markTasks } = useCancelling()
 
+  // the job, the lists, and every saved view that shows it
   const invalidateJob = (id: string) => {
     qc.invalidateQueries({ queryKey: qk.job(id) })
     qc.invalidateQueries({ queryKey: qk.jobs })
+    qc.invalidateQueries({ predicate: viewsOfJob(id) })
   }
   const invalidateArchive = (project?: string) => {
     qc.invalidateQueries({ queryKey: qk.jobs })

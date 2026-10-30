@@ -140,7 +140,11 @@ func classifyAppend(plan *submitplan.Plan, t *appendTarget, rerun []string) (job
 		rows[i] = job.Row{Run: task.RunName, Params: task.Params}
 	}
 	existing := ExistingCells(t.tasks, t.picks, t.batches)
-	cells, err := job.ClassifyCells(rows, existing, exclude, rerun, plan.CommandTemplate)
+	rules := job.CommandRules{Exclude: exclude}
+	if plan.EffectiveConfig != nil {
+		rules.Flags = plan.EffectiveConfig.FlagParams()
+	}
+	cells, err := job.ClassifyCells(rows, existing, rules, rerun, plan.CommandTemplate)
 	if err != nil {
 		return job.AppendSummary{}, fmt.Errorf("--into %s: %w", t.job.ID, err)
 	}

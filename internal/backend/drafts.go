@@ -365,7 +365,9 @@ func (m *MultiBackend) draftYAML(ctx context.Context, d *store.DraftRow, cfg job
 		for _, p := range proj.Params {
 			in.ParamOrder = append(in.ParamOrder, p.Name)
 		}
+		in.Rules.Flags = proj.FlagParams()
 	}
+	in.Rules.Exclude = m.schedulerParams(ctx, d.Project, d.Target)
 	return job.ExportYAML(in)
 }
 
@@ -547,15 +549,16 @@ func (m *MultiBackend) storedAppendSummary(ctx context.Context, cfg job.JobConfi
 	for name := range job.SubmittedSchedulerParams(batchConfigJSON(batches)) {
 		exclude[name] = true
 	}
+	rules := job.CommandRules{Exclude: exclude}
 	projectCmd := ""
 	if proj, err := m.registry.GetCached(ctx, cfg.Project); err == nil {
-		projectCmd = proj.CmdTemplate
+		projectCmd, rules.Flags = proj.CmdTemplate, proj.FlagParams()
 	}
 	command := cfg.Command
 	if command == "" {
 		command = projectCmd
 	}
-	cells, err := job.ClassifyCells(rows, remote.ExistingCells(tasks, picks, batches), exclude, cfg.Rerun, command)
+	cells, err := job.ClassifyCells(rows, remote.ExistingCells(tasks, picks, batches), rules, cfg.Rerun, command)
 	if err != nil {
 		return nil, err
 	}

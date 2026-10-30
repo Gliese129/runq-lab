@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"math"
+	"slices"
 	"sort"
 
 	"github.com/gliese129/runq-lab/internal/workspace"
@@ -44,10 +45,12 @@ func (l curveLine) upTo(maxStep float64) curveLine {
 
 // meanLine averages lines at the steps every one of them logged — never at
 // a step some line lacks, so lines decimated or logged differently are not
-// misread by position. A step where any line has a gap is a gap. lo/hi is
-// mean ± std (sample) where n ≥ 2. The result is thinned to points (gaps
-// kept). ok is false when the lines share fewer than two steps: there is
-// no honest mean to draw.
+// misread by position. A step where any line logged a gap is a gap in the
+// mean, whether or not the others logged that step: averaging only the
+// shared steps must not join a line across its break. lo/hi is mean ± std
+// (sample) where n ≥ 2. The result is thinned to points (gaps kept). ok is
+// false when the lines share fewer than two steps: there is no honest mean
+// to draw.
 func meanLine(lines []curveLine, points int) (mean curveLine, n []int, partial, ok bool) {
 	if len(lines) == 0 {
 		return curveLine{}, nil, false, false
@@ -57,6 +60,14 @@ func meanLine(lines []curveLine, points int) (mean curveLine, n []int, partial, 
 		at[i] = make(map[float64]int, len(l.Step))
 		for j, s := range l.Step {
 			at[i][s] = j
+		}
+	}
+	gapAt := map[float64]bool{}
+	for _, l := range lines {
+		for j, s := range l.Step {
+			if v := l.Value[j]; math.IsNaN(v) || math.IsInf(v, 0) {
+				gapAt[s] = true
+			}
 		}
 	}
 	var common []float64
@@ -81,16 +92,21 @@ func meanLine(lines []curveLine, points int) (mean curveLine, n []int, partial, 
 			partial = true
 		}
 	}
+	steps := slices.Clone(common)
+	for s := range gapAt {
+		if !slices.Contains(common, s) {
+			steps = append(steps, s) // a break only some lines logged
+		}
+	}
+	sort.Float64s(steps)
 	k := float64(len(lines))
-	for _, s := range common {
-		sum, gap := 0., false
+	for _, s := range steps {
+		sum, gap := 0., gapAt[s]
 		for i, l := range lines {
-			v := l.Value[at[i][s]]
-			if math.IsNaN(v) || math.IsInf(v, 0) {
-				gap = true
+			if gap {
 				break
 			}
-			sum += v
+			sum += l.Value[at[i][s]]
 		}
 		mean.Step = append(mean.Step, s)
 		n = append(n, len(lines))
