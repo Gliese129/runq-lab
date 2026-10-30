@@ -19,7 +19,7 @@ step, then act or report; one retry is usually enough to tell a blip from a faul
 | `… was registered as pj… (renamed?)` on `runq project` | the project was renamed | set `project_name:` in the file to the new name |
 | `project "x" is archived` | archived | `runq archive x --restore` |
 | `target "x" is not declared in project … targets` / `is pinned to target` | project home rules | add `x` to the project's `targets:` (and `.rsync` for what to mirror) |
-| `unknown command "daemon"` / `"sweep"` / `"best"` … | removed in v0.6 | see SKILL.md §1 (serve / submit / results) |
+| `unknown command "daemon"` / `"sweep"` / `"best"` … | removed in v0.6 | see `references/migration.md` |
 | `unknown flag: --x` | wrong flag | `runq <cmd> --help` — one call, then use it |
 | `runq logs` never returns / killed with 137 | it follows by default | `--no-follow -n N` or `--grep '<re>' -n N` |
 | `runq logs` times out on HPC | SSH slow | retry once; or `ssh <host> tail -n 200 '<log_path>'` (path from `runq show <task_id>`) |

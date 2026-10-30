@@ -104,4 +104,4 @@ does not need rewriting at every submit.
 
 Notify on completion, a fault fixed (what, cause, new version link), a deviation
 that needs a decision, or compute you cannot keep busy. Stay quiet otherwise.
-Use the format in SKILL.md §6.
+Use the format in SKILL.md, "Reporting to the researcher".
