@@ -49,6 +49,7 @@ export function useJobDetailQuery(jobId: MaybeRefOrGetter<string>) {
   return useQuery({
     queryKey: computed(() => qk.job(toValue(jobId))),
     queryFn: ({ signal }) => jobsApi.get(toValue(jobId), { silent: true, signal }),
+    enabled: computed(() => !!toValue(jobId)),
     // Live only while the job is: terminal jobs stop polling entirely.
     refetchInterval: (query) => {
       const s = query.state.data?.job.status

@@ -67,5 +67,9 @@ export function useSnackbar() {
     info: (text: string, action?: string, onAction?: () => void) =>
       show({ text, color: 'info', action, onAction, timeout: action ? -1 : 5000 }),
     warn: (text: string) => show({ text, color: 'warning', timeout: 6000 }),
+    // A done, reversible action: the bar names what happened and offers
+    // Undo for a few seconds (web-action-tiers, tier 1).
+    undoable: (text: string, onUndo: () => void) =>
+      show({ text, action: i18n.global.t('common.undo'), onAction: onUndo, timeout: 6000 }),
   }
 }

@@ -6,7 +6,6 @@
   <svg
     v-if="iconMode"
     class="status-glyph"
-    :class="{ 'icon-spin': s.animated }"
     :width="size"
     :height="size"
     viewBox="0 0 24 24"
@@ -19,7 +18,7 @@
   <span
     v-else
     class="status-dot"
-    :class="{ 'status-dot--pulse': s.animated }"
+    :class="{ 'status-dot--pulse': s.animated && !still }"
     :style="dotStyle"
     :title="label"
     role="img"
@@ -37,7 +36,10 @@ const props = withDefaults(defineProps<{
   status: string
   kind?: StatusKind
   size?: number
-}>(), { kind: 'task', size: 8 })
+  /** the state may be out of date (stale target, daemon away): no motion,
+   *  and a live state shows as a hollow ring instead of a solid dot */
+  still?: boolean
+}>(), { kind: 'task', size: 8, still: false })
 
 const { t, te } = useI18n()
 
@@ -51,12 +53,14 @@ const label = computed(() => {
 })
 
 const iconPath = computed(() => MDI_PATHS[s.value.icon] ?? '')
-const iconMode = computed(() => props.size >= 10 && iconPath.value !== '')
+// Live states are a breathing dot at every size (a spinning glyph per row
+// is noise); settled states use their glyph from 10px up.
+const iconMode = computed(() => props.size >= 10 && iconPath.value !== '' && !s.value.animated)
 
 const dotStyle = computed(() => ({
   width: `${props.size}px`,
   height: `${props.size}px`,
-  ...(s.value.hollow
+  ...(s.value.hollow || (props.still && s.value.animated)
     ? { background: 'transparent', border: `2px solid ${s.value.css}` }
     : { background: s.value.css }),
 }))

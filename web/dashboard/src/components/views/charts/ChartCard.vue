@@ -37,7 +37,7 @@
       ref="screenEl" class="chart-screen" :class="{ wide: width === 'double' }"
       @mousemove="onMove" @mouseleave="pointer = null"
     >
-      <ChartThemeScope v-if="comp" :theme="screen">
+      <ChartThemeScope v-if="comp" :theme="screen" :width="screenWidth">
         <component :is="comp" :result="result" :spec="spec" :width="width" :project="project" :view="view" :index="index" :jobs="jobs" />
       </ChartThemeScope>
       <div v-else class="text-caption pa-4">{{ t('views.unknown_template', { name: spec.template }) }}</div>
@@ -57,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, type Component } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ChartSpec, ViewResult } from '@/types/views'
 import { useSnackbar } from '@/composables/useSnackbar'
@@ -103,6 +103,19 @@ provideHiddenSeries()
 // (row, column of the result); the card says what that value is.
 const hot = useViewHover()
 const screenEl = ref<HTMLElement | null>(null)
+// Screen charts draw at the card's own width (text at its real size); the
+// paper copy keeps the column presets.
+const screenWidth = ref(0)
+let resize: ResizeObserver | null = null
+const fit = (w: number) => { if (w > 0) screenWidth.value = Math.max(280, Math.floor(w)) }
+onMounted(() => {
+  if (!screenEl.value) return
+  fit(screenEl.value.getBoundingClientRect().width)
+  if (typeof ResizeObserver === 'undefined') return
+  resize = new ResizeObserver(([e]) => fit(e.contentRect.width))
+  resize.observe(screenEl.value)
+})
+onBeforeUnmount(() => resize?.disconnect())
 const pointer = ref<{ x: number; y: number; w: number } | null>(null)
 function onMove(e: MouseEvent) {
   const card = screenEl.value?.parentElement?.getBoundingClientRect()
@@ -203,7 +216,6 @@ async function exportPdf() {
 .chart-anim { font-size: 12px; color: rgb(var(--v-theme-primary)); margin-bottom: 4px; }
 /* The figure geometry scaled ~1.45×: 13px labels, 2px lines, 8px markers. */
 .chart-screen { overflow-x: auto; }
-.chart-screen :deep(svg) { display: block; width: 100%; max-width: 480px; height: auto; margin: 0 auto; }
-.chart-screen.wide :deep(svg) { max-width: 1000px; }
+.chart-screen :deep(svg) { display: block; max-width: 100%; height: auto; }
 .chart-paper-copy { position: absolute; left: -100000px; top: 0; width: 0; height: 0; overflow: hidden; }
 </style>

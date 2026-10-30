@@ -58,7 +58,10 @@
         </v-col>
         <v-col cols="6" sm="3">
           <div class="text-caption text-on-surface-variant">{{ t('targets.jobs') }}</div>
-          {{ t('targets.jobs_counts', { running: r.running, pending: r.pending, total: r.jobs }) }}
+          <router-link v-if="r.jobs" class="counts-link" :to="{ name: 'overview', query: { q: `target:${r.name}` } }">
+            {{ t('targets.jobs_counts', { running: r.running, pending: r.pending, total: r.jobs }) }}
+          </router-link>
+          <template v-else>{{ t('targets.jobs_counts', { running: r.running, pending: r.pending, total: r.jobs }) }}</template>
         </v-col>
         <v-col cols="6" sm="3">
           <div class="text-caption text-on-surface-variant">max_inflight</div>
@@ -179,6 +182,8 @@ async function remove(r: TargetRow) {
 </script>
 
 <style scoped>
+.counts-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: rgb(var(--v-theme-outline-variant)); }
+.counts-link:hover { text-decoration-color: currentColor; }
 .remove-btn { color: rgb(var(--v-theme-on-surface-variant)); }
 .remove-btn:hover { color: rgb(var(--v-theme-error)); }
 .template,

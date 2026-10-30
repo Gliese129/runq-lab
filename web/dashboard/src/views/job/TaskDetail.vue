@@ -260,16 +260,16 @@
           {{ t('log.reload_start') }}
         </v-btn>
       </div>
-      <div class="d-flex flex-wrap">
-        <!-- Log content (virtualized shared surface, incl. search bar) -->
-        <LogSurfaceView
-          :surface="surface"
-          :items="renderItems"
-          :log-loading="logLoading"
-          :line-number-base="lineNumberBase"
-          :empty-text="task.status === 'pending' ? t('task.waiting_start') : t('log.no_output')"
-        />
-        <!-- Side panel -->
+      <!-- Display options (all on by default) live in a menu; the log keeps
+           the full width. -->
+      <div class="d-flex justify-end mb-1">
+        <v-menu location="bottom end" :close-on-content-click="false">
+          <template #activator="{ props: menu }">
+            <v-btn v-bind="menu" size="small" variant="text">
+              {{ t('log.processors') }}<v-icon end size="14">mdi-chevron-down</v-icon>
+            </v-btn>
+          </template>
+          <v-card class="pa-2" min-width="260">
         <LogSidePanel
           :toggles="logStore.processors"
           :motif-groups="pipelineResult.motifGroups"
@@ -283,7 +283,18 @@
           @update-rule="logStore.updateRule"
           @remove-rule="logStore.removeRule"
         />
+          </v-card>
+        </v-menu>
       </div>
+      <!-- Log content (virtualized shared surface, incl. search bar) -->
+      <LogSurfaceView
+        :surface="surface"
+        :items="renderItems"
+        :log-loading="logLoading"
+        :line-number-base="lineNumberBase"
+        :start-at-error="task.status === 'failed'"
+        :empty-text="task.status === 'pending' ? t('task.waiting_start') : t('log.no_output')"
+      />
     </v-card>
   </div>
 

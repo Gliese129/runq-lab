@@ -12,7 +12,8 @@ export const RANK_RE = /\[(?:Rank|rank|GPU|Worker)[- ]?(\d+)\]/i
 const METRIC_SRC = /\b(\w+)\s*=\s*(\d+\.?\d*(?:[eE][+-]?\d+)?)\b/.source
 export const TB_START = /Traceback \(most recent call last\):/
 export const TB_FILE  = /^\s+File "([^"]+)"/
-export const TB_ERROR = /^\w+(?:Error|Exception|Warning):/
+// `ValueError: …`, `subprocess.CalledProcessError: …`, or a bare `AssertionError`
+export const TB_ERROR = /^[\w.]*\w(?:Error|Exception|Warning|Interrupt)\b(?::|\s*$)/
 export const FRAMEWORK_PATH = /site-packages|lib\/python|<frozen|<string>/
 const LEVEL_RULES: Array<[RegExp, LineTag]> = [
   [/\bERROR\b|\bCRITICAL\b|\bFATAL\b/,  'error'],

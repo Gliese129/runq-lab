@@ -20,7 +20,9 @@
         </g>
       </g>
     </g>
-    <text :transform="`translate(11,${g.M.t + g.plotH / 2}) rotate(-90)`" text-anchor="middle" font-size="10" :fill="th.ink">{{ yTitle }}</text>
+    <!-- On screen the card title already names the metric; the paper
+         figure keeps its rotated axis title. -->
+    <text v-if="th.name === 'paper'" :transform="`translate(11,${g.M.t + g.plotH / 2}) rotate(-90)`" text-anchor="middle" font-size="10" :fill="th.ink">{{ yTitle }}</text>
     <text :x="g.M.l + g.plotW / 2" :y="g.H - 4" text-anchor="middle" font-size="10" :fill="th.ink">{{ xTitle }}</text>
   </svg>
 </template>

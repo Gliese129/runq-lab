@@ -123,6 +123,8 @@ export interface FoldSummaryItem {
   lineCount: number
   repeats?: number       // for interleaved patterns
   variant: 'drain' | 'motif' | 'traceback'  // drives styling
+  /** traceback: the last frame in the user's own code (file line + code) */
+  detail?: string
 }
 
 /** Which kind of expanded block a flattened item belongs to */

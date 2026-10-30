@@ -1,37 +1,15 @@
 <template>
   <div class="overview" :class="{ wide }">
     <div class="main-col">
-    <!-- Connection error: the one thing worth interrupting for -->
-    <v-slide-y-transition>
-      <v-card v-if="!conn.connected.value" color="error" variant="tonal" class="mb-4 pa-3">
-        <div class="d-flex align-center ga-2">
-          <v-icon size="18">{{ conn.daemonDown.value ? 'mdi-server-off' : 'mdi-connection' }}</v-icon>
-          <div class="flex-grow-1">
-            <div class="text-body-2 font-weight-medium">{{ t(conn.statusKey.value) }}</div>
-            <div v-if="conn.daemonDown.value" class="text-caption d-flex align-center ga-1">
-              <span>{{ t('status.daemon_down_hint') }}</span>
-              <code class="px-1">runq serve -d</code>
-            </div>
-            <div v-else class="text-caption">{{ conn.lastError.value }}</div>
-          </div>
-          <v-btn variant="tonal" size="x-small" @click="jobsQuery.refetch()">{{ t('common.retry') }}</v-btn>
-        </div>
-      </v-card>
-    </v-slide-y-transition>
+    <StaleStrip :targets="stale" />
 
-    <!-- Open drafts: plans waiting for review / submit (runq draft …) -->
-    <section v-if="drafts.length" class="mb-4">
-      <div class="bucket-title">{{ t('drafts.open', { n: drafts.length }) }}</div>
-      <router-link
-        v-for="d in drafts" :key="d.id" class="draft-row"
-        :to="{ name: 'draft', params: { draftId: d.id } }"
-      >
-        <code class="job-id">{{ d.id.slice(0, 10) }}</code>
-        <span class="draft-name text-truncate">{{ d.name || t('drafts.unnamed') }}</span>
-        <span class="text-caption text-on-surface-variant text-truncate">{{ d.project }}</span>
-        <span class="text-caption text-on-surface-variant">{{ t('drafts.runs', d.rows) }}</span>
-        <span class="text-caption text-on-surface-variant">rev {{ d.rev }}<template v-if="d.edited"> · {{ t('drafts.edited') }}</template></span>
-      </router-link>
+    <!-- Open drafts: one summary line; the rows open on demand -->
+    <section v-if="drafts.length" class="mb-3">
+      <button type="button" class="drafts-toggle" :aria-expanded="draftsOpen" @click="draftsOpen = !draftsOpen">
+        <span>{{ t('drafts.open', { n: drafts.length }) }}</span>
+        <v-icon size="14">{{ draftsOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+      </button>
+      <DraftRows v-if="draftsOpen" :drafts="drafts" show-project class="mt-1" />
     </section>
 
     <!-- Find a job: one search box, then colour chips per project -->
@@ -84,6 +62,7 @@
     </div>
 
     <v-card v-else class="pa-8 text-center" variant="flat">
+      <ChibiMascot :size="64" mood="happy" class="mb-2" />
       <div class="text-h6 mb-1">{{ t('overview.no_projects') }}</div>
       <div class="text-body-2 text-on-surface-variant">{{ t('overview.no_projects_hint') }}</div>
       <div class="mt-4 text-caption text-on-surface-variant">
@@ -130,7 +109,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 import { useDraftsQuery } from '@/queries/useDraftQueries'
@@ -141,11 +120,17 @@ import { useJobsListQuery } from '@/queries/useJobQueries'
 import { useSnackbar } from '@/composables/useSnackbar'
 import JobList from '@/components/JobList.vue'
 import ProjectDot from '@/components/ProjectDot.vue'
+import DraftRows from '@/components/DraftRows.vue'
+import StaleStrip from '@/components/StaleStrip.vue'
+import ChibiMascot from '@/components/ChibiMascot.vue'
+import { staleTargets } from '@/utils/freshness'
 import type { JobSummary } from '@/types/api'
-import { commonWordsByProject, filterJobs, groupJobs } from './jobListView'
+import { commonWordsByProject, filterJobs, groupJobs, SPLIT_MIN_WIDTH } from './jobListView'
+import { useListKeys } from '@/composables/useListKeys'
 
 const { t } = useI18n()
 const router = useRouter()
+const route = useRoute()
 const projectStore = useProjectStore()
 const conn = useConnection()
 const snack = useSnackbar()
@@ -153,10 +138,12 @@ const snack = useSnackbar()
 const jobsQuery = useJobsListQuery()
 const jobList = computed(() => jobsQuery.data.value ?? [])
 const jobsLoading = computed(() => jobsQuery.isLoading.value)
+const stale = computed(() => staleTargets(jobList.value))
 onMounted(() => { projectStore.fetch() })
 
 // ── Search + project chips (remembered for the session) ──
-const query = ref(sessionStorageGet('runq-overview-q') ?? '')
+// ?q= (e.g. from a target's counts) wins over the remembered search.
+const query = ref(typeof route.query.q === 'string' ? route.query.q : (sessionStorageGet('runq-overview-q') ?? ''))
 const picked = ref(new Set<string>(JSON.parse(sessionStorageGet('runq-overview-p') ?? '[]')))
 watch(query, (q) => sessionStorageSet('runq-overview-q', q ?? ''))
 function toggleProject(name: string) {
@@ -195,17 +182,19 @@ const shownGroups = computed(() => {
 const hiddenCount = computed(() =>
   filtered.value.length - shownGroups.value.reduce((n, g) => n + g.jobs.length, 0))
 
-// ≥1280px: list + preview side by side (with the nav drawer, three columns);
-// narrower: one column, a click opens the job page.
+// Wide: list + preview side by side (with the nav drawer, three columns);
+// narrower: one column, a click opens the job page. The picked experiment
+// lives in ?exp= so a reload or a shared link keeps it.
 const { width } = useDisplay()
-const wide = computed(() => width.value >= 1280)
-const selectedId = ref('')
-watch(jobList, (list) => {
-  if (!selectedId.value && list.length) selectedId.value = list[0].id
-}, { immediate: true })
+const wide = computed(() => width.value >= SPLIT_MIN_WIDTH)
+const selectedId = computed({
+  get: () => (typeof route.query.exp === 'string' ? route.query.exp : '') || (jobList.value[0]?.id ?? ''),
+  set: (id: string) => { router.replace({ query: { ...route.query, exp: id || undefined } }) },
+})
 
 const draftsQuery = useDraftsQuery()
 const drafts = computed(() => draftsQuery.data.value ?? [])
+const draftsOpen = ref(false)
 
 function openJob(j: JobSummary) {
   if (wide.value && selectedId.value !== j.id) {
@@ -215,17 +204,17 @@ function openJob(j: JobSummary) {
   router.push({ name: 'job-detail', params: { project: j.project, jobId: j.id } })
 }
 
-// "/" focuses search from anywhere on the page.
+// Keys: / search, ↑↓ pick, ↵ open the picked experiment.
 const searchField = ref<{ focus: () => void } | null>(null)
-function onKey(e: KeyboardEvent) {
-  const el = e.target as HTMLElement | null
-  if (e.key === '/' && !(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))) {
-    e.preventDefault()
-    searchField.value?.focus()
-  }
-}
-onMounted(() => window.addEventListener('keydown', onKey))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+useListKeys({
+  ids: () => shownGroups.value.flatMap((g) => g.jobs.map((j) => j.id)),
+  selected: selectedId,
+  open: (id) => {
+    const j = jobList.value.find((x) => x.id === id)
+    if (j) router.push({ name: 'job-detail', params: { project: j.project, jobId: j.id } })
+  },
+  focusSearch: () => searchField.value?.focus(),
+})
 
 // ── Archived projects ──
 const archivedOpen = ref(false)
@@ -248,26 +237,19 @@ function sessionStorageSet(k: string, v: string) {
 </script>
 
 <style scoped>
-.overview { max-width: 1040px; margin: 0 auto; }
+.overview { margin: 0 auto; }
 .overview.wide {
   max-width: none;
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 40%); gap: 20px; align-items: start;
 }
 .main-col { min-width: 0; }
 .side-empty { color: rgb(var(--v-theme-on-surface-variant)); padding: 24px; }
-.draft-row {
-  display: grid; grid-template-columns: 100px minmax(0, 1fr) minmax(0, 160px) 64px 110px; gap: 12px; align-items: center;
-  padding: 8px 14px; margin-bottom: 6px; border-radius: 8px; text-decoration: none; color: inherit;
-  background: rgb(var(--v-theme-surface));
-  border: 0.5px dashed rgb(var(--v-theme-outline-variant));
-}
-.draft-row:hover { border-color: rgb(var(--v-theme-on-surface), 0.3); }
-.draft-name { font-size: 14px; }
 .job-id { font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); background: none; padding: 0; }
-@media (max-width: 640px) {
-  .draft-row { grid-template-columns: minmax(0, 1fr) 64px; }
-  .draft-row .job-id, .draft-row > span:nth-child(3), .draft-row > span:nth-child(5) { display: none; }
+.drafts-toggle {
+  display: inline-flex; align-items: center; gap: 4px; background: none; border: none; padding: 2px 0;
+  cursor: pointer; font-size: var(--fs-base); color: rgb(var(--v-theme-on-surface-variant));
 }
+.drafts-toggle:hover { color: rgb(var(--v-theme-on-surface)); }
 .bucket-title {
   font-size: 12px;
   color: rgb(var(--v-theme-on-surface-variant));

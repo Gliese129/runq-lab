@@ -37,4 +37,12 @@ describe('StatusDot', () => {
     const w = mount(StatusDot, { props: { status: 'killed', kind: 'job' as const, size: 14 }, global: globalZh })
     expect(w.find('svg').attributes('aria-label')).toBe('已终止')
   })
+
+  it('shows live states as a breathing dot at every size, never a spinning glyph', () => {
+    const w = mount(StatusDot, { props: { status: 'running', size: 14 }, global: globalEn })
+    expect(w.find('svg').exists()).toBe(false)
+    expect(w.find('.status-dot--pulse').exists()).toBe(true)
+    const still = mount(StatusDot, { props: { status: 'running', size: 14, still: true }, global: globalEn })
+    expect(still.find('.status-dot--pulse').exists()).toBe(false)
+  })
 })

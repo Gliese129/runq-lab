@@ -33,8 +33,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { ChartSpec, ViewResult } from '@/types/views'
-import { FONT, INK, MUTED, TICK_ANGLE, WIDTHS, categoryTicks, sequential, tickLabel, type WidthPreset } from './chartGeom'
-import { useChartTheme } from './chartGeom'
+import { FONT, INK, MUTED, TICK_ANGLE, categoryTicks, sequential, tickLabel, type WidthPreset } from './chartGeom'
+import { useChartTheme, useChartWidth } from './chartGeom'
 import { column, distinct, isPct } from './chartData'
 import { cellNumber, formatKey, keyLabel } from '../viewFormat'
 
@@ -57,7 +57,7 @@ const fullRows = computed(() => (props.domain ?? props.result).rows.filter((r) =
 const xs = computed(() => sortVals(distinct(fullRows.value.map((r) => r.key[xKey.value]))))
 const ys = computed(() => sortVals(distinct(fullRows.value.map((r) => r.key[yKey.value]))))
 
-const W = computed(() => WIDTHS[props.width])
+const W = useChartWidth(() => props.width)
 // Left margin fits the longest y label plus the rotated axis title.
 const M = computed(() => ({ l: 22 + Math.max(...ys.value.map((v) => formatKey(v, props.result.key_formats?.[yKey.value]).length), 2) * 5.6, r: 44, t: 8, b: 30 }))
 const cw = computed(() => Math.min(70, (W.value - M.value.l - M.value.r) / Math.max(1, xs.value.length)))

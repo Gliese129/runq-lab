@@ -14,114 +14,117 @@
       @unarchive="unarchiveJob"
     />
 
-    <!-- Tab strip (RQ2-4 ②, kit ScreensJob): tasks | results | data.
-         Deep-linkable via ?tab= — a results URL pasted in the lab chat
-         must land on the results. -->
+    <!-- Tabs: cells | results | curves | files. Deep-linkable via ?tab=;
+         older links (?tab=tasks / plan) land on cells. -->
     <v-tabs v-model="tab" density="compact" class="mb-3" color="primary">
-      <v-tab value="tasks" size="small">
-        {{ t('job.tab_tasks') }} ({{ detail.tasks.length }})
-      </v-tab>
-      <v-tab value="plan" size="small">{{ t('job.tab_plan') }} ({{ cells.length }})</v-tab>
+      <v-tab value="cells" size="small">{{ t('job.tab_plan') }} ({{ cells.length }})</v-tab>
       <v-tab value="results" size="small">{{ t('job.tab_results') }}</v-tab>
       <v-tab value="curves" size="small">{{ t('job.tab_curves') }}</v-tab>
       <v-tab value="data" size="small">{{ t('job.tab_data') }}</v-tab>
     </v-tabs>
 
-    <template v-if="tab === 'tasks'">
-    <!-- Filter bar -->
-    <div v-if="statusOptions.length" class="d-flex align-center ga-2 mb-3 flex-wrap">
-      <!-- role=button + aria-pressed: VChip is a focusable span and already
-           handles Enter/Space itself; SR users just need the toggle semantics. -->
-      <v-chip
-        v-for="s in statusOptions"
-        :key="s.value"
-        role="button"
-        :aria-pressed="statusFilter === s.value"
-        :variant="statusFilter === s.value ? 'flat' : 'outlined'"
-        :color="statusFilter === s.value ? 'primary' : undefined"
-        size="small"
-        @click="statusFilter = statusFilter === s.value ? '' : s.value"
-      >
-        <StatusDot v-if="s.dot" :status="s.dot" :size="6" class="mr-1" />
-        {{ s.label }}
-      </v-chip>
-    </div>
+    <!-- Cells: each cell (row name) once, with the version it shows — the
+         pinned one, else latest; the picker switches it. A row opens the
+         cell panel beside the table (?cell=); narrow screens show the panel
+         alone. -->
+    <div v-if="tab === 'cells'" class="cells-layout" :class="{ split: !!currentCell && !narrow }">
+      <div v-show="!(currentCell && narrow)" class="cells-main">
+        <div v-if="pickedCount" class="pick-bar">
+          <span>{{ t('cells.selected_n', { n: pickedCount }) }}</span>
+          <v-btn v-if="pickedLive.length" size="small" variant="text" class="kill" @click="killPicked">
+            {{ t('cells.kill_n', { n: pickedLive.length }) }}
+          </v-btn>
+          <v-btn size="small" variant="text" @click="picked = cells.map(() => false)">{{ t('cells.clear') }}</v-btn>
+        </div>
+        <PlanTable
+          v-if="detail.plan"
+          :plan="detail.plan"
+          :statuses="cells.map((c) => displayStatus(c.selected))"
+          :row-links="cells.map(() => true)"
+          :tags="cellTags"
+          :accent="cellAccent"
+          :dim="cellDim"
+          :extra-header="t('cells.version')"
+          :selected="picked"
+          :current="currentIndex"
+          :flash="cells.map((c) => cellFlash.flashing.value.has(c.name))"
+          @open="openCell"
+          @toggle="(i) => (picked[i] = !picked[i])"
+          @toggle-all="(on) => (picked = cells.map(() => on))"
+        >
+          <template #extra="{ index }">
+            <select
+              class="version-pick" :value="cells[index].pinned ? cells[index].selected.id : LATEST"
+              :aria-label="t('cells.version_of', { cell: cells[index].name })"
+              :disabled="pinning === cells[index].name"
+              @change="pin(cells[index], ($event.target as HTMLSelectElement).value)"
+            >
+              <option :value="LATEST">{{ t('cells.latest', { v: latestOf(cells[index]) }) }}</option>
+              <option v-for="o in versionOptions(cells[index])" :key="o.id" :value="o.id">{{ o.label }}</option>
+            </select>
+            <div v-if="whyOf(cells[index])" class="ver-why" :title="whyOf(cells[index])">{{ whyOf(cells[index]) }}</div>
+          </template>
+        </PlanTable>
+        <div v-if="batches.length" class="batches mt-4">
+          <div class="text-caption font-weight-medium mb-1">{{ t('plan.batches') }}</div>
+          <div v-for="b in batches" :key="b.seq" class="batch" :class="{ on: focusSeq === b.seq }">
+            <button
+              type="button" class="seq mono" :aria-pressed="focusSeq === b.seq" :title="t('plan.batch_focus')"
+              @click="focusSeq = focusSeq === b.seq ? 0 : b.seq"
+            >s{{ b.seq }}</button>
+            <span>{{ t('plan.batch_tasks', { n: b.task_count }) }}</span>
+            <span class="text-on-surface-variant">{{ new Date(b.submitted_at * 1000).toLocaleString() }}</span>
+            <span v-if="b.note" class="note text-truncate" :title="b.note">{{ b.note }}</span>
+            <span v-else-if="b.name" class="text-truncate">{{ b.name }}</span>
+            <code v-if="b.command" class="cmd text-truncate" :class="{ changed: b.command_changed }" :title="b.command">{{ b.command }}</code>
+            <router-link v-if="b.draft_id" class="draft mono" :to="{ name: 'draft', params: { draftId: b.draft_id } }" :title="t('plan.batch_draft')">{{ b.draft_id }}</router-link>
+          </div>
+          <!-- Appends waiting for review land here as the next submission;
+               clicking one marks the cells it would touch. -->
+          <div v-for="(d, k) in intoDrafts" :key="d.id" class="batch pending" :class="{ on: focusDraft === d.id }">
+            <button
+              type="button" class="seq mono" :aria-pressed="focusDraft === d.id" :title="t('plan.batch_focus')"
+              @click="toggleDraftFocus(d.id)"
+            >s{{ batches.length + 1 + k }}</button>
+            <span class="pending-tag">{{ t('drafts.pending_tag') }}</span>
+            <span>{{ t('drafts.runs', d.rows) }}</span>
+            <span v-if="d.note" class="note text-truncate" :title="d.note">{{ d.note }}</span>
+            <router-link class="draft mono" :to="{ name: 'draft', params: { draftId: d.id } }">{{ d.id }}</router-link>
+          </div>
+          <div v-if="focusDraft && draftNewCells.length" class="focus-hint text-caption text-on-surface-variant">
+            {{ t('drafts.new_cells', { cells: draftNewCells.join(', ') }) }}
+          </div>
+          <div v-if="focusSeq" class="focus-hint text-caption text-on-surface-variant">
+            {{ t('plan.batch_focused', { seq: focusSeq, n: cellDim.filter((d) => !d).length }) }}
+            <button type="button" class="link" @click="focusSeq = 0">{{ t('plan.batch_unfocus') }}</button>
+          </div>
+        </div>
 
-    <!-- Unified task table with param columns + sorting -->
-    <TaskTable
-      :tasks="filteredTasks"
-      :job-id="props.jobId"
-      :wandb="detail.wandb"
-      :metric-keys="detail.metric_keys"
-      :swept-params="comparedParams"
-      :last-output="lastOutput"
-      @kill-task="onKillTask"
-      @click-task="onClickTask"
-    />
-
-    <!-- W&B external link -->
-    <div v-if="wandbProject" class="mt-4">
-      <v-btn size="small" variant="tonal" :href="wandbProject.url" target="_blank"
-        :title="wandbProject.exact ? wandbProject.url : t('job.wandb_no_entity')">
-        <v-icon start size="16">mdi-chart-scatter-plot</v-icon>
-        W&B
-        <v-icon end size="14">mdi-open-in-new</v-icon>
-      </v-btn>
+        <!-- W&B external link -->
+        <div v-if="wandbProject" class="mt-4">
+          <v-btn size="small" variant="tonal" :href="wandbProject.url" target="_blank"
+            :title="wandbProject.exact ? wandbProject.url : t('job.wandb_no_entity')">
+            <v-icon start size="16">mdi-chart-scatter-plot</v-icon>
+            W&B
+            <v-icon end size="14">mdi-open-in-new</v-icon>
+          </v-btn>
+        </div>
+      </div>
+      <Transition name="panel">
+      <CellPanel
+        v-if="currentCell"
+        :cell="currentCell"
+        :status-of="displayStatus"
+        @close="closeCell"
+        @open="onClickTask"
+        @kill="onKillTask"
+      />
+      </Transition>
     </div>
-    </template>
 
     <!-- Results = this job's views (each project view rendered against this
          job alone, when it has data); the raw record table stays as the last
          choice and is the whole tab when no view applies. -->
-    <!-- Cells: each cell (row name) once, with the version it shows — the
-         pinned one, else latest; the picker switches it. Rows open that
-         version. Same table as `runq show ex…` / the draft page. -->
-    <div v-else-if="tab === 'plan'">
-      <PlanTable
-        v-if="detail.plan"
-        :plan="detail.plan"
-        :statuses="cells.map((c) => c.selected.status)"
-        :row-links="cells.map(() => true)"
-        :tags="cellTags"
-        :accent="cellAccent"
-        :dim="cellDim"
-        :extra-header="t('cells.version')"
-        @open="(i) => onClickTask(cells[i].selected.id)"
-      >
-        <template #extra="{ index }">
-          <select
-            class="version-pick" :value="cells[index].pinned ? cells[index].selected.id : LATEST"
-            :aria-label="t('cells.version_of', { cell: cells[index].name })"
-            :disabled="pinning === cells[index].name"
-            @change="pin(cells[index], ($event.target as HTMLSelectElement).value)"
-          >
-            <option :value="LATEST">{{ t('cells.latest', { v: latestOf(cells[index]) }) }}</option>
-            <option v-for="o in versionOptions(cells[index])" :key="o.id" :value="o.id">{{ o.label }}</option>
-          </select>
-          <div v-if="whyOf(cells[index])" class="ver-why" :title="whyOf(cells[index])">{{ whyOf(cells[index]) }}</div>
-        </template>
-      </PlanTable>
-      <div v-if="batches.length" class="batches mt-4">
-        <div class="text-caption font-weight-medium mb-1">{{ t('plan.batches') }}</div>
-        <div v-for="b in batches" :key="b.seq" class="batch" :class="{ on: focusSeq === b.seq }">
-          <button
-            type="button" class="seq mono" :aria-pressed="focusSeq === b.seq" :title="t('plan.batch_focus')"
-            @click="focusSeq = focusSeq === b.seq ? 0 : b.seq"
-          >s{{ b.seq }}</button>
-          <span>{{ t('plan.batch_tasks', { n: b.task_count }) }}</span>
-          <span class="text-on-surface-variant">{{ new Date(b.submitted_at * 1000).toLocaleString() }}</span>
-          <span v-if="b.note" class="note text-truncate" :title="b.note">{{ b.note }}</span>
-          <span v-else-if="b.name" class="text-truncate">{{ b.name }}</span>
-          <code v-if="b.command" class="cmd text-truncate" :class="{ changed: b.command_changed }" :title="b.command">{{ b.command }}</code>
-          <router-link v-if="b.draft_id" class="draft mono" :to="{ name: 'draft', params: { draftId: b.draft_id } }" :title="t('plan.batch_draft')">{{ b.draft_id }}</router-link>
-        </div>
-        <div v-if="focusSeq" class="focus-hint text-caption text-on-surface-variant">
-          {{ t('plan.batch_focused', { seq: focusSeq, n: cellDim.filter((d) => !d).length }) }}
-          <button type="button" class="link" @click="focusSeq = 0">{{ t('plan.batch_unfocus') }}</button>
-        </div>
-      </div>
-    </div>
-
     <div v-else-if="tab === 'results'">
       <div v-if="jobViews.length || defaultViews.length" class="d-flex flex-wrap align-center ga-2 mb-3">
         <button v-if="defaultViews.length" type="button" class="view-pick" :class="{ on: pickedView === DEFAULT }" @click="pick(DEFAULT)">{{ t('views.default_views') }}</button>
@@ -192,29 +195,31 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { useI18n } from 'vue-i18n'
 import { useConfigStore } from '@/stores/config'
 import { usePreferences } from '@/composables/usePreferences'
 import { useSnackbar } from '@/composables/useSnackbar'
 import { useConfirm } from '@/composables/useConfirm'
 import { useCancelling } from '@/composables/useCancelling'
-import { useJobDetailQuery, useCompareQuery, useJobResultsQuery, useJobActions, useJobActivityQuery, useJobDefaultViewsQuery } from '@/queries/useJobQueries'
-import { lastOutputTs } from '@/utils/lastOutput'
+import { useConnection } from '@/composables/useConnection'
+import { useCellFlash } from '@/composables/useFailureWatch'
+import { useJobDetailQuery, useCompareQuery, useJobResultsQuery, useJobActions, useJobDefaultViewsQuery } from '@/queries/useJobQueries'
 import { jobCells, commandVaries, changesLine, inPlanOrder, type CellView } from '@/utils/jobCells'
 import { useQueryClient } from '@tanstack/vue-query'
 import { qk } from '@/queries/keys'
 import { useTaskActions } from '@/queries/useTaskQueries'
 import JobHeader from './JobHeader.vue'
-import TaskTable from './TaskTable.vue'
+import CellPanel from './CellPanel.vue'
 import JobResultsCard from './JobResultsCard.vue'
 import JobDataCard from './JobDataCard.vue'
-import StatusDot from '@/components/StatusDot.vue'
 import { ApiError } from '@/apis/client'
 import { jobsApi } from '@/apis/jobs'
 import { resolveIdPrefix } from '@/utils/idPrefix'
 import { useJobViewsQuery } from '@/queries/useViewQueries'
+import { useDraftQuery, useDraftsQuery } from '@/queries/useDraftQueries'
 import ViewPanel from '@/components/views/ViewPanel.vue'
 import ViewCharts from '@/components/views/ViewCharts.vue'
 import CustomView from '@/components/views/CustomView.vue'
@@ -234,6 +239,13 @@ const prefs = usePreferences()
 const snack = useSnackbar()
 const { t } = useI18n()
 const { confirm: confirmDialog } = useConfirm()
+const conn = useConnection()
+// Actions need the daemon; while it is away say so where the click happened.
+function offline(): boolean {
+  if (conn.connected.value) return false
+  snack.error(t('status.offline_action'))
+  return true
+}
 
 // ── Server state: the query cache is the single source of truth. ──
 // Responses land under their own key — a slow response for job A can
@@ -264,19 +276,6 @@ watch(notFound, async (nf) => {
   }
 }, { immediate: true })
 
-// "Last output" per task: the cheapest signal that a long run is still
-// making progress when the code reports no metrics.
-const jobLive = computed(() => ['running', 'pending'].includes(detail.value?.job.status ?? ''))
-const activityQuery = useJobActivityQuery(() => props.jobId, jobLive, () => !!detail.value)
-const lastOutput = computed<Record<string, number>>(() => {
-  const out: Record<string, number> = {}
-  for (const series of activityQuery.data.value?.tasks ?? []) {
-    const ts = lastOutputTs(series.points)
-    if (ts) out[series.task_id] = ts
-  }
-  return out
-})
-
 const jobActions = useJobActions()
 const taskActions = useTaskActions(() => props.jobId)
 const { cancelling, prune, displayStatus } = useCancelling()
@@ -284,21 +283,44 @@ const { cancelling, prune, displayStatus } = useCancelling()
 // Clear transient cancelling entries as fresh polls land.
 watch(() => detail.value?.tasks, (tasks) => { if (tasks) prune(tasks) })
 
-// ── Tabs (RQ2-4 ②): ?tab= is the shareable truth; replace (not push) so
-// tab flips don't pollute back-button history. ──
-const TABS = new Set(['tasks', 'plan', 'results', 'curves', 'data'])
+// ── Tabs: ?tab= is the shareable truth; replace (not push) so tab flips
+// don't pollute back-button history. Older links (tasks / plan) mean cells. ──
+const TABS = new Set(['cells', 'results', 'curves', 'data'])
+const LEGACY_TABS: Record<string, string> = { tasks: 'cells', plan: 'cells' }
 // Cells: each shows one version (pinned, else latest); its row reads that
 // version's params and status.
 const batches = computed(() => detail.value?.batches ?? [])
 // in the backend plan's row order, so the per-row props line up with it
 const cells = computed(() => inPlanOrder(jobCells(detail.value?.tasks ?? [], detail.value?.pinned), detail.value?.plan))
 // A focused submission (its sN clicked) fades the cells it did not touch
-// and tags the others with the version it made.
+// and tags the others with the version it made. A focused pending append
+// (an open --into draft) tags each cell with what submitting would do.
 const focusSeq = ref(0)
+const focusDraft = ref('')
+const draftsQuery = useDraftsQuery()
+const intoDrafts = computed(() => (draftsQuery.data.value ?? []).filter((d) => d.into === props.jobId && d.status === 'open'))
+const draftQuery = useDraftQuery(focusDraft)
+const draftVerdict = computed(() => new Map((draftQuery.data.value?.append?.cells ?? []).map((c) => [c.run, c.class])))
+const draftNewCells = computed(() => (draftQuery.data.value?.append?.cells ?? []).filter((c) => c.class === 'new').map((c) => c.run))
+function toggleDraftFocus(id: string) {
+  focusDraft.value = focusDraft.value === id ? '' : id
+  focusSeq.value = 0
+}
+watch(focusSeq, (s) => { if (s) focusDraft.value = '' })
 const madeBy = (c: CellView) => c.versions.find((v) => (v.batch_seq ?? 1) === focusSeq.value)
-const cellDim = computed(() => cells.value.map((c) => !!focusSeq.value && !madeBy(c)))
-const cellAccent = computed(() => cells.value.map((c) => (focusSeq.value ? !!madeBy(c) : commandVaries(c))))
+const cellDim = computed(() => cells.value.map((c) => {
+  if (focusDraft.value) return draftVerdict.value.get(c.name) !== 'new_version' && draftVerdict.value.get(c.name) !== 'rerun'
+  return !!focusSeq.value && !madeBy(c)
+}))
+const cellAccent = computed(() => cells.value.map((c) => {
+  if (focusDraft.value) return draftVerdict.value.has(c.name) && draftVerdict.value.get(c.name) !== 'skipped'
+  return focusSeq.value ? !!madeBy(c) : commandVaries(c)
+}))
 const cellTags = computed(() => cells.value.map((c) => {
+  if (focusDraft.value) {
+    const verdict = draftVerdict.value.get(c.name)
+    return verdict ? t('drafts.cell_' + verdict) : undefined
+  }
   const made = focusSeq.value ? madeBy(c) : undefined
   if (made) return `s${focusSeq.value} → v${made.version ?? 1}`
   const parts: string[] = []
@@ -343,7 +365,8 @@ async function pin(c: CellView, value: string) {
     pinning.value = ''
   }
 }
-const tab = ref(TABS.has(String(route.query.tab)) ? String(route.query.tab) : 'tasks')
+const initialTab = LEGACY_TABS[String(route.query.tab)] ?? String(route.query.tab)
+const tab = ref(TABS.has(initialTab) ? initialTab : 'cells')
 
 const isActiveJob = computed(() => {
   const s = detail.value?.job.status
@@ -373,32 +396,8 @@ watch(() => [jobViews.value, defaultViews.value, jobViewsQuery.isFetched.value &
 }, { immediate: true })
 
 watch(tab, (v) => {
-  router.replace({ query: { ...route.query, tab: v === 'tasks' ? undefined : v } })
+  router.replace({ query: { ...route.query, tab: v === 'cells' ? undefined : v } })
 })
-
-const statusFilter = ref(prefs.lastStatusFilter.value)
-
-// Task-level filter — the "done" option matches success tasks, so it uses
-// the task success dot from statusGrammar. Computed so labels follow
-// live locale switches.
-// Only statuses that actually occur, with their counts; no chips at all
-// when every task shares one status — there is nothing to filter.
-const statusOptions = computed(() => {
-  const count = new Map<string, number>()
-  for (const task of detail.value?.tasks ?? []) {
-    const key = task.status === 'success' ? 'done' : task.status
-    count.set(key, (count.get(key) ?? 0) + 1)
-  }
-  const all = [
-    { value: 'running', label: t('status.task.running'), dot: 'running' },
-    { value: 'done', label: t('common.done'), dot: 'success' },
-    { value: 'failed', label: t('status.task.failed'), dot: 'failed' },
-    { value: 'killed', label: t('status.task.killed'), dot: 'killed' },
-    { value: 'pending', label: t('status.task.pending'), dot: 'pending' },
-  ].filter((o) => count.has(o.value)).map((o) => ({ ...o, label: `${o.label} ${count.get(o.value)}` }))
-  return all.length > 1 ? [{ value: '', label: t('common.all'), dot: '' }, ...all] : []
-})
-
 
 // Results wire is fetched only while its tab shows (heavy ingest), live
 // while the job runs.
@@ -433,20 +432,67 @@ const compareKey = computed(() => {
 })
 const compareQuery = useCompareQuery(() => props.jobId, compareKey, () => true, isActiveJob)
 
-const filteredTasks = computed(() => {
-  if (!detail.value) return []
-  let tasks = detail.value.tasks
-  if (statusFilter.value === 'done') {
-    tasks = tasks.filter(task => task.status === 'success')
-  } else if (statusFilter.value) {
-    tasks = tasks.filter(task => task.status === statusFilter.value)
-  }
-  // Overlay the frontend-local cancelling state (kill_async backends).
-  if (cancelling.value.size === 0) return tasks
-  return tasks.map(task => ({ ...task, status: displayStatus(task) }))
+// ── Cell panel: ?cell=<name> opens a cell beside the table (shareable,
+// survives reload); ↑↓ move between cells, Esc closes. Narrow screens show
+// the panel alone. ──
+const { width } = useDisplay()
+const narrow = computed(() => width.value < 960)
+const currentIndex = computed(() => cells.value.findIndex((c) => c.name === route.query.cell))
+const currentCell = computed(() => (currentIndex.value >= 0 ? cells.value[currentIndex.value] : null))
+function openCell(i: number) {
+  router.replace({ query: { ...route.query, cell: cells.value[i]?.name } })
+}
+function closeCell() {
+  router.replace({ query: { ...route.query, cell: undefined } })
+}
+function onKey(e: KeyboardEvent) {
+  if (tab.value !== 'cells' || !currentCell.value || e.metaKey || e.ctrlKey || e.altKey) return
+  const el = e.target as HTMLElement | null
+  if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return
+  if (e.key === 'Escape') { closeCell(); return }
+  const step = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0
+  if (!step) return
+  e.preventDefault()
+  const next = Math.min(cells.value.length - 1, Math.max(0, currentIndex.value + step))
+  openCell(next)
+}
+onMounted(() => window.addEventListener('keydown', onKey))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+
+// A cell whose shown version just turned failed flashes once.
+const cellFlash = useCellFlash()
+let lastStatus: Map<string, string> | null = null
+watch(cells, (cs) => {
+  const now = new Map(cs.map((c) => [c.name, c.selected.status]))
+  if (lastStatus) for (const [name, st] of now) if (st === 'failed' && lastStatus.get(name) !== 'failed' && lastStatus.has(name)) cellFlash.flash(name)
+  lastStatus = now
 })
 
-watch(statusFilter, (v) => { prefs.lastStatusFilter.value = v })
+// ── Selection: tick cells, then kill their live versions at once. ──
+const LIVE = new Set(['pending', 'submitting', 'running', 'unknown'])
+const picked = ref<boolean[]>([])
+watch(() => cells.value.map((c) => c.name).join('\n'), () => { picked.value = cells.value.map(() => false) }, { immediate: true })
+const pickedCount = computed(() => picked.value.filter(Boolean).length)
+const pickedLive = computed(() => cells.value
+  .filter((_, i) => picked.value[i])
+  .flatMap((c) => c.versions.filter((v) => LIVE.has(displayStatus(v)))))
+
+async function killPicked() {
+  const live = pickedLive.value
+  if (!live.length || offline()) return
+  const running = live.filter((v) => displayStatus(v) === 'running').length
+  const ok = await confirmDialog({
+    title: t('confirm.kill_cells_title', { n: live.length }),
+    body: t('confirm.kill_cells_body', { running, queued: live.length - running }),
+    confirmText: t('cells.kill_n', { n: live.length }),
+    danger: true,
+  })
+  if (!ok) return
+  const results = await Promise.allSettled(live.map((v) => taskActions.kill.mutateAsync(v.id)))
+  const failed = results.filter((r) => r.status === 'rejected').length
+  if (failed) snack.error(t('cells.kill_some_failed', { n: failed }))
+  picked.value = cells.value.map(() => false)
+}
 
 // ── Actions: mutations own their invalidation; isPending drives the
 // button loading/double-click guards. ──
@@ -456,7 +502,7 @@ const refreshing = computed(() => jobActions.refresh.isPending.value)
 
 
 async function killJob() {
-  if (!detail.value || killing.value) return
+  if (!detail.value || killing.value || offline()) return
   const counts = detail.value.job.tasks
   const ok = await confirmDialog({
     title: t('confirm.kill_job_title'),
@@ -473,9 +519,12 @@ async function killJob() {
 }
 
 async function onKillTask(id: string) {
+  if (offline()) return
+  const v = detail.value?.tasks.find((task) => task.id === id)
+  const label = v?.run_name ? `${v.run_name}@v${v.version ?? 1}` : id.slice(0, 8)
   const ok = await confirmDialog({
     title: t('confirm.kill_task_title'),
-    body: t('confirm.kill_task_body', { id: id.slice(0, 8) }),
+    body: t('confirm.kill_task_body', { id: label }),
     confirmText: t('job.kill'),
     danger: true,
   })
@@ -484,10 +533,11 @@ async function onKillTask(id: string) {
     .catch((e: any) => snack.error(e?.message || t('common.error')))
 }
 
+// Archiving is undoable, so it acts at once and offers Undo for a moment.
 async function archiveJob() {
   try {
     await jobActions.archive.mutateAsync({ id: props.jobId, project: props.project })
-    snack.success(t('archive.job_done'))
+    snack.undoable(t('archive.job_done'), () => void unarchiveJob())
   } catch (e: any) { snack.error(e?.message || t('common.error')) }
 }
 
@@ -512,8 +562,26 @@ function onClickTask(id: string) {
 </script>
 
 <style scoped>
+.cells-layout.split {
+  display: grid; gap: 16px; align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 38%);
+}
+.cells-main { min-width: 0; }
+.panel-enter-active { transition: transform var(--dur-panel) ease-out, opacity var(--dur-panel) ease-out; }
+.panel-leave-active { transition: transform var(--dur-fast) ease-in, opacity var(--dur-fast) ease-in; }
+.panel-enter-from, .panel-leave-to { transform: translateX(16px); opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .panel-enter-active, .panel-leave-active { transition: none; }
+}
+.pick-bar {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+  font-size: var(--fs-base); color: rgb(var(--v-theme-on-surface-variant));
+}
+.pick-bar .kill { color: rgb(var(--v-theme-error)); }
 .batches { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
-.batch { display: flex; gap: 10px; align-items: baseline; }
+.batch { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+.batch > * { white-space: nowrap; flex: none; }
+.batch > .note, .batch > .cmd { flex: 0 1 auto; min-width: 0; }
 .batch .mono { font-family: var(--font-mono); }
 .batch .cmd { font-size: 11px; max-width: 420px; color: rgb(var(--v-theme-on-surface-variant)); background: none; }
 .batch .cmd.changed { color: rgb(var(--v-theme-warning)); }
@@ -526,6 +594,8 @@ function onClickTask(id: string) {
 .batch .draft { font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
 .batch .draft:hover { color: rgb(var(--v-theme-primary)); }
 .focus-hint { margin-top: 4px; }
+.batch.pending .seq { border-style: dashed; }
+.pending-tag { font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
 .focus-hint .link { background: none; border: none; padding: 0 0 0 6px; cursor: pointer; color: rgb(var(--v-theme-primary)); font-size: inherit; }
 .ver-why {
   font-size: 11px; line-height: 1.3; margin-top: 2px; max-width: 280px;

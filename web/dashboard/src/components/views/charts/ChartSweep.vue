@@ -19,7 +19,7 @@ import { computed, ref } from 'vue'
 import type { ChartSpec, ViewResult } from '@/types/views'
 import XYFrame from './XYFrame.vue'
 import { DASHES, MARKERS, linear, logScale, markerPath, tickLabel, type WidthPreset } from './chartGeom'
-import { useChartTheme } from './chartGeom'
+import { useChartTheme, useChartWidth } from './chartGeom'
 import { distinct, points, slotNames, yIsPct, type Point } from './chartData'
 import { frameGeom } from './frame'
 import { formatKey, keyLabel } from '../viewFormat'
@@ -52,7 +52,8 @@ const usable = (p: Point) => typeof p.x === 'number' && p.y !== null
 const pts = computed(() => points(props.result, slots.value).filter(usable))
 const fullPts = computed(() => (props.domain ? points(props.domain, slots.value).filter(usable) : pts.value))
 const colors = computed(() => distinct(fullPts.value.map((p) => p.color)))
-const g = computed(() => frameGeom(props.width, { legend: colors.value.length > 1 && colors.value.map(colorLabel) }))
+const chartW = useChartWidth(() => props.width)
+const g = computed(() => frameGeom(chartW.value, { legend: colors.value.length > 1 && colors.value.map(colorLabel) }))
 const pct = computed(() => yIsPct(props.result, props.spec.y as string | string[]))
 const logX = computed(() => props.spec.log_x === true && pts.value.every((p) => (p.x as number) > 0))
 

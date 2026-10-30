@@ -15,7 +15,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { TaskCountGroup } from '@/types/api'
-import { statusStyle, TRACK_CSS } from './statusGrammar'
+import { barColor, TRACK_CSS } from './statusGrammar'
 
 const { t } = useI18n()
 
@@ -40,7 +40,7 @@ const segments = computed(() => {
   return ORDER.map((o) => ({
     key: o.key,
     n: o.count(props.counts),
-    css: statusStyle('task', o.key).css,
+    css: barColor('task', o.key),
   }))
     .filter((s) => s.n > 0)
     .map((s) => ({ ...s, pct: (s.n / total) * 100 }))

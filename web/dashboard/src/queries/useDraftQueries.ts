@@ -17,6 +17,7 @@ export function useDraftQuery(id: MaybeRefOrGetter<string>) {
   return useQuery({
     queryKey: computed(() => qk.draft(toValue(id))),
     queryFn: () => draftsApi.get(toValue(id), true),
+    enabled: computed(() => !!toValue(id)),
     refetchInterval: false,
   })
 }

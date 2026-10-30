@@ -1,5 +1,38 @@
 <template>
-  <svg ref="svg" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${W} ${H}`" :width="W" :height="H" :font-family="th.font">
+  <!-- Screen: horizontal bars from zero, each value written at its bar's end
+       (labels never rotate; nothing to read off an axis). The paper figure
+       below keeps the column layout of an exported plot. -->
+  <svg
+    v-if="screen" ref="svg" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${W} ${hz.H}`" :width="W" :height="hz.H"
+    :font-family="th.font" font-size="11"
+  >
+    <ChartLegend v-if="colors.length > 1" :labels="legend" :x="hz.labelW" :y="12" :width="W - hz.labelW - 4" />
+    <g v-for="row in hz.rows" :key="row.key">
+      <text v-if="row.kind === 'facet'" :x="0" :y="row.y + 12" font-weight="500" :fill="th.ink">{{ row.text }}</text>
+      <text v-else-if="row.kind === 'group'" :x="hz.labelW - 8" :y="row.y + row.h / 2 + 4" text-anchor="end" :fill="th.ink">
+        <title v-if="row.full !== row.text">{{ row.full }}</title>{{ row.text }}
+      </text>
+      <g
+        v-else-if="row.p && row.p.y !== null" :opacity="dimmed(row.ci) ? 0.3 : 1"
+        @mouseenter="hot = { row: row.p.row, col: row.p.col }" @mouseleave="hot = null"
+      >
+        <rect :x="hz.labelW + hx(Math.min(0, row.p.y ?? 0))" :y="row.y" :width="Math.abs(hx(row.p.y ?? 0) - hx(0))" :height="row.h" :fill="th.color(row.ci)" />
+        <rect
+          v-if="isHot(hot, row.p.row, row.p.col)" :x="hz.labelW + hx(Math.min(0, row.p.y ?? 0)) - 1" :y="row.y - 1"
+          :width="Math.abs(hx(row.p.y ?? 0) - hx(0)) + 2" :height="row.h + 2" fill="none" :stroke="th.ink" stroke-width="1.2"
+        />
+        <g v-if="row.p.err" :stroke="th.axis" stroke-width="0.8">
+          <line :x1="hz.labelW + hx(row.p.y! - row.p.err)" :x2="hz.labelW + hx(row.p.y! + row.p.err)" :y1="row.y + row.h / 2" :y2="row.y + row.h / 2" />
+        </g>
+        <text
+          :x="hz.labelW + hx(Math.max(0, row.p.y ?? 0) + (row.p.err ?? 0)) + 5" :y="row.y + row.h / 2 + 4"
+          font-family="var(--font-mono)" font-size="10.5" :fill="th.ink"
+        >{{ valueText(row.p.y!) }}</text>
+      </g>
+    </g>
+    <line :x1="hz.labelW + hx(0)" :x2="hz.labelW + hx(0)" :y1="hz.top - 4" :y2="hz.H - 4" :stroke="th.axis" stroke-width="0.8" />
+  </svg>
+  <svg v-else ref="svg" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${W} ${H}`" :width="W" :height="H" :font-family="th.font">
     <rect :width="W" :height="H" :fill="th.bg" />
     <ChartLegend v-if="colors.length > 1" :labels="legend" :x="M.l" :y="12" :width="W - M.l - 4" />
     <g v-for="(f, fi) in facets" :key="fi" :transform="`translate(${M.l + fi * (panelW + GAP)},${M.t})`">
@@ -49,8 +82,8 @@
 import { computed, ref } from 'vue'
 import type { ChartSpec, ViewResult } from '@/types/views'
 import ChartLegend from './ChartLegend.vue'
-import { LEGEND_ROW, TICK_ANGLE, WIDTHS, categoryTicks, legendLayout, linear, niceTicks, tickLabel, type WidthPreset } from './chartGeom'
-import { useChartTheme } from './chartGeom'
+import { LEGEND_ROW, TICK_ANGLE, categoryTicks, legendLayout, linear, niceTicks, textWidth, tickLabel, type WidthPreset } from './chartGeom'
+import { useChartTheme, useChartWidth } from './chartGeom'
 import { column, distinct, isPct, points, type Point } from './chartData'
 import { formatKey, keyLabel } from '../viewFormat'
 import { isHot, useViewHover } from '../viewHover'
@@ -68,7 +101,7 @@ const svg = ref<SVGSVGElement | null>(null)
 defineExpose({ svg })
 
 const GAP = 10
-const W = computed(() => WIDTHS[props.width])
+const W = useChartWidth(() => props.width)
 // Extra legend rows and rotated category labels grow the figure, so the
 // plot keeps its size.
 const legend = computed(() => colors.value.map((c) => formatKey(c, kf(slots.value.color))))
@@ -128,5 +161,47 @@ function find(f: unknown, x: unknown, c: unknown): Point | undefined {
   return pts.value.find((p) => p.facet === f && p.x === x && p.color === c)
 }
 const yTitle = computed(() => `${slots.value.y}${pct.value ? ' (%)' : ''}`)
+
+// ── Screen layout: one row per (category, shown series), grouped by
+// category, panels (facets) stacked. ──
+const BAR = 12
+const valueText = (v: number) => `${tickLabel(v, pct.value)}${pct.value ? '%' : ''}`
+const hz = computed(() => {
+  const labels = xs.value.map((xv) => formatKey(xv, kf(slots.value.x)))
+  const MAX_LABEL = Math.max(80, W.value * 0.3)
+  const labelW = Math.min(MAX_LABEL, Math.max(48, ...labels.map((l) => textWidth(l, 11) + 16)))
+  const legendRows = colors.value.length > 1 ? legendLayout(legend.value, 'swatch', W.value - labelW - 4).rows : 0
+  const top = legendRows ? legendRows * LEGEND_ROW + 14 : 4
+  type Row = { key: string; kind: 'facet' | 'group' | 'bar'; y: number; h: number; text?: string; full?: string; p?: Point; ci: number }
+  const rows: Row[] = []
+  let yy = top
+  facets.value.forEach((f, fi) => {
+    if (facets.value.length > 1) {
+      rows.push({ key: `f${fi}`, kind: 'facet', y: yy, h: 16, text: formatKey(f, kf(slots.value.facet)), ci: -1 })
+      yy += 20
+    }
+    xs.value.forEach((xv, xi) => {
+      const shown = shownSeries.value
+      const gh = shown.length * BAR + Math.max(0, shown.length - 1) * 2
+      const label = labels[xi]
+      let text = label
+      while (text.length > 1 && textWidth(text, 11) > labelW - 12) text = text.slice(0, -2) + '…'
+      rows.push({ key: `g${fi}-${xi}`, kind: 'group', y: yy, h: gh, text, full: label, ci: -1 })
+      shown.forEach((ci, k) => {
+        rows.push({ key: `b${fi}-${xi}-${ci}`, kind: 'bar', y: yy + k * (BAR + 2), h: BAR, p: find(f, xv, colors.value[ci]), ci })
+      })
+      yy += gh + 10
+    })
+  })
+  return { rows, labelW, top, H: yy + 4 }
+})
+// Bars start at zero; the room after the longest bar holds its value.
+const hx = computed(() => {
+  const vals = full.value.flatMap((p) => (p.y === null ? [] : [p.y - (p.err ?? 0), p.y + (p.err ?? 0)]))
+  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals)
+  const plotW = W.value - hz.value.labelW - 64
+  const sc = linear([lo, hi === lo ? lo + 1 : hi], [0, Math.max(40, plotW)])
+  return (v: number) => sc(v)
+})
 const xTitle = computed(() => (facets.value.length > 1 ? '' : keyLabel(slots.value.x)))
 </script>

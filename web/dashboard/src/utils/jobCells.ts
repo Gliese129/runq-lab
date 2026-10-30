@@ -1,4 +1,4 @@
-import type { PlanModel, TaskView, VersionChange } from '@/types/api'
+import type { PlanModel, TaskCountGroup, TaskView, VersionChange } from '@/types/api'
 
 /** One cell of an experiment: its versions (oldest first) and the one it
  *  shows — the pinned one, else the latest success, else the latest (the
@@ -46,4 +46,12 @@ export function inPlanOrder(cells: CellView[], plan?: PlanModel): CellView[] {
   const byName = new Map(cells.map((c) => [c.name, c]))
   const out = plan.rows.map((r) => byName.get(r.run)).filter((c): c is CellView => !!c)
   return out.length === plan.rows.length ? out : cells
+}
+
+/** The experiment's one activity marker: running beats queued; none when
+ *  every cell has settled or only unknown outcomes are left. */
+export function activityMarker(c: TaskCountGroup): 'running' | 'queued' | null {
+  if (c.running > 0) return 'running'
+  const unsettled = c.running + c.pending + (c.unknown ?? 0)
+  return c.pending > 0 && c.pending === unsettled ? 'queued' : null
 }

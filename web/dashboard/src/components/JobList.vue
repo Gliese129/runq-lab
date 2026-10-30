@@ -4,7 +4,7 @@
       v-for="j in jobs"
       :key="j.id"
       class="job-row"
-      :class="{ 'with-project': showProject, selected: j.id === selectedId }"
+      :class="{ 'with-project': showProject, selected: j.id === selectedId, 'flash-fail': flashingJobs.has(j.id) }"
       :draggable="draggable ? 'true' : undefined"
       @dragstart="draggable && onDragStart(j, $event)"
       :style="showProject ? { '--project': color(j.project) } : undefined"
@@ -23,12 +23,13 @@
           <span v-if="j.description">{{ j.description }}</span>
         </div>
       </div>
-      <StatusDot class="job-status" :status="j.status" kind="job" :size="8" />
+      <StatusDot class="job-status" :status="j.status" kind="job" :size="8" :still="isFrozen(j)" />
       <div class="job-progress">
         <SegmentedProgress :counts="j.tasks" :height="3" style="width: 56px" />
-        <span>{{ j.tasks.completed }}/{{ j.tasks.total }}</span>
+        <Transition name="vflash"><span :key="`${j.tasks.completed}/${j.tasks.total}`">{{ j.tasks.completed }}/{{ j.tasks.total }}</span></Transition>
       </div>
-      <span class="job-time">{{ relativeTime(j.created_at) }}</span>
+      <span v-if="isFrozen(j)" class="job-time frozen" :title="t('fresh.stale_hint')">◷ {{ t('fresh.stopped_at', { time: relativeTime(j.refreshed_at ?? 0) }) }}</span>
+      <span v-else class="job-time">{{ relativeTime(j.created_at) }}</span>
     </div>
   </div>
 </template>
@@ -41,6 +42,8 @@ import JobNote from './JobNote.vue'
 import StatusDot from './StatusDot.vue'
 import SegmentedProgress from './SegmentedProgress.vue'
 import { relativeTime } from '@/utils/relativeTime'
+import { isFrozen } from '@/utils/freshness'
+import { flashingJobs } from '@/composables/useFailureWatch'
 
 withDefaults(defineProps<{
   jobs: JobSummary[]
@@ -66,20 +69,26 @@ function onDragStart(j: JobSummary, e: DragEvent) {
 </script>
 
 <style scoped>
+.job-list {
+  border: var(--border-hairline) solid rgb(var(--v-theme-outline-variant));
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: rgb(var(--v-theme-surface));
+}
+/* One row per experiment at the density's height (settings → density);
+   rows are separated by a hairline, not spaced as cards. */
 .job-row {
   position: relative;
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) 12px 92px 64px;
+  grid-template-columns: 72px minmax(0, 1fr) 12px 92px minmax(64px, auto);
   align-items: center;
   column-gap: 12px;
-  padding: 10px 14px 10px 18px;
-  margin-bottom: 6px;
+  min-height: var(--row-h);
+  padding: 0 var(--row-pad-x) 0 calc(var(--row-pad-x) + 4px);
   cursor: pointer;
-  border-radius: 8px;
-  overflow: hidden;
-  background: rgb(var(--v-theme-surface));
-  border: 0.5px solid rgb(var(--v-theme-outline-variant), 0.6);
+  border-top: var(--border-hairline) solid rgb(var(--v-theme-outline-variant));
 }
+.job-row:first-child { border-top: none; }
 /* Project colour as a bar on the row's left edge — read before the text,
    and kept apart from the status dot on the right. Only where projects mix:
    on a project's own page every bar would be the same colour, just noise. */
@@ -90,21 +99,27 @@ function onDragStart(j: JobSummary, e: DragEvent) {
   width: 4px;
   background: var(--project);
 }
-.job-row:hover,
-.job-row:focus-visible { border-color: rgb(var(--v-theme-on-surface), 0.25); outline: none; }
-.job-row.selected { border-color: rgb(var(--v-theme-primary), 0.7); background: rgb(var(--v-theme-primary), 0.04); }
+.job-row:hover { background: rgb(var(--v-theme-on-surface), 0.03); }
+.job-row:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
+.job-row.selected { background: rgb(var(--v-theme-on-surface), 0.07); }
 .job-row[draggable='true'] { cursor: grab; }
 .job-id { font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); background: none; padding: 0; }
-.job-text { min-width: 0; }
-.job-note { font-size: 14px; }
-.job-sub {
-  font-size: 12px;
-  color: rgb(var(--v-theme-on-surface-variant));
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  margin-top: 1px;
+.job-text {
+  min-width: 0; display: flex; align-items: baseline; gap: 8px;
+  white-space: nowrap; overflow: hidden;
 }
+.job-note { font-size: var(--row-fs); flex: none; max-width: 70%; overflow: hidden; text-overflow: ellipsis; }
+.job-sub {
+  font-size: var(--fs-meta);
+  color: rgb(var(--v-theme-on-surface-variant));
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+/* Comfy density: the description gets its own line. */
+:global(.appearance-density-comfy) .job-text { display: block; }
+:global(.appearance-density-comfy) .job-note { max-width: none; }
+:global(.appearance-density-comfy) .job-sub { margin-top: 1px; }
 .job-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
-.job-time { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); text-align: right; }
+.job-time { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); text-align: right; white-space: nowrap; }
 @media (max-width: 640px) {
   .job-row { grid-template-columns: minmax(0, 1fr) 12px 52px; }
   .job-id, .job-progress { display: none; }

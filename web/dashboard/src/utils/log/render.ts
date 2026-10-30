@@ -39,8 +39,10 @@ function buildDrainBlockItems(foldKey: string, lines: DisplayLine[], drain: Drai
     }
   }
 
+  // Headed by its first real line, not the Drain template (<*> <NUM> is
+  // the pipeline's notation, not something a reader should decode).
   const items: RenderItem[] = [{
-    type: 'block-head', foldKey, label: template,
+    type: 'block-head', foldKey, label: lines[0]?.text ?? template,
     blockKind: 'drain', lineCount: lines.length,
   }]
   for (let i = 0; i < lines.length; i++) {
@@ -58,7 +60,7 @@ function buildMotifBlockItems(
   foldKey: string, label: string, lines: DisplayLine[], repeats: number,
 ): RenderItem[] {
   const items: RenderItem[] = [{
-    type: 'block-head', foldKey, label,
+    type: 'block-head', foldKey, label: lines[0]?.text ?? label,
     blockKind: 'motif', lineCount: lines.length, repeats,
   }]
   for (const line of lines) {
@@ -100,6 +102,9 @@ export function computeDefaultFoldState(
       }
     }
   }
+  // Tracebacks start folded: their summary already shows the exception and
+  // the frame in the user's own code; the rest is one click away.
+  for (let ti = 0; ti < result.tracebacks.length; ti++) state.set(`tb:${ti}`, true)
   return state
 }
 
@@ -164,7 +169,7 @@ export function buildRenderItems(
           if (seg.length < MIN_BLOCK_SIZE) continue
           if (collapsed) {
             motifItemAt.set(seg[0], [{
-              type: 'fold-summary', foldKey, label: g.label,
+              type: 'fold-summary', foldKey, label: result.lines[seg[0]].text,
               lineCount: seg.length, variant: 'drain',
             }])
           } else {
@@ -182,7 +187,7 @@ export function buildRenderItems(
         const collapsed = foldState.get(foldKey) ?? false
         if (collapsed) {
           motifItemAt.set(inst.lineIndices[0], [{
-            type: 'fold-summary', foldKey, label: g.label,
+            type: 'fold-summary', foldKey, label: result.lines[inst.lineIndices[0]].text,
             lineCount: inst.lineIndices.length,
             repeats: inst.repeats, variant: 'motif',
           }])
@@ -216,11 +221,18 @@ export function buildRenderItems(
     const tbEntry = tbBlockAt.get(i)
     if (tbEntry) {
       const foldKey = `tb:${tbEntry.idx}`
+      // The exception first; under it the last frame in the user's own
+      // code — usually the line to fix. The rest stays folded.
+      const offs = tbEntry.tb.userCodeOffsets
+      const own = offs.length ? offs[offs.length - 1] : undefined
+      const frame = own === undefined ? undefined : result.lines[tbEntry.tb.start + own]
+      const code = own === undefined ? undefined : result.lines[tbEntry.tb.start + own + 1]
       items.push({
         type: 'fold-summary', foldKey,
         label: tbEntry.tb.errorMessage,
         lineCount: tbEntry.tb.end - tbEntry.tb.start + 1,
         variant: 'traceback',
+        detail: frame ? [shortFrame(frame.text), code?.text.trim()].filter(Boolean).join('  ·  ') : undefined,
       })
       i = tbEntry.tb.end
       continue
@@ -236,6 +248,13 @@ export function buildRenderItems(
   }
 
   return items
+}
+
+/** `File "/a/b/train.py", line 76, in main` → `train.py:76 in main`. */
+function shortFrame(text: string): string {
+  const m = /File "([^"]+)", line (\d+)(?:, in (\S+))?/.exec(text)
+  if (!m) return text.trim()
+  return `${m[1].split('/').pop()}:${m[2]}${m[3] ? ` in ${m[3]}` : ''}`
 }
 
 // ── Segment Helpers (inline highlighting) ───────────────────

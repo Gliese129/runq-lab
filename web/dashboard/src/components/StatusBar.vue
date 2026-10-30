@@ -10,10 +10,15 @@
     :class="{ 'status-bar--warn': !conn.connected.value }"
   >
     <template v-if="health">
-      <!-- targets online -->
-      <span v-if="health.targets.length > 0" class="seg">
-        {{ t('statusbar.targets', { n: reachableCount, total: health.targets.length }) }}
+      <!-- Targets: quiet when fine (hover for each one's last check); a
+           target that is unreachable or whose experiments are out of date
+           is named. -->
+      <span v-if="health.targets.length > 0 && !targetIssues.length" class="seg" :title="targetChecks">
+        {{ t('statusbar.targets_n', { n: health.targets.length }) }}
       </span>
+      <router-link v-for="iss in targetIssues" :key="iss.name" :to="{ name: 'targets' }" class="seg seg--warn" :title="targetChecks">
+        {{ iss.text }}
+      </router-link>
 
       <!-- forward troubles only — a healthy forward earns no voice here -->
       <router-link v-for="fw in troubledForwards" :key="fw.name" :to="{ name: 'targets' }" class="seg seg--warn" :title="fw.detail">
@@ -36,7 +41,9 @@ import { useI18n } from 'vue-i18n'
 import { useQueryClient } from '@tanstack/vue-query'
 import { useConnection } from '@/composables/useConnection'
 import { useHealthQuery } from '@/queries/useHealthQuery'
-import { formatDuration } from '@/utils/relativeTime'
+import { formatDuration, relativeTime } from '@/utils/relativeTime'
+import { useJobsListQuery } from '@/queries/useJobQueries'
+import { staleTargets } from '@/utils/freshness'
 
 const { t } = useI18n()
 const conn = useConnection()
@@ -46,9 +53,24 @@ const qc = useQueryClient()
 const healthQuery = useHealthQuery()
 const health = computed(() => healthQuery.data.value ?? null)
 
-const reachableCount = computed(
-  () => (health.value?.targets ?? []).filter((tg) => tg.reachable).length,
-)
+const jobsQuery = useJobsListQuery()
+const targetIssues = computed(() => {
+  const stale = staleTargets(jobsQuery.data.value ?? [])
+  const out: { name: string; text: string }[] = []
+  for (const tg of health.value?.targets ?? []) {
+    if (!tg.reachable) out.push({ name: tg.name, text: t('statusbar.target_unreachable', { name: tg.name }) })
+    else if (stale.has(tg.name)) out.push({ name: tg.name, text: t('statusbar.target_stale', { name: tg.name, time: relativeTime(stale.get(tg.name)!) }) })
+  }
+  return out
+})
+const targetChecks = computed(() => (health.value?.targets ?? [])
+  .map((tg) => `${tg.name} · ${tg.last_checked ? relativeTime(tg.last_checked) : '—'}`).join('\n'))
+
+// While the daemon is away every number on the page is old: stop all
+// "alive" motion at once (assets/main.css .runq-offline).
+watch(() => conn.connected.value, (on) => {
+  document.documentElement.classList.toggle('runq-offline', !on)
+}, { immediate: true })
 
 const troubledForwards = computed(() => {
   const fws = health.value?.forwards ?? {}

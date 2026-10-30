@@ -124,8 +124,8 @@ const emit = defineEmits<{
 // Toggle labels: "\r" and "TB" are technical markers and stay as-is; the
 // word labels go through i18n. Computed so a locale switch updates live.
 const processors = computed(() => [
-  { key: 'crFolder',        label: '\\r' },
-  { key: 'tracebackFold',   label: 'TB' },
+  { key: 'crFolder',        label: t('log.proc_cr') },
+  { key: 'tracebackFold',   label: t('log.proc_tb') },
   { key: 'levelColoring',   label: t('log.proc_level') },
   { key: 'metricHighlight', label: t('log.proc_metric') },
   { key: 'rankColoring',    label: t('log.proc_rank') },

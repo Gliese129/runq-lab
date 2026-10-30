@@ -1,6 +1,7 @@
 <template>
   <v-chip :color="s.color" :variant="s.variant" size="small">
-    <v-icon start size="14" :class="{ 'icon-spin': s.animated }">{{ s.icon }}</v-icon>
+    <StatusDot v-if="s.animated" :status="status" :size="8" class="mr-2" />
+    <v-icon v-else start size="14">{{ s.icon }}</v-icon>
     {{ label }}
   </v-chip>
 </template>
@@ -9,6 +10,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { statusStyle } from './statusGrammar'
+import StatusDot from './StatusDot.vue'
 
 const props = defineProps<{ status: string }>()
 const { t, te } = useI18n()

@@ -137,6 +137,27 @@ describe('log motif rendering', () => {
     }
   })
 
+  it('ends a traceback at a bare or dotted exception name, and folds it by default', () => {
+    const lines = [
+      'Traceback (most recent call last):',
+      '  File "/work/continue_n16.py", line 76, in main',
+      "    assert identity == read(PRIOR / 'checkpoint.json')",
+      'AssertionError',
+      'Traceback (most recent call last):',
+      '  File "/work/launch_n16.py", line 85, in <module>',
+      "subprocess.CalledProcessError: Command '[apptainer]' returned non-zero exit status 1.",
+    ]
+    const result = processLog(lines, toggles)
+    expect(result.tracebacks.map((tb) => tb.errorMessage)).toEqual([
+      'AssertionError',
+      "subprocess.CalledProcessError: Command '[apptainer]' returned non-zero exit status 1.",
+    ])
+    const items = buildRenderItems(result, computeDefaultFoldState(result), result.drain)
+    const tbs = items.filter((i) => i.type === 'fold-summary' && i.variant === 'traceback')
+    expect(tbs).toHaveLength(2)
+    if (tbs[0].type === 'fold-summary') expect(tbs[0].detail).toContain('continue_n16.py')
+  })
+
   it('computeDefaultFoldState auto-folds large groups', () => {
     // Generate enough lines to exceed AUTO_FOLD_THRESHOLD (20)
     const lines: string[] = []

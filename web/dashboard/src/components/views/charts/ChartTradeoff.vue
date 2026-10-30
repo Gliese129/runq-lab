@@ -14,7 +14,7 @@ import { computed, ref } from 'vue'
 import type { ChartSpec, ViewResult } from '@/types/views'
 import XYFrame from './XYFrame.vue'
 import { MARKERS, MUTED, PALETTE, linear, markerPath, tickLabel, type WidthPreset } from './chartGeom'
-import { useChartTheme } from './chartGeom'
+import { useChartTheme, useChartWidth } from './chartGeom'
 import { column, distinct, isPct } from './chartData'
 import { frameGeom } from './frame'
 import { cellNumber, formatKey, keyLabel } from '../viewFormat'
@@ -48,7 +48,8 @@ const pts = computed(() => rowPoints(props.result))
 const fullPts = computed(() => (props.domain ? rowPoints(props.domain) : pts.value))
 const colors = computed(() => distinct(fullPts.value.map((p) => p.color)))
 const legend = computed(() => (colorKey.value ? colors.value.map((c) => `${keyLabel(colorKey.value!)} = ${formatKey(c, props.result.key_formats?.[colorKey.value!])}`) : []))
-const g = computed(() => frameGeom(props.width, { legend: legend.value.length > 1 && legend.value }))
+const chartW = useChartWidth(() => props.width)
+const g = computed(() => frameGeom(chartW.value, { legend: legend.value.length > 1 && legend.value }))
 const xPct = computed(() => isPct(column(props.result, xName.value)))
 const yPct = computed(() => isPct(column(props.result, yName.value)))
 

@@ -22,6 +22,13 @@ describe('jobListView', () => {
     expect(matchesQuery(jobs[2], 'forced decoding')).toBe(true)
     expect(matchesQuery(jobs[2], 'forced smoke')).toBe(false)
   })
+  it('matches target:<name> exactly, not as a substring', () => {
+    const onA = { ...jobs[0], target: 'tsubame' }
+    const onB = { ...jobs[0], target: 'tsubame-ar9245' }
+    expect(matchesQuery(onA, 'target:tsubame')).toBe(true)
+    expect(matchesQuery(onB, 'target:tsubame')).toBe(false)
+    expect(matchesQuery(onB, 'target:tsubame-ar9245 c0-dev')).toBe(true)
+  })
   it('filters by project set', () => {
     expect(filterJobs(jobs, '', new Set(['aime2025'])).map((j) => j.id)).toEqual(['jb33333333', 'jb44444444'])
   })

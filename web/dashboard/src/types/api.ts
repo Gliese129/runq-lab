@@ -573,6 +573,14 @@ export interface DraftResult {
   yaml: string
   /** a draft with into: what each row would do (cells align with rows) */
   append?: AppendSummary
+  /** deterministic preflight checks run on this draft */
+  preflight?: PreflightCheck[]
+}
+
+export interface PreflightCheck {
+  name: string
+  status: 'passed' | 'warning' | 'skipped'
+  detail: string
 }
 
 export type CellClass = 'new' | 'new_version' | 'skipped' | 'rerun'

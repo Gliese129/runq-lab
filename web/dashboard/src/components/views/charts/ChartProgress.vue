@@ -14,8 +14,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { ChartSpec, ViewResult } from '@/types/views'
-import { FONT, INK, MUTED, WIDTHS, type WidthPreset } from './chartGeom'
-import { useChartTheme } from './chartGeom'
+import { FONT, INK, MUTED, type WidthPreset } from './chartGeom'
+import { useChartTheme, useChartWidth } from './chartGeom'
 import { cellNumber, formatKey } from '../viewFormat'
 
 const th = useChartTheme()
@@ -24,7 +24,7 @@ const props = defineProps<{ result: ViewResult; spec: ChartSpec; width: WidthPre
 const svg = ref<SVGSVGElement | null>(null)
 defineExpose({ svg })
 
-const W = computed(() => WIDTHS[props.width])
+const W = useChartWidth(() => props.width)
 const LABEL = 120
 const barW = computed(() => W.value - LABEL - 70)
 const ROW = 14

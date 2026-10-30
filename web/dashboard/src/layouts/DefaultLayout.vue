@@ -15,7 +15,7 @@
           :aria-label="t('a11y.home')"
           class="text-decoration-none d-flex align-center ga-2"
         >
-          <RunqLogo :size="28" />
+          <RunqLogo :size="28" variant="normal" />
           <span v-if="!collapsed" class="text-body-1 font-weight-bold text-on-surface">runq</span>
         </router-link>
       </div>
@@ -87,7 +87,17 @@
             </template>
             <v-list-item-title class="text-body-2" :title="proj.name">{{ middleEllipsis(proj.name, 22) }}</v-list-item-title>
             <template #append>
-              <span class="text-caption text-on-surface-variant">{{ proj.job_count }}</span>
+              <span class="proj-tail">
+                <span
+                  v-if="projectActivity.get(proj.name)" class="proj-marker" :class="projectActivity.get(proj.name)"
+                  :title="projectActivity.get(proj.name) === 'running' ? t('status.task.running') : t('job.marker_queued')"
+                />
+                <span
+                  v-if="projectDrafts.get(proj.name)" class="proj-drafts"
+                  :title="t('drafts.open', { n: projectDrafts.get(proj.name) })"
+                >{{ projectDrafts.get(proj.name) }}</span>
+                <span class="text-caption text-on-surface-variant">{{ proj.job_count }}</span>
+              </span>
             </template>
           </v-list-item>
         </template>
@@ -230,8 +240,8 @@
           v-if="!conn.connected.value"
           class="reconnect-banner d-flex align-center ga-2 px-4 py-2"
         >
-          <v-progress-circular indeterminate size="14" width="2" />
-          <span class="text-body-2">{{ t('statusbar.reconnect_banner') }}</span>
+          <span class="text-body-2">{{ t('statusbar.offline_banner', { time: new Date(conn.lastSuccessAt.value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }) }}</span>
+          <code v-if="conn.daemonDown.value" class="offline-cmd">runq serve -d</code>
         </div>
       </v-expand-transition>
       <v-container fluid class="pa-4 pa-md-6" :style="{ maxWidth: route.meta.wide ? '1760px' : '1200px' }">
@@ -250,6 +260,7 @@
          daemon identity. The one place that always answers "can I trust
          what this page shows right now". -->
     <StatusBar />
+    <KeyboardLayer />
   </v-app>
 </template>
 
@@ -267,8 +278,14 @@ import { useProjectColors } from '@/composables/useProjectColors'
 import { middleEllipsis } from '@/utils/middleEllipsis'
 import { useGpuQuery } from '@/queries/useGpuQuery'
 import { qk } from '@/queries/keys'
+import { useJobDetailQuery, useJobsListQuery } from '@/queries/useJobQueries'
+import { useDraftsQuery } from '@/queries/useDraftQueries'
+import { activityMarker } from '@/utils/jobCells'
+import { installFailureWatch } from '@/composables/useFailureWatch'
+import type { TaskCountGroup } from '@/types/api'
 import RunqLogo from '@/components/RunqLogo.vue'
 import StatusBar from '@/components/StatusBar.vue'
+import KeyboardLayer from '@/components/KeyboardLayer.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -321,7 +338,39 @@ function isActive(name: string): boolean {
   return route.name === name
 }
 
+// Sidebar hints per project: is anything running / only queued (summed
+// over its experiments' cell counts), and how many drafts wait for review.
+const sidebarJobs = useJobsListQuery()
+installFailureWatch(sidebarJobs.data)
+const sidebarDrafts = useDraftsQuery()
+const projectActivity = computed(() => {
+  const sums = new Map<string, TaskCountGroup>()
+  for (const j of sidebarJobs.data.value ?? []) {
+    if (j.archived) continue
+    const s = sums.get(j.project) ?? { total: 0, pending: 0, running: 0, completed: 0, failed: 0, unknown: 0 }
+    s.total += j.tasks.total; s.pending += j.tasks.pending; s.running += j.tasks.running
+    s.completed += j.tasks.completed; s.failed += j.tasks.failed; s.unknown = (s.unknown ?? 0) + (j.tasks.unknown ?? 0)
+    sums.set(j.project, s)
+  }
+  const out = new Map<string, 'running' | 'queued'>()
+  for (const [name, c] of sums) {
+    const m = activityMarker(c)
+    if (m) out.set(name, m)
+  }
+  return out
+})
+const projectDrafts = computed(() => {
+  const out = new Map<string, number>()
+  for (const d of sidebarDrafts.data.value ?? []) if (d.status === 'open') out.set(d.project, (out.get(d.project) ?? 0) + 1)
+  return out
+})
+
+// Crumbs read names, not ids: the experiment's name and the version as
+// cell@vN. The detail query is the one the page already holds (same key).
+const crumbJob = useJobDetailQuery(() => String(route.params.jobId ?? ''))
 const breadcrumbs = computed(() => {
+  const detail = crumbJob.data.value
+  const task = route.params.taskId ? detail?.tasks.find((x) => x.id === route.params.taskId) : undefined
   const items: { title: string; to?: object; disabled?: boolean }[] = []
   if (route.params.project) {
     items.push({
@@ -331,7 +380,7 @@ const breadcrumbs = computed(() => {
   }
   if (route.params.jobId) {
     items.push({
-      title: String(route.params.jobId).slice(0, 8),
+      title: middleEllipsis(detail?.job.name || String(route.params.jobId).slice(0, 8), 48),
       to: route.params.taskId
         ? {
             name: 'job-detail',
@@ -342,7 +391,10 @@ const breadcrumbs = computed(() => {
     })
   }
   if (route.params.taskId) {
-    items.push({ title: String(route.params.taskId).slice(0, 8), disabled: true })
+    items.push({
+      title: task?.run_name ? `${task.run_name}@v${task.version ?? 1}` : String(route.params.taskId).slice(0, 8),
+      disabled: true,
+    })
   }
   if (route.params.draftId) {
     items.push({ title: t('drafts.crumb', { id: String(route.params.draftId).slice(0, 10) }), disabled: true })
@@ -368,6 +420,15 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.proj-tail { display: inline-flex; align-items: center; gap: 6px; }
+.proj-marker { width: 7px; height: 7px; border-radius: 50%; }
+.proj-marker.running { background: rgb(var(--v-theme-info)); }
+.proj-marker.queued { border: 1.5px solid rgb(var(--v-theme-neutral)); }
+.proj-drafts {
+  font-size: 11px; line-height: 16px; min-width: 16px; padding: 0 4px; text-align: center;
+  border-radius: 8px; border: var(--border-hairline) dashed rgb(var(--v-theme-on-surface-variant));
+  color: rgb(var(--v-theme-on-surface-variant));
+}
 /* Theme / collapse toggles are real buttons; match the nav list-item look. */
 .nav-btn {
   text-transform: none;
@@ -385,8 +446,8 @@ onMounted(async () => {
 /* RQ-74: reconnect banner — amber, never red: the daemon being briefly away
    is a degraded state, not a failure verdict. */
 .reconnect-banner {
-  background: rgba(var(--v-theme-warning), 0.15);
-  color: rgb(var(--v-theme-warning));
-  border-bottom: 0.5px solid rgba(var(--v-theme-warning), 0.4);
+  background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
 }
+.offline-cmd { font-family: var(--font-mono); font-size: 12px; background: none; color: inherit; opacity: 0.85; }
 </style>

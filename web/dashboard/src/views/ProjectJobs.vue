@@ -61,7 +61,17 @@
       <span v-if="dragging" class="hint">{{ t('sections.drag_hint') }}</span>
     </nav>
 
+    <StaleStrip :targets="stale" />
+
+    <!-- New experiments drafted for this project (appends show on their
+         experiment's page) -->
+    <section v-if="projectDrafts.length" class="mb-4">
+      <div class="bucket-title">{{ t('drafts.open', { n: projectDrafts.length }) }}</div>
+      <DraftRows :drafts="projectDrafts" />
+    </section>
+
     <v-text-field
+      ref="searchField"
       v-model="searchQuery"
       :placeholder="t('project.search_note')"
       prepend-inner-icon="mdi-magnify"
@@ -85,8 +95,10 @@
     </template>
     <div v-else-if="projectJobs.length" class="empty text-body-2">{{ t('overview.no_match') }}</div>
     <v-card v-else-if="!loading" class="pa-8 text-center" variant="flat">
+      <ChibiMascot :size="64" mood="happy" class="mb-2" />
       <div class="text-h6 mb-1">{{ t('project.no_jobs') }}</div>
       <div class="text-body-2 text-on-surface-variant">{{ t('project.no_jobs_hint') }}</div>
+      <code class="d-inline-block mt-3 text-caption">runq draft job.yaml</code>
     </v-card>
 
     <!-- Archived jobs of this project (collapsed by default) -->
@@ -124,7 +136,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useProjectStore } from '@/stores/projects'
 import { useSnackbar } from '@/composables/useSnackbar'
@@ -132,12 +144,17 @@ import { useJobsListQuery, useArchivedJobsQuery, useProjectJobsQuery, useJobActi
 import JobList from '@/components/JobList.vue'
 import JobNote from '@/components/JobNote.vue'
 import ProjectDot from '@/components/ProjectDot.vue'
+import DraftRows from '@/components/DraftRows.vue'
+import StaleStrip from '@/components/StaleStrip.vue'
+import ChibiMascot from '@/components/ChibiMascot.vue'
+import { staleTargets } from '@/utils/freshness'
 import type { JobSummary } from '@/types/api'
-import { commonWordsByProject, filterJobs, groupJobs } from './jobListView'
+import { commonWordsByProject, filterJobs, groupJobs, SPLIT_MIN_WIDTH } from './jobListView'
+import { useListKeys } from '@/composables/useListKeys'
 import { useViewsQuery } from '@/queries/useViewQueries'
 import { useDisplay } from 'vuetify'
 import { useQueryClient } from '@tanstack/vue-query'
-import { useSectionsQuery } from '@/queries/useDraftQueries'
+import { useDraftsQuery, useSectionsQuery } from '@/queries/useDraftQueries'
 import { sectionsApi } from '@/apis/sections'
 import { qk } from '@/queries/keys'
 import type { Section } from '@/types/api'
@@ -181,7 +198,7 @@ async function toggleProjectArchive() {
       snack.success(t('archive.project_back'))
     } else {
       await projectStore.archive(props.project)
-      snack.success(t('archive.project_done'))
+      snack.undoable(t('archive.project_done'), () => void toggleProjectArchive())
     }
     await Promise.all([...(archivedOpen.value ? [archivedQuery.refetch()] : []), scopedQuery.refetch(), listQuery.refetch()])
   } catch (e: any) { snack.error(e?.message || t('common.error')) }
@@ -195,18 +212,31 @@ async function unarchiveJob(id: string) {
 }
 
 const searchQuery = ref('')
+const draftsQuery = useDraftsQuery()
+const projectDrafts = computed(() => (draftsQuery.data.value ?? []).filter((d) => d.project === props.project && !d.into
+  && (!picked.value || (d.section || 'unsorted') === picked.value)))
 const viewsQuery = useViewsQuery(() => props.project)
 const projectViews = computed(() => viewsQuery.data.value ?? [])
 
+const stale = computed(() => staleTargets(projectJobs.value))
 const projectJobs = computed(() =>
   projectArchived.value
     ? scopedJobs.value
     : (listQuery.data.value ?? []).filter(j => j.project === props.project))
 
-// ── Layout: ≥1600px jobs | preview; narrower, jobs only. ──
+// ── Layout: wide = jobs | preview (same width rule as Overview); narrower,
+// jobs only. The picked experiment lives in ?exp=. ──
 const { width } = useDisplay()
-const threeCol = computed(() => width.value >= 1600)
-const selectedId = ref('')
+const threeCol = computed(() => width.value >= SPLIT_MIN_WIDTH)
+const route = useRoute()
+const selectedId = computed({
+  // the ?exp= one while it is in the shown list, else the newest shown
+  get: () => {
+    const q = typeof route.query.exp === 'string' ? route.query.exp : ''
+    return inSection.value.some((j) => j.id === q) ? q : (inSection.value[0]?.id ?? '')
+  },
+  set: (id: string) => { router.replace({ query: { ...route.query, exp: id || undefined } }) },
+})
 
 // ── Sections ──
 const qc = useQueryClient()
@@ -218,7 +248,7 @@ const dragOver = ref('')
 const adding = ref(false)
 const newSection = ref('')
 const newInput = ref<HTMLInputElement>()
-watch(() => props.project, () => { picked.value = ''; selectedId.value = ''; closeAdding() })
+watch(() => props.project, () => { picked.value = ''; closeAdding() })
 
 async function openAdding() {
   adding.value = true
@@ -240,11 +270,18 @@ async function onDrop(section: string, e: DragEvent) {
   dragOver.value = ''
   const id = e.dataTransfer?.getData('application/x-runq-job') || e.dataTransfer?.getData('text/plain')
   if (!id) return
-  try {
-    await sectionsApi.moveJob(id, section)
-    snack.success(t('sections.moved', { section: sectionLabel(section) }))
+  const from = projectJobs.value.find((j) => j.id === id)?.section || 'unsorted'
+  if (from === section) return
+  const refresh = () => {
     void qc.invalidateQueries({ queryKey: qk.jobs })
     void qc.invalidateQueries({ queryKey: qk.sections(props.project) })
+  }
+  try {
+    await sectionsApi.moveJob(id, section)
+    refresh()
+    snack.undoable(t('sections.moved', { section: sectionLabel(section) }), () => {
+      sectionsApi.moveJob(id, from).then(refresh).catch((err: any) => snack.error(err?.message || t('common.error')))
+    })
   } catch (err: any) { snack.error(err?.message || t('common.error')) }
 }
 async function createSection() {
@@ -263,9 +300,15 @@ const inSection = computed(() => {
 })
 const common = computed(() => commonWordsByProject(projectJobs.value))
 const groups = computed(() => groupJobs(filterJobs(inSection.value, searchQuery.value ?? '', new Set()), new Date()))
-watch(inSection, (list) => {
-  if (list.length && !list.some((j) => j.id === selectedId.value)) selectedId.value = list[0].id
-}, { immediate: true })
+
+// Keys: / search, ↑↓ pick, ↵ open the picked experiment.
+const searchField = ref<{ focus: () => void } | null>(null)
+useListKeys({
+  ids: () => groups.value.flatMap((g) => g.jobs.map((j) => j.id)),
+  selected: selectedId,
+  open: (id) => router.push({ name: 'job-detail', params: { project: props.project, jobId: id } }),
+  focusSearch: () => searchField.value?.focus(),
+})
 
 function openJob(j: JobSummary) {
   if (threeCol.value && selectedId.value !== j.id) {
@@ -277,7 +320,7 @@ function openJob(j: JobSummary) {
 </script>
 
 <style scoped>
-.project-page { max-width: 1040px; margin: 0 auto; }
+.project-page { margin: 0 auto; }
 .project-page.cols-3 {
   display: grid; gap: 20px; align-items: start; max-width: none;
   grid-template-columns: minmax(0, 1fr) minmax(380px, 36%);

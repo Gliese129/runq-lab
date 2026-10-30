@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import SegmentedProgress from './SegmentedProgress.vue'
-import { statusStyle } from './statusGrammar'
+import { barColor } from './statusGrammar'
 import en from '@/i18n/en.json'
 import type { TaskCountGroup } from '@/types/api'
 
@@ -24,11 +24,11 @@ describe('SegmentedProgress', () => {
     expect(segs).toHaveLength(4)
     // Order: success, failed, running, pending (CI readout order).
     expect(segs[0].attributes('style')).toContain('width: 50%')
-    expect(segs[0].attributes('style')).toContain(statusStyle('task', 'success').css)
+    expect(segs[0].attributes('style')).toContain(barColor('task', 'success'))
     expect(segs[1].attributes('style')).toContain('width: 20%')
-    expect(segs[1].attributes('style')).toContain(statusStyle('task', 'failed').css)
+    expect(segs[1].attributes('style')).toContain(barColor('task', 'failed'))
     expect(segs[3].attributes('style')).toContain('width: 10%')
-    expect(segs[3].attributes('style')).toContain(statusStyle('task', 'pending').css)
+    expect(segs[3].attributes('style')).toContain(barColor('task', 'pending'))
   })
 
   it('skips zero buckets', () => {

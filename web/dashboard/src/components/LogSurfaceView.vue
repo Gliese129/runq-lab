@@ -2,6 +2,12 @@
   <div class="log-surface">
     <!-- Search bar -->
     <div v-if="items.length > 0 || searchOpen" class="d-flex align-center mb-1 ga-2">
+      <!-- Errors first: how many, and a way to step through them -->
+      <template v-if="errorIdx.length">
+        <span class="err-count">✕ {{ t('log.n_errors', { n: errorIdx.length }) }}</span>
+        <v-btn size="x-small" variant="text" icon="mdi-chevron-up" density="compact" :aria-label="t('log.prev_error')" :title="t('log.prev_error')" @click="stepError(-1)" />
+        <v-btn size="x-small" variant="text" icon="mdi-chevron-down" density="compact" :aria-label="t('log.next_error')" :title="t('log.next_error')" @click="stepError(1)" />
+      </template>
       <v-spacer />
       <div class="log-search-bar d-flex align-center" :class="{ 'log-search-bar--active': searchOpen }">
         <v-text-field
@@ -74,14 +80,14 @@
             @click="toggleFold(item.foldKey)"
           >
             <span class="drain-fold-chevron">&#9654;</span>
-            <span class="drain-fold-summary text-truncate">{{ item.label }}</span>
-            <v-chip
-              size="x-small" variant="tonal"
-              :color="item.variant === 'traceback' ? 'error' : undefined"
-              class="ml-auto flex-shrink-0"
-            >
-              {{ t('log.n_lines', { n: item.lineCount }) }}<template v-if="item.repeats"> ×{{ item.repeats }}</template>
-            </v-chip>
+            <span class="fold-text">
+              <span class="drain-fold-summary text-truncate">{{ item.label }}</span>
+              <span v-if="item.detail" class="fold-detail text-truncate">{{ item.detail }}</span>
+            </span>
+            <span class="fold-count ml-auto flex-shrink-0">
+              <template v-if="item.variant === 'traceback'">{{ t('log.tb_frames', { n: item.lineCount }) }}</template>
+              <template v-else>{{ t('log.n_similar', { n: item.lineCount }) }}<template v-if="item.repeats"> ×{{ item.repeats }}</template></template>
+            </span>
           </div>
           <!-- Expanded block header (drain diff view / interleaved motif) -->
           <div
@@ -204,11 +210,14 @@ const props = withDefaults(defineProps<{
    *  numbers are lineNumberBase + lineIdx + 1; -1 hides the column
    *  entirely (live view / unknown base — log contract v2). */
   lineNumberBase?: number
+  /** open at the first error once the log arrives (a failed version) */
+  startAtError?: boolean
 }>(), {
   logLoading: false,
   emptyText: '',
   maxHeight: '600px',
   lineNumberBase: -1,
+  startAtError: false,
 })
 
 const { t } = useI18n()
@@ -264,9 +273,46 @@ onBeforeUnmount(() => {
   scrollToIndexRef.value = null
   logContainer.value = undefined
 })
+
+// ── Errors: tracebacks and error-level lines, in order. ↑↓ step through
+// them; a failed version opens at the first one. ──
+const errorIdx = computed(() => props.items.flatMap((it, i) => (
+  (it.type === 'fold-summary' && it.variant === 'traceback') || (it.type === 'line' && it.line.tags.has('error')) ? [i] : []
+)))
+const errorAt = ref(-1)
+function stepError(dir: 1 | -1) {
+  const n = errorIdx.value.length
+  if (!n) return
+  errorAt.value = errorAt.value < 0 ? (dir > 0 ? 0 : n - 1) : (errorAt.value + dir + n) % n
+  virtualizer.value.scrollToIndex(errorIdx.value[errorAt.value], { align: 'center' })
+}
+const jumped = ref(false)
+watch(() => errorIdx.value.length, (n) => {
+  if (!props.startAtError || jumped.value || !n) return
+  jumped.value = true
+  setTimeout(() => stepError(1), 0)
+}, { immediate: true })
 </script>
 
 <style scoped>
+/* The log follows the theme: the page's surface and ink, status colours
+   from the palette (the terminal-block vars are re-pointed here). */
+.log-scroll {
+  --terminal-bg: rgb(var(--v-theme-surface));
+  --terminal-fg: rgb(var(--v-theme-on-surface));
+  --terminal-red: rgb(var(--v-theme-error));
+  --terminal-yellow: rgb(var(--v-theme-warning));
+  --terminal-green: rgb(var(--v-theme-success));
+  --terminal-blue: rgb(var(--v-theme-info));
+  --terminal-dim: rgb(var(--v-theme-on-surface-variant));
+  border: var(--border-hairline) solid rgb(var(--v-theme-outline-variant));
+}
+.err-count { font-size: var(--fs-meta); font-weight: 500; color: rgb(var(--v-theme-error)); }
+.fold-text { display: flex; flex-direction: column; min-width: 0; }
+.fold-detail { font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.fold-count { font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.fold-traceback { background: rgb(var(--v-theme-error), 0.06); }
+.fold-traceback .drain-fold-summary { font-weight: 500; }
 .log-surface {
   flex: 1 1 auto;
   min-width: 0;
@@ -326,7 +372,7 @@ onBeforeUnmount(() => {
 }
 
 /* ── Level coloring ── */
-.log-error { color: rgb(var(--v-theme-error)); background: rgba(var(--v-theme-error), 0.06); }
+.log-error { color: rgb(var(--v-theme-error)); background: rgba(var(--v-theme-error), 0.06); box-shadow: inset 2px 0 0 rgb(var(--v-theme-error)); }
 .log-warning { color: rgb(var(--v-theme-warning)); }
 .log-info { opacity: 0.75; }
 .log-debug { opacity: 0.5; }

@@ -8,12 +8,19 @@ const LIVE = new Set(['running', 'pending', 'paused'])
 
 /** Every whitespace-separated term must match the id prefix, note,
  *  description or project (case-insensitive). */
+/** From this width, experiment lists show the picked experiment beside
+ *  the list (Overview and project pages alike); narrower, a click opens it. */
+export const SPLIT_MIN_WIDTH = 1280
+
 export function matchesQuery(j: JobSummary, query: string): boolean {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
   if (!terms.length) return true
   const hay = [j.name, j.description ?? '', j.project].join('\n').toLowerCase()
   const id = j.id.toLowerCase()
-  return terms.every((t) => id.startsWith(t) || hay.includes(t))
+  // `target:<name>` matches the target exactly (links from the Targets page)
+  return terms.every((t) => (t.startsWith('target:')
+    ? (j.target ?? '').toLowerCase() === t.slice(7)
+    : id.startsWith(t) || hay.includes(t)))
 }
 
 export function filterJobs(jobs: readonly JobSummary[], query: string, projects: ReadonlySet<string>): JobSummary[] {

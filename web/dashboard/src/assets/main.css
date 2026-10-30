@@ -23,15 +23,29 @@
   /* ── fonts.css: families only. Webfonts are deliberately NOT loaded from
      the kit's CDN — the dashboard must render on air-gapped lab networks,
      so the stacks fall through locally-installed faces. ── */
-  --font-sans: 'Roboto', 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  --font-latin: system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial;
+  --font-cjk: 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei';
+  --font-sans: var(--font-latin), var(--font-cjk), sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, 'Cascadia Code', ui-monospace, monospace;
+
+  /* ── type scale: 12 / 13 / 15 / 20, UI base 13 ── */
+  --fs-meta: 12px;
+  --fs-base: 13px;
+  --fs-heading: 15px;
+  --fs-title: 20px;
+
+  /* ── density: one spacing scale for lists and tables (the density
+     lever re-tunes these; regular is the default) ── */
+  --row-h: 34px;
+  --row-pad-x: 12px;
+  --row-fs: var(--fs-base);
+  --row-two-line: 0; /* 1 = show the description on its own line */
 
   /* ── typography.css: mono/data sizes (the density lever re-tunes these) ── */
   --data-cell-size: 12px;
   --data-head-size: 11px;
   --data-td-pad: 5px 10px;
   --data-th-pad: 6px 10px;
-  --data-head-tracking: 0.03em;
   --code-size: 0.85em;
   --terminal-size: 12px;
   --terminal-lh: 1.6;
@@ -46,15 +60,19 @@
   --border-active: 1.5px;
 
   /* ── motion.css ── */
-  --dur-fast: 0.15s;
-  --dur-base: 0.2s;
+  /* motion: 120ms micro (hover, press, select, panel out), 180ms expand /
+     collapse / undo bar, 200ms panel in; one-off highlights fade in 1.6s;
+     "live" breathes on a 2.4s cycle. Only change moves — nothing animates
+     on page load. */
+  --dur-fast: 0.12s;
+  --dur-base: 0.18s;
+  --dur-panel: 0.2s;
+  --dur-flash: 1.6s;
   --ease: ease;
   --ease-in-out: ease-in-out;
   --transition: all var(--dur-fast) var(--ease);
-  --pulse-dur: 2s;
-  --spin-dur: 1.6s;
+  --pulse-dur: 2.4s;
   --shimmer-dur: 1.5s;
-  --dur-stagger: 30ms;
 
   /* ── spacing.css: component sizing consumed here ── */
   --status-dot: 8px;
@@ -89,6 +107,40 @@
    block still reads as a distinct object in dark mode (kit colors.css). */
 .v-theme--dark {
   --terminal-bg: #0b1120;
+}
+
+/* ── Fonts: local faces only (air-gapped labs load no webfonts). Vuetify
+   sets Roboto on html and on its typography classes; both inherit our
+   stack instead. Kept above .font-mono so mono still wins on elements
+   that carry both. ── */
+html {
+  font-family: var(--font-sans);
+}
+html:lang(ja) {
+  --font-cjk: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans CJK JP', 'Yu Gothic';
+}
+[class^='text-h'],
+[class*=' text-h'],
+[class^='text-subtitle'],
+[class*=' text-subtitle'],
+[class^='text-body'],
+[class*=' text-body'],
+[class^='text-caption'],
+[class*=' text-caption'],
+[class^='text-overline'],
+[class*=' text-overline'],
+[class^='text-button'],
+[class*=' text-button'] {
+  font-family: inherit;
+}
+.v-application {
+  font-size: var(--fs-base);
+}
+/* Numbers line up in columns wherever they are mono */
+.font-mono,
+code,
+.data-mono {
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── .font-mono (ex-Tailwind, the one utility we actually used) ── */
@@ -136,10 +188,9 @@
   font-size: var(--data-cell-size);
 }
 .data-mono th {
+  font-family: var(--font-sans);
   font-size: var(--data-head-size);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: var(--data-head-tracking);
   color: rgb(var(--v-theme-on-surface-variant));
   border-bottom: var(--border) solid rgb(var(--v-theme-outline-variant));
   padding: var(--data-th-pad);
@@ -159,52 +210,6 @@
   background: rgb(var(--v-theme-surface-variant), 0.4);
 }
 
-/* Staggered data entry (kit base.css) — apply .data-enter on a container,
-   children fade up one after another. Capped at 10 children so a long
-   table never feels slow; the rest appear instantly. */
-@keyframes runq-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-.data-enter > * {
-  animation: runq-fade-in var(--dur-base) var(--ease) both;
-}
-.data-enter > *:nth-child(1) {
-  animation-delay: 0ms;
-}
-.data-enter > *:nth-child(2) {
-  animation-delay: var(--dur-stagger);
-}
-.data-enter > *:nth-child(3) {
-  animation-delay: calc(var(--dur-stagger) * 2);
-}
-.data-enter > *:nth-child(4) {
-  animation-delay: calc(var(--dur-stagger) * 3);
-}
-.data-enter > *:nth-child(5) {
-  animation-delay: calc(var(--dur-stagger) * 4);
-}
-.data-enter > *:nth-child(6) {
-  animation-delay: calc(var(--dur-stagger) * 5);
-}
-.data-enter > *:nth-child(7) {
-  animation-delay: calc(var(--dur-stagger) * 6);
-}
-.data-enter > *:nth-child(8) {
-  animation-delay: calc(var(--dur-stagger) * 7);
-}
-.data-enter > *:nth-child(9) {
-  animation-delay: calc(var(--dur-stagger) * 8);
-}
-.data-enter > *:nth-child(10) {
-  animation-delay: calc(var(--dur-stagger) * 9);
-}
 
 /* Sortable column headers: the th keeps its columnheader role (aria-sort
    lives there); the inner <button> supplies keyboard access + focus. */
@@ -255,34 +260,50 @@ th[aria-sort='none'] .th-sort-btn:focus-visible::after {
   height: var(--status-dot);
   border-radius: var(--radius-full);
   flex-shrink: 0;
+  transition: background-color var(--dur-base) ease-out;
 }
 
-/* Pulsing animation for active states (running / cancelling).
-   Kit motion: opacity + a whisper of scale so it reads as breathing
-   rather than blinking. */
+/* "Live" is the one continuous motion on the site: the dot breathes —
+   opacity only, no scale, so dozens of running rows stay calm. */
 @keyframes status-pulse {
   0%,
   100% {
     opacity: 1;
-    transform: scale(1);
   }
   50% {
-    opacity: 0.6;
-    transform: scale(1.08);
+    opacity: 0.45;
   }
 }
 .status-dot--pulse {
-  animation: status-pulse var(--pulse-dur) cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  animation: status-pulse var(--pulse-dur) ease-in-out infinite;
 }
 
-/* Spinning icon for active states inside status badges */
-@keyframes icon-spin {
-  to {
-    transform: rotate(360deg);
-  }
+/* One-off highlights (fade out once, never repeat): a cell or experiment
+   that just failed, a number that just changed. */
+@keyframes fail-flash {
+  from { background-color: rgb(var(--v-theme-error), 0.16); }
+  to { background-color: transparent; }
 }
-.icon-spin {
-  animation: icon-spin var(--spin-dur) linear infinite;
+.flash-fail,
+.flash-fail > td {
+  animation: fail-flash var(--dur-flash) ease-out;
+}
+@keyframes value-flash {
+  from { background-color: rgb(var(--v-theme-warning), 0.25); }
+  to { background-color: transparent; }
+}
+.vflash-enter-active {
+  animation: value-flash var(--dur-flash) ease-out;
+  border-radius: 3px;
+}
+.vflash-leave-active {
+  display: none;
+}
+
+/* Daemon away (StatusBar toggles html.runq-offline): the data on screen is
+   old, so nothing pretends to be alive. */
+.runq-offline .status-dot--pulse {
+  animation: none !important;
 }
 
 /* Respect the OS "reduce motion" preference: stop decorative animation
@@ -291,9 +312,8 @@ th[aria-sort='none'] .th-sort-btn:focus-visible::after {
    transitionend / animationend listeners (Vuetify overlays) still fire. */
 @media (prefers-reduced-motion: reduce) {
   .status-dot--pulse,
-  .icon-spin,
   .skeleton,
-  .data-enter > *,
+  .vflash-enter-active,
   .v-skeleton-loader__bone::after {
     animation: none !important;
   }
@@ -387,65 +407,30 @@ code {
   border-radius: var(--radius-sm);
 }
 
-/* ═══════ Appearance levers (RQ2-2 — kit ui_kits/runq-dashboard/tweaks.jsx) ═══════
-   Root classes flipped by composables/useAppearance.ts; the accent lever
-   retunes the vuetify theme in JS (compiled RGB triplets can't be
-   overridden from here). 'regular' / 'hairline' ARE the token defaults —
-   their classes exist only so the DOM names the active choice. */
+/* ═══════ Appearance levers ═══════
+   Root classes flipped by composables/useAppearance.ts; the palette lever
+   rewrites the vuetify themes in JS (compiled RGB triplets can't be
+   overridden from here). 'regular' IS the token default — its class exists
+   only so the DOM names the active choice. */
 
 /* ── Density: the data's breathing room (tables + mono rhythm; Vuetify
    component density stays globally compact via plugin defaults) ── */
 .appearance-density-compact {
+  --row-h: 26px;
+  --row-pad-x: 10px;
+  --row-fs: var(--fs-meta);
   --data-cell-size: 11px;
   --data-head-size: 10px;
   --data-td-pad: 2px 8px;
   --data-th-pad: 4px 8px;
 }
 .appearance-density-comfy {
+  --row-h: 48px;
+  --row-pad-x: 14px;
+  --row-two-line: 1;
   --data-cell-size: 13px;
   --data-head-size: 11px;
   --data-td-pad: 10px 14px;
   --data-th-pad: 10px 14px;
 }
 
-/* ── Surface: what a "card" means — a hairline plane (default), a floating
-   object, or cells in one continuous grid ── */
-.appearance-surface-elevated .v-card {
-  border-color: transparent !important;
-  border-radius: 12px !important;
-  box-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.06),
-    0 6px 20px rgba(15, 23, 42, 0.07) !important;
-}
-.appearance-surface-elevated .v-main {
-  background: color-mix(
-    in srgb,
-    rgb(var(--v-theme-surface-variant)) 55%,
-    rgb(var(--v-theme-background))
-  );
-}
-.appearance-surface-elevated .data-mono tbody tr:hover {
-  background: rgb(var(--v-theme-primary), 0.05);
-}
-
-.appearance-surface-grid .v-card {
-  border-radius: 0 !important;
-  border: var(--border) solid rgb(var(--v-theme-outline-variant)) !important;
-  box-shadow: none !important;
-}
-.appearance-surface-grid .data-mono td {
-  border-bottom: var(--border) solid rgb(var(--v-theme-outline-variant));
-}
-.appearance-surface-grid .data-mono th {
-  border-bottom: var(--border) solid rgb(var(--v-theme-on-surface-variant));
-}
-.appearance-surface-grid .data-mono tbody tr:nth-child(even) {
-  background: rgb(var(--v-theme-surface-variant), 0.45);
-}
-.appearance-surface-grid .data-mono tbody tr:hover {
-  background: rgb(var(--v-theme-primary), 0.08);
-}
-.appearance-surface-grid .v-btn,
-.appearance-surface-grid .v-field {
-  border-radius: 2px !important;
-}

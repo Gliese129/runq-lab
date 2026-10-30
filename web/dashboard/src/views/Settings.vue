@@ -14,7 +14,7 @@
           class="pa-3 text-center flex-grow-1 cursor-pointer"
           :elevation="currentTheme === th.value ? 3 : 0"
           :color="currentTheme === th.value ? 'primary' : 'surface-variant'"
-          :variant="currentTheme === th.value ? 'tonal' : 'flat'"
+          :variant="currentTheme === th.value ? 'outlined' : 'flat'"
           @click="currentTheme = th.value"
         >
           <v-icon size="20" class="mb-1">{{ th.icon }}</v-icon>
@@ -30,7 +30,7 @@
           class="pa-3 text-center flex-grow-1 cursor-pointer"
           :elevation="currentLocale === lang.value ? 3 : 0"
           :color="currentLocale === lang.value ? 'primary' : 'surface-variant'"
-          :variant="currentLocale === lang.value ? 'tonal' : 'flat'"
+          :variant="currentLocale === lang.value ? 'outlined' : 'flat'"
           @click="currentLocale = lang.value"
         >
           <div class="text-body-2">{{ lang.flag }}</div>
@@ -38,9 +38,27 @@
         </v-card>
       </div>
 
-      <!-- Appearance levers (RQ2-2): density / surface / accent. State +
-           persistence (localStorage) live in
-           useAppearance; these are plain selectors. -->
+      <!-- Appearance levers: palette / density. State + persistence
+           (localStorage) live in useAppearance; these are plain selectors. -->
+      <div class="text-caption text-on-surface-variant mb-2">{{ t('settings.palette') }}</div>
+      <div class="d-flex ga-2 mb-5">
+        <v-card
+          v-for="p in palettes"
+          :key="p.value"
+          class="pa-3 text-center flex-grow-1 cursor-pointer"
+          :color="appearance.palette.value === p.value ? 'primary' : 'surface-variant'"
+          :variant="appearance.palette.value === p.value ? 'outlined' : 'flat'"
+          :aria-pressed="appearance.palette.value === p.value"
+          role="button"
+          @click="appearance.palette.value = p.value"
+        >
+          <span class="palette-swatch mb-1" :style="{ background: p.paper }" aria-hidden="true">
+            <span v-for="c in p.marks" :key="c" class="palette-mark" :style="{ background: c }" />
+          </span>
+          <div class="text-caption">{{ p.label }}</div>
+        </v-card>
+      </div>
+
       <div class="text-caption text-on-surface-variant mb-2">{{ t('settings.density') }}</div>
       <div class="d-flex ga-2 mb-5">
         <v-card
@@ -48,44 +66,11 @@
           :key="d.value"
           class="pa-3 text-center flex-grow-1 cursor-pointer"
           :color="appearance.density.value === d.value ? 'primary' : 'surface-variant'"
-          :variant="appearance.density.value === d.value ? 'tonal' : 'flat'"
+          :variant="appearance.density.value === d.value ? 'outlined' : 'flat'"
           @click="appearance.density.value = d.value"
         >
           <v-icon size="20" class="mb-1">{{ d.icon }}</v-icon>
           <div class="text-caption">{{ d.label }}</div>
-        </v-card>
-      </div>
-
-      <div class="text-caption text-on-surface-variant mb-2">{{ t('settings.surface') }}</div>
-      <div class="d-flex ga-2 mb-5">
-        <v-card
-          v-for="s in surfaces"
-          :key="s.value"
-          class="pa-3 text-center flex-grow-1 cursor-pointer"
-          :color="appearance.surface.value === s.value ? 'primary' : 'surface-variant'"
-          :variant="appearance.surface.value === s.value ? 'tonal' : 'flat'"
-          @click="appearance.surface.value = s.value"
-        >
-          <v-icon size="20" class="mb-1">{{ s.icon }}</v-icon>
-          <div class="text-caption">{{ s.label }}</div>
-        </v-card>
-      </div>
-
-      <div class="text-caption text-on-surface-variant mb-2">{{ t('settings.accent') }}</div>
-      <div class="d-flex ga-2 mb-5">
-        <v-card
-          v-for="(a, hex) in ACCENTS"
-          :key="hex"
-          class="pa-3 text-center flex-grow-1 cursor-pointer"
-          :color="appearance.accent.value === hex ? 'primary' : 'surface-variant'"
-          :variant="appearance.accent.value === hex ? 'tonal' : 'flat'"
-          @click="appearance.accent.value = hex"
-        >
-          <span
-            class="accent-swatch mb-1"
-            :style="{ background: currentTheme === 'dark' ? a.dark : hex }"
-          />
-          <div class="text-caption">{{ a.name }}</div>
         </v-card>
       </div>
 
@@ -108,7 +93,7 @@
                 <v-card
                   class="pa-2 d-flex align-center justify-center cursor-pointer"
                   :color="!settings.animeMode ? 'primary' : 'surface-variant'"
-                  :variant="!settings.animeMode ? 'tonal' : 'flat'"
+                  :variant="!settings.animeMode ? 'outlined' : 'flat'"
                   role="button"
                   :aria-pressed="!settings.animeMode"
                   :aria-label="t('settings.anime_mode') + ': off'"
@@ -119,7 +104,7 @@
                 <v-card
                   class="pa-2 d-flex align-center justify-center cursor-pointer"
                   :color="settings.animeMode ? 'primary' : 'surface-variant'"
-                  :variant="settings.animeMode ? 'tonal' : 'flat'"
+                  :variant="settings.animeMode ? 'outlined' : 'flat'"
                   role="button"
                   :aria-pressed="settings.animeMode"
                   :aria-label="t('settings.anime_mode') + ': on'"
@@ -145,7 +130,8 @@ import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from 'vuetify'
 import { useSettingsStore } from '@/stores/settings'
-import { useAppearance, ACCENTS, type Density, type Surface } from '@/composables/useAppearance'
+import { useAppearance, type Density } from '@/composables/useAppearance'
+import { PALETTES, PALETTE_DEFS, type Palette } from '@/plugins/palettes'
 import DaemonLogPanel from '@/components/DaemonLogPanel.vue'
 import RunqLogo from '@/components/RunqLogo.vue'
 
@@ -169,11 +155,19 @@ const densities = computed((): Array<{ value: Density; label: string; icon: stri
   { value: 'comfy', label: t('settings.density_comfy'), icon: 'mdi-view-agenda-outline' },
 ])
 
-const surfaces = computed((): Array<{ value: Surface; label: string; icon: string }> => [
-  { value: 'hairline', label: t('settings.surface_hairline'), icon: 'mdi-square-outline' },
-  { value: 'elevated', label: t('settings.surface_elevated'), icon: 'mdi-checkbox-multiple-blank-outline' },
-  { value: 'grid', label: t('settings.surface_grid'), icon: 'mdi-grid' },
-])
+// Each palette previews itself in the current mode: its paper, ink and the
+// three status colours that matter most (failed, running, success).
+const palettes = computed(() =>
+  PALETTES.map((value: Palette) => {
+    const c = PALETTE_DEFS[value][currentTheme.value === 'dark' ? 'dark' : 'light']
+    return {
+      value,
+      label: t(`settings.palette_${value}`),
+      paper: c.background,
+      marks: [c['on-surface'], c.error, c.info, c.success],
+    }
+  }),
+)
 
 const locales = [
   { value: 'en', label: 'English', flag: 'EN' },
@@ -205,10 +199,18 @@ watch(currentLocale, (val) => {
   border-color: rgb(var(--v-theme-primary));
   background: rgb(var(--v-theme-surface-variant), 0.35);
 }
-.accent-swatch {
-  display: inline-block;
-  width: 20px;
-  height: 20px;
+.palette-swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: var(--border-hairline) solid rgb(var(--v-theme-outline-variant));
+}
+.palette-mark {
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
 }
 </style>

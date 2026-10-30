@@ -1,4 +1,4 @@
-import { inject, ref, type InjectionKey, type Ref } from 'vue'
+import { computed, inject, ref, type ComputedRef, type InjectionKey, type Ref } from 'vue'
 
 /** Paper-figure geometry: scales, ticks, palette and markers shared by the
  *  six chart templates. Figures are drawn in px at 100 px/in so the two
@@ -46,6 +46,20 @@ export function screenTheme(dark: boolean, onSurface: string, onSurfaceVariant: 
   }
 }
 export const CHART_THEME: InjectionKey<Ref<ChartTheme>> = Symbol('chartTheme')
+/** On screen, the width the chart's card actually has (px); 0 = unknown. */
+export const CHART_WIDTH: InjectionKey<Ref<number>> = Symbol('chartWidth')
+/** The width to draw at: on screen the card's own width, so text keeps its
+ *  real size instead of a scaled paper figure; on paper the column preset. */
+export function useChartWidth(preset: () => WidthPreset): ComputedRef<number> {
+  const theme = useChartTheme()
+  const measured = inject(CHART_WIDTH, ref(0))
+  return computed(() => (theme.value.name === 'screen' && measured.value > 0 ? measured.value : WIDTHS[preset()]))
+}
+/** Plot height for a width: one paper column is taller, wide figures and
+ *  screen charts read better flatter (about 2.4:1). */
+export function chartRatio(W: number): number {
+  return W >= 500 ? 0.42 : 0.72
+}
 /** The theme the enclosing ChartThemeScope set (paper when none did). */
 export function useChartTheme(): Ref<ChartTheme> {
   return inject(CHART_THEME, ref(PAPER_THEME))

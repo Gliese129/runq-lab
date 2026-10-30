@@ -1,3 +1,4 @@
+import { watch } from 'vue'
 import { createI18n } from 'vue-i18n'
 import en from '../i18n/en.json'
 import ja from '../i18n/ja.json'
@@ -12,9 +13,15 @@ function detectLocale(): string {
   return 'en'
 }
 
-export default createI18n({
+const i18n = createI18n({
   legacy: false,
   locale: detectLocale(),
   fallbackLocale: 'en',
   messages: { en, ja, 'zh-CN': zhCN },
 })
+
+// <html lang> picks the CJK font stack (assets/main.css), so Japanese text
+// gets Japanese glyph forms and Chinese text Chinese ones.
+watch(i18n.global.locale, (l) => { document.documentElement.lang = l }, { immediate: true })
+
+export default i18n
