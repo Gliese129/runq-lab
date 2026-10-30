@@ -380,7 +380,9 @@ const isActiveJob = computed(() => {
 const RAW = '__raw__'
 const DEFAULT = '__default__'
 const jobViewsQuery = useJobViewsQuery(() => props.project, () => props.jobId, () => detail.value?.metric_keys ?? [])
-const jobViews = computed(() => jobViewsQuery.data.value ?? [])
+// Views filed under this experiment's section, plus the project-level ones.
+const jobViews = computed(() => (jobViewsQuery.data.value ?? [])
+  .filter((v) => !v.in_section || v.in_section === (detail.value?.job.section || 'unsorted')))
 const defaultViewsQuery = useJobDefaultViewsQuery(() => props.jobId, () => tab.value === 'results', () => isActiveJob.value)
 const defaultViews = computed(() => defaultViewsQuery.data.value?.views ?? [])
 const pickedView = ref('')

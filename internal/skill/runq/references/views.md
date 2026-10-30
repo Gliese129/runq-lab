@@ -81,13 +81,18 @@ charts:
 ```
 
 `runq view progress.yaml` saves/renders; `runq view progress --json` returns the
-same API data. A view describes how to show a section; it is not tied to experiments:
-the dashboard's experiment page renders every view against that experiment (its Results tab),
-and the project view page compares experiments the researcher adds by hand, showing the
-columns they all have. So leave `jobs` out (the CLI then uses the latest experiment) and
-pass `--experiment <id>` (repeatable) to render for specific experiments; list ids in `jobs:`
-when a view is meant to compare a fixed set. `--project` disambiguates names.
-`--wide` adds provenance.
+same API data. `section:` in a view names the result group it reads (the `section=` of
+`runq.result`), not where the view is filed.
+
+File a view under the project section of the study it reports on:
+`runq section move <section> --view <name>` (the researcher can also drag it there on
+the dashboard; "unsorted" makes it project-level again). A filed view reads every
+experiment in that section, so new experiments and `--into` cells join it; list extra
+ids in `jobs:` for a baseline from another section. A project-level view shows on every
+section; leave `jobs` out (the CLI then uses the latest experiment) and pass
+`--experiment <id>` (repeatable) to render for specific experiments. The experiment
+page's Results tab renders the views of its section and the project-level ones.
+`--project` disambiguates names. `--wide` adds provenance.
 
 Rows must cover every identity axis. `expect` must cover exactly every row axis;
 empty expected cells remain `no data yet`. Null or division by zero displays `--`.

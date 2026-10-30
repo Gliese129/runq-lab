@@ -11,6 +11,9 @@ function jobQuery(jobs?: string[]): string {
 export const viewsApi = {
   list: (project: string) => api.get<ViewSummary[]>(base(project), { silent: true }),
   get: (project: string, name: string) => api.get<SavedView>(one(project, name), { silent: true }),
+  /** file a view under a project section ("" = project-level) */
+  moveSection: (project: string, name: string, section: string) =>
+    api.post<{ project: string; view: string; section: string }>(`/views/${encodeURIComponent(name)}/section`, { project, section }),
   render: (project: string, name: string, jobs?: string[]) => {
     const q = jobQuery(jobs)
     return api.get<ViewResult>(`${one(project, name)}/render${q ? `?${q}` : ''}`, { silent: true })

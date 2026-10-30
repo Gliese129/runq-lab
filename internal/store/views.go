@@ -18,6 +18,10 @@ type SavedView struct {
 	Templates  map[string]string `json:"templates"`
 	SourcePath string            `json:"source_path"`
 	UpdatedAt  int64             `json:"updated_at"`
+	// InSection is the project section the view is filed under ("" =
+	// project-level). Not the spec's `section:`, which names the result
+	// group the view reads.
+	InSection string `json:"in_section,omitempty"`
 }
 type ViewSummary struct {
 	Project    string `json:"project"`
@@ -25,7 +29,11 @@ type ViewSummary struct {
 	Title      string `json:"title"`
 	UpdatedAt  int64  `json:"updated_at"`
 	SourcePath string `json:"source_path"`
+	InSection  string `json:"in_section,omitempty"`
 }
+
+// viewSectionName is the SQL for a view row's section name ("" if none).
+const viewSectionName = `COALESCE((SELECT name FROM sections WHERE sections.id = views.section_id), '')`
 
 func (s *Store) SaveView(ctx context.Context, v SavedView) error {
 	if err := v.Spec.Validate(); err != nil {
@@ -64,7 +72,7 @@ func (s *Store) SaveView(ctx context.Context, v SavedView) error {
 func (s *Store) GetView(ctx context.Context, project, name string) (*SavedView, error) {
 	var v SavedView
 	var raw, tpl string
-	err := s.db.QueryRowContext(ctx, `SELECT spec_json,templates_json,source_path,updated_at FROM views WHERE project_name=? AND name=?`, project, name).Scan(&raw, &tpl, &v.SourcePath, &v.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT spec_json,templates_json,source_path,updated_at,`+viewSectionName+` FROM views WHERE project_name=? AND name=?`, project, name).Scan(&raw, &tpl, &v.SourcePath, &v.UpdatedAt, &v.InSection)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -78,7 +86,7 @@ func (s *Store) GetView(ctx context.Context, project, name string) (*SavedView, 
 	return &v, err
 }
 func (s *Store) ListViews(ctx context.Context, project string) ([]ViewSummary, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT project_name,name,spec_json,updated_at,source_path FROM views WHERE (?='' OR project_name=?) ORDER BY project_name,name`, project, project)
+	rows, err := s.db.QueryContext(ctx, `SELECT project_name,name,spec_json,updated_at,source_path,`+viewSectionName+` FROM views WHERE (?='' OR project_name=?) ORDER BY project_name,name`, project, project)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +95,7 @@ func (s *Store) ListViews(ctx context.Context, project string) ([]ViewSummary, e
 	for rows.Next() {
 		var v ViewSummary
 		var raw string
-		if err := rows.Scan(&v.Project, &v.Name, &raw, &v.UpdatedAt, &v.SourcePath); err != nil {
+		if err := rows.Scan(&v.Project, &v.Name, &raw, &v.UpdatedAt, &v.SourcePath, &v.InSection); err != nil {
 			return nil, err
 		}
 		var spec views.Spec
@@ -99,6 +107,53 @@ func (s *Store) ListViews(ctx context.Context, project string) ([]ViewSummary, e
 	}
 	return out, rows.Err()
 }
+// SetViewSection files a view under a section of its project; "" or
+// "unsorted" makes it project-level again. An unknown section errors with
+// the existing ones listed (ResolveSection).
+func (s *Store) SetViewSection(ctx context.Context, project, name, section string) error {
+	var one int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM views WHERE project_name=? AND name=?`, project, name).Scan(&one); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("view %q not found in project %q", name, project)
+		}
+		return err
+	}
+	sid := ""
+	if section != "" {
+		var err error
+		if sid, err = s.ResolveSection(ctx, project, section); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE views SET section_id=? WHERE project_name=? AND name=?`, nullIfEmpty(sid), project, name)
+	return err
+}
+
+// FindViewProject returns the project of the one view named name, for a
+// CLI call that gave no --project; several matches list them.
+func (s *Store) FindViewProject(ctx context.Context, name string) (string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT project_name FROM views WHERE name=? ORDER BY project_name`, name)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var found []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return "", err
+		}
+		found = append(found, p)
+	}
+	switch len(found) {
+	case 0:
+		return "", fmt.Errorf("view %q not found", name)
+	case 1:
+		return found[0], nil
+	}
+	return "", fmt.Errorf("view %q is in several projects (%s); pass --project", name, strings.Join(found, ", "))
+}
+
 func (s *Store) DeleteView(ctx context.Context, project, name string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM views WHERE project_name=? AND name=?`, project, name)
 	return err
@@ -131,6 +186,29 @@ func (s *Store) ViewJobs(ctx context.Context, spec views.Spec, override []string
 	}
 	out := []JobRow{}
 	seen := map[string]bool{}
+	// A view filed under a section reads that section's experiments (all of
+	// them, so new ones join), plus any `jobs:` listed as extras — unless
+	// the caller picked the experiments itself.
+	if len(override) == 0 {
+		var sid sql.NullString
+		_ = s.db.QueryRowContext(ctx, `SELECT section_id FROM views WHERE project_name=? AND name=?`, spec.Project, spec.Name).Scan(&sid)
+		if sid.Valid && sid.String != "" {
+			all, err := s.ListJobs(ctx, spec.Project, "")
+			if err != nil {
+				return nil, err
+			}
+			sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.Before(all[j].CreatedAt) })
+			for _, j := range all {
+				if j.SectionID == sid.String && j.ArchivedAt == nil && !seen[j.ID] {
+					out = append(out, j)
+					seen[j.ID] = true
+				}
+			}
+			if !explicit {
+				return out, nil
+			}
+		}
+	}
 	if explicit {
 		for _, id := range ids {
 			j, err := s.GetJob(ctx, id)

@@ -14,16 +14,6 @@
       </v-btn>
     </div>
 
-    <div v-if="projectViews.length" class="d-flex flex-wrap align-center ga-2 mb-4">
-      <span class="text-caption text-on-surface-variant mr-1">{{ t('views.title') }}</span>
-      <router-link
-        v-for="v in projectViews" :key="v.name" class="view-link"
-        :to="{ name: 'view', params: { project, name: v.name } }"
-      >
-        <v-icon size="14" class="mr-1">mdi-table-eye</v-icon>{{ v.title || v.name }}
-      </router-link>
-    </div>
-
     <!-- Sections: how this project's jobs are grouped. A tab filters the
          list; drop a job row on one to move it (nothing moves on disk).
          The bar renders while sections load, so the list never jumps. -->
@@ -62,6 +52,16 @@
     </nav>
 
     <StaleStrip :targets="stale" />
+
+    <!-- Section > views: a section tab lists only the views filed there;
+         "all" groups every view by section, project-level last. Drag a
+         view row onto a section tab to file it there. -->
+    <template v-if="viewGroups.length">
+      <section v-for="g in viewGroups" :key="g.key" class="mb-4">
+        <div class="bucket-title">{{ g.label }}</div>
+        <ViewTiles :views="g.views" @drag="onViewDrag" @dragend="draggingView = ''" />
+      </section>
+    </template>
 
     <!-- New experiments drafted for this project (appends show on their
          experiment's page) -->
@@ -145,6 +145,7 @@ import JobList from '@/components/JobList.vue'
 import JobNote from '@/components/JobNote.vue'
 import ProjectDot from '@/components/ProjectDot.vue'
 import DraftRows from '@/components/DraftRows.vue'
+import ViewTiles from '@/components/ViewTiles.vue'
 import StaleStrip from '@/components/StaleStrip.vue'
 import ChibiMascot from '@/components/ChibiMascot.vue'
 import { staleTargets } from '@/utils/freshness'
@@ -156,6 +157,7 @@ import { useDisplay } from 'vuetify'
 import { useQueryClient } from '@tanstack/vue-query'
 import { useDraftsQuery, useSectionsQuery } from '@/queries/useDraftQueries'
 import { sectionsApi } from '@/apis/sections'
+import { viewsApi } from '@/apis/views'
 import { qk } from '@/queries/keys'
 import type { Section } from '@/types/api'
 import JobPreview from '@/components/JobPreview.vue'
@@ -216,7 +218,29 @@ const draftsQuery = useDraftsQuery()
 const projectDrafts = computed(() => (draftsQuery.data.value ?? []).filter((d) => d.project === props.project && !d.into
   && (!picked.value || (d.section || 'unsorted') === picked.value)))
 const viewsQuery = useViewsQuery(() => props.project)
-const projectViews = computed(() => viewsQuery.data.value ?? [])
+const projectViews = computed(() => (Array.isArray(viewsQuery.data.value) ? viewsQuery.data.value : []))
+// Views under sections: a picked section shows only its own; "all" groups
+// every view by its section, project-level last.
+const viewGroups = computed(() => {
+  const vs = projectViews.value
+  if (picked.value) {
+    const mine = vs.filter((v) => v.in_section === picked.value)
+    return mine.length ? [{ key: picked.value, label: t('views.title'), views: mine }] : []
+  }
+  const order = sections.value.map((s) => s.name)
+  const by = new Map<string, typeof vs>()
+  for (const v of vs) {
+    const k = v.in_section || ''
+    by.set(k, [...(by.get(k) ?? []), v])
+  }
+  return [...by.entries()]
+    .sort(([a], [b]) => (a === '' ? 1 : b === '' ? -1 : order.indexOf(a) - order.indexOf(b)))
+    .map(([k, views]) => ({
+      key: k || '_project',
+      label: `${t('views.title')} · ${k ? sectionLabel(k) : t('views.project_level')}`,
+      views,
+    }))
+})
 
 const stale = computed(() => staleTargets(projectJobs.value))
 const projectJobs = computed(() =>
@@ -266,10 +290,35 @@ function sectionLabel(name: string) {
 function ruleHint(s: Section) {
   return (s.rules ?? []).map((r) => `${r.kind} ${r.pattern}`).join('\n') || undefined
 }
+// A dragged link also carries its URL as text, so the view being dragged
+// is remembered here rather than read back from the drag data.
+const draggingView = ref('')
+function onViewDrag(name: string, e: DragEvent) {
+  draggingView.value = name
+  e.dataTransfer?.setData('application/x-runq-view', name)
+  dragging.value = true
+}
+async function dropView(name: string, section: string) {
+  const from = projectViews.value.find((v) => v.name === name)?.in_section ?? ''
+  const to = section === 'unsorted' ? '' : section
+  if (from === to) return
+  const refresh = () => void qc.invalidateQueries({ queryKey: qk.views(props.project) })
+  try {
+    await viewsApi.moveSection(props.project, name, to)
+    refresh()
+    snack.undoable(t('views.filed', { section: to ? sectionLabel(to) : t('views.project_level') }), () => {
+      viewsApi.moveSection(props.project, name, from).then(refresh).catch((err: any) => snack.error(err?.message || t('common.error')))
+    })
+  } catch (err: any) { snack.error(err?.message || t('common.error')) }
+}
 async function onDrop(section: string, e: DragEvent) {
   dragOver.value = ''
+  const view = draggingView.value || e.dataTransfer?.getData('application/x-runq-view')
+  draggingView.value = ''
+  if (view) { await dropView(view, section); return }
   const id = e.dataTransfer?.getData('application/x-runq-job') || e.dataTransfer?.getData('text/plain')
-  if (!id) return
+  // only an experiment id moves an experiment (a dropped link is not one)
+  if (!id || !/^(ex|jb)[0-9a-f]{4,}$/.test(id)) return
   const from = projectJobs.value.find((j) => j.id === id)?.section || 'unsorted'
   if (from === section) return
   const refresh = () => {
@@ -359,10 +408,5 @@ function openJob(j: JobSummary) {
   color: rgb(var(--v-theme-on-surface-variant)); background: none; border: none; cursor: pointer; padding: 4px 14px;
 }
 .archived-row:hover { background: rgb(var(--v-theme-on-surface), 0.04); }
-.view-link {
-  display: inline-flex; align-items: center; font-size: 13px; padding: 3px 10px; border-radius: 999px;
-  text-decoration: none; color: rgb(var(--v-theme-on-surface)); border: 0.5px solid rgb(var(--v-theme-outline-variant));
-}
-.view-link:hover { background: rgb(var(--v-theme-on-surface), 0.05); }
 .archived-id { font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); background: none; }
 </style>

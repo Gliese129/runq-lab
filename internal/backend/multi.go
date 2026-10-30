@@ -1995,6 +1995,20 @@ func (m *MultiBackend) MoveJob(ctx context.Context, jobRef, section string) (str
 	return ids[0], nil
 }
 
+func (m *MultiBackend) MoveView(ctx context.Context, projectRef, view, section string) (string, error) {
+	project := ""
+	var err error
+	if projectRef == "" {
+		project, err = m.store.FindViewProject(ctx, view)
+	} else {
+		project, err = m.registry.Resolve(ctx, projectRef)
+	}
+	if err != nil {
+		return "", err
+	}
+	return project, m.store.SetViewSection(ctx, project, view, section)
+}
+
 // ExportJob writes a job back in job.yaml form (`cells:` rows): one row per
 // cell, from its selected version. A snapshot, not the job's record (the
 // ledger is): the file's command, target and overrides are all the latest

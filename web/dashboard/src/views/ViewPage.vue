@@ -84,15 +84,18 @@ const jobsQuery = useJobsListQuery()
 const views = computed(() => (viewsQuery.data.value ?? []).map((v) => ({ ...v, title: v.title || v.name })))
 const projectJobs = computed(() => (jobsQuery.data.value ?? []).filter((j) => j.project === props.project))
 
-// Selection: ?jobs=a,b in the URL, else last time's choice for this view
-// (none chosen is a choice too), else the view's explicit job list.
-// Note-pattern selectors are not used.
+// Selection: ?jobs=a,b in the URL; else, for a view filed under a section,
+// that section's experiments (fresh each time, so new ones join); else last
+// time's choice for this view (none chosen is a choice too), else the
+// view's explicit job list. Note-pattern selectors are not used.
 const storeKey = () => `runq-view-jobs:${props.project}/${props.name}`
 const selected = ref<string[]>([])
 const urlJobs = () => String(route.query.jobs ?? '')
 function initial(): string[] {
   const q = urlJobs().split(',').filter(Boolean)
   if (q.length) return q
+  const v = savedQuery.data.value
+  if (v?.in_section) return v.default_jobs ?? []
   try {
     const saved = JSON.parse(localStorage.getItem(storeKey()) ?? 'null')
     if (Array.isArray(saved)) return saved.map(String)
@@ -104,6 +107,14 @@ watch(() => [props.name, savedQuery.data.value] as const, () => { selected.value
 // A link or back/forward that changes ?jobs on this view picks again.
 watch(urlJobs, (jobs) => { if (jobs !== selected.value.join(',')) selected.value = initial() })
 watch(selected, (ids) => {
+  const v = savedQuery.data.value
+  if (v?.in_section) {
+    // Only a change from the section's own set goes in the URL; the default
+    // stays implicit so it keeps following the section.
+    const same = ids.join(',') === (v.default_jobs ?? []).join(',')
+    router.replace({ query: { ...route.query, jobs: same ? undefined : ids.join(',') } })
+    return
+  }
   try { localStorage.setItem(storeKey(), JSON.stringify(ids)) } catch { /* private mode */ }
   router.replace({ query: { ...route.query, jobs: ids.length ? ids.join(',') : undefined } })
 })

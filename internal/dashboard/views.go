@@ -40,6 +40,7 @@ func (s *Server) registerViews() {
 	s.mux.HandleFunc("DELETE /api/v1/projects/{p}/views/{name}", s.handleDeleteView)
 	s.mux.HandleFunc("GET /api/v1/projects/{p}/views/{name}/render", s.handleRenderView)
 	s.mux.HandleFunc("GET /api/v1/jobs/{id}/view", s.handleJobView)
+	s.mux.HandleFunc("POST /api/v1/views/{name}/section", s.handleMoveView)
 }
 func (s *Server) handleListViews(w http.ResponseWriter, r *http.Request) {
 	st := s.viewStore(w)
@@ -67,7 +68,24 @@ func (s *Server) handleGetView(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "not_found", "view not found")
 		return
 	}
-	writeJSON(w, 200, v)
+	// A view filed under a section: the experiments it reads by default
+	// (the section's, plus jobs: extras), so the page can list them.
+	out := struct {
+		*store.SavedView
+		DefaultJobs []string `json:"default_jobs,omitempty"`
+	}{SavedView: v}
+	if v.InSection != "" {
+		rows, err := st.ViewJobs(r.Context(), v.Spec, nil)
+		if err != nil {
+			viewError(w, err)
+			return
+		}
+		out.DefaultJobs = make([]string, 0, len(rows))
+		for _, j := range rows {
+			out.DefaultJobs = append(out.DefaultJobs, j.ID)
+		}
+	}
+	writeJSON(w, 200, out)
 }
 func (s *Server) handlePutView(w http.ResponseWriter, r *http.Request) {
 	st := s.viewStore(w)

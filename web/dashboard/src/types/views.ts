@@ -6,6 +6,8 @@ export interface ViewSummary {
   title: string
   updated_at: number
   source_path: string
+  /** the project section it is filed under; absent = project-level */
+  in_section?: string
 }
 
 export interface ViewColumn {
@@ -127,6 +129,9 @@ export interface SavedView {
   templates?: Record<string, string>
   source_path: string
   updated_at: number
+  in_section?: string
+  /** a section view: the experiments it reads by default (the section's + jobs: extras) */
+  default_jobs?: string[]
 }
 
 /** A saved view's curves series: one (metric, color/facet key). With

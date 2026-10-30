@@ -714,6 +714,14 @@ func (p *Proxy) MoveJob(ctx context.Context, jobRef, section string) (string, er
 	return out.ID, err
 }
 
+func (p *Proxy) MoveView(ctx context.Context, projectRef, view, section string) (string, error) {
+	var out struct {
+		Project string `json:"project"`
+	}
+	err := p.do(ctx, "POST", "/api/v1/views/"+url.PathEscape(view)+"/section", map[string]string{"project": projectRef, "section": section}, &out)
+	return out.Project, err
+}
+
 func (p *Proxy) ExportJob(ctx context.Context, ref string) ([]byte, error) {
 	var out []byte
 	err := p.do(ctx, "GET", "/api/v1/jobs/"+url.PathEscape(ref)+"/export", nil, &out)

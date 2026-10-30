@@ -284,7 +284,7 @@
   "results.none_title": "この実験の結果はまだありません",
   "results.none_body": "まだ結果がありません。実験コードで runq.result(…) を書き込みます。",
   "results.views_waiting": "この project のビュー（まだこの実験のデータがありません）：",
-  "results.reads_section": "読む section",
+  "results.reads_section": "読み込む結果表",
   "results.example": "記録の例：",
   "results.example_for": "この形で記録すると「{name}」がここに表示されます：",
   "job.wandb_no_entity": "URL 未報告で wandb.entity もなし：別の entity が開くかもしれません",
@@ -370,7 +370,7 @@
   "drafts.cell_new": "新規セル",
   "drafts.nothing_to_append": "すべてのセルが実験に存在します",
   "job.tab_curves": "曲線",
-  "views.default_views": "セクション別",
+  "views.default_views": "結果表ごと",
   "views.default_hint": "結果から自動で配置。変更するには：",
   "views.metric": "指標",
   "views.better_higher": "大きいほど良い",
@@ -446,5 +446,7 @@
   "keys.kind_experiment": "実験",
   "keys.kind_view": "ビュー",
   "keys.kind_cell": "セル",
-  "job.more_actions": "その他の操作"
+  "job.more_actions": "その他の操作",
+  "views.filed": "{section} に移動しました",
+  "views.project_level": "プロジェクト全体"
 }

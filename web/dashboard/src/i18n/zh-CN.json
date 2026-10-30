@@ -284,7 +284,7 @@
   "results.none_title": "这个实验还没有结果",
   "results.none_body": "还没有结果。在实验代码里用 runq.result(…) 写入。",
   "results.views_waiting": "这个 project 的视图（目前都没有这个实验的数据）：",
-  "results.reads_section": "读取 section",
+  "results.reads_section": "读取结果表",
   "results.example": "记录示例：",
   "results.example_for": "按这个格式记录，“{name}”就会出现在这里：",
   "job.wandb_no_entity": "还没有 run 上报 URL，也没设 wandb.entity：链接可能打开错的 entity",
@@ -340,7 +340,7 @@
   "sections.unsorted": "未分类",
   "sections.new": "新建分区",
   "sections.new_placeholder": "分区名",
-  "sections.drag_hint": "拖到分区上即可移动",
+  "sections.drag_hint": "拖到分区上即可归入",
   "sections.moved": "已移到 {section}",
   "drafts.open": "草稿（{n}）",
   "drafts.unnamed": "（未命名）",
@@ -370,7 +370,7 @@
   "drafts.cell_new": "新格子",
   "drafts.nothing_to_append": "所有格子都已在实验里",
   "job.tab_curves": "曲线",
-  "views.default_views": "按 section",
+  "views.default_views": "按结果表",
   "views.default_hint": "按结果自动排版。要改，从这里开始：",
   "views.metric": "指标",
   "views.better_higher": "越大越好",
@@ -446,5 +446,7 @@
   "keys.kind_experiment": "实验",
   "keys.kind_view": "视图",
   "keys.kind_cell": "格子",
-  "job.more_actions": "更多操作"
+  "job.more_actions": "更多操作",
+  "views.filed": "已归到 {section}",
+  "views.project_level": "项目级"
 }

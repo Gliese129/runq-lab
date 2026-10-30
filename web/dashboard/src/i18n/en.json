@@ -284,7 +284,7 @@
   "results.none_title": "No results for this experiment yet",
   "results.none_body": "No results yet. Write them with runq.result(…) in the experiment's code.",
   "results.views_waiting": "Views of this project — none has data from this experiment yet:",
-  "results.reads_section": "reads section",
+  "results.reads_section": "reads result table",
   "results.example": "A record call:",
   "results.example_for": "Record like this for “{name}” to appear here:",
   "job.wandb_no_entity": "No URL reported yet and no wandb.entity: this link may open the wrong entity",
@@ -340,7 +340,7 @@
   "sections.unsorted": "Unsorted",
   "sections.new": "New section",
   "sections.new_placeholder": "Section name",
-  "sections.drag_hint": "Drop on a section to move the experiment",
+  "sections.drag_hint": "Drop on a section to file it there",
   "sections.moved": "Moved to {section}",
   "drafts.open": "Drafts ({n})",
   "drafts.unnamed": "(no name)",
@@ -370,7 +370,7 @@
   "drafts.cell_new": "new",
   "drafts.nothing_to_append": "Every cell is already in the experiment",
   "job.tab_curves": "Curves",
-  "views.default_views": "By section",
+  "views.default_views": "By result table",
   "views.default_hint": "Laid out from the results. To change it, start from",
   "views.metric": "metric",
   "views.better_higher": "higher is better",
@@ -446,5 +446,7 @@
   "keys.kind_experiment": "exp",
   "keys.kind_view": "view",
   "keys.kind_cell": "cell",
-  "job.more_actions": "More actions"
+  "job.more_actions": "More actions",
+  "views.filed": "Filed under {section}",
+  "views.project_level": "project level"
 }

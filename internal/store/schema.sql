@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS curve_pins (
 CREATE TABLE IF NOT EXISTS views (
  project_name TEXT NOT NULL, name TEXT NOT NULL, spec_json TEXT NOT NULL,
  source_path TEXT NOT NULL DEFAULT '', templates_json TEXT NOT NULL DEFAULT '{}',
- updated_at INTEGER NOT NULL, PRIMARY KEY(project_name,name)
+ updated_at INTEGER NOT NULL, section_id TEXT, PRIMARY KEY(project_name,name)
 );
 CREATE TABLE IF NOT EXISTS view_source_cache (
  project_name TEXT NOT NULL, view_name TEXT NOT NULL, source TEXT NOT NULL,

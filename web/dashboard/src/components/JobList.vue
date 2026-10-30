@@ -1,9 +1,9 @@
 <template>
-  <div class="job-list" role="list">
+  <div class="job-list row-list" role="list">
     <div
       v-for="j in jobs"
       :key="j.id"
-      class="job-row"
+      class="job-row row-list-row"
       :class="{ 'with-project': showProject, selected: j.id === selectedId, 'flash-fail': flashingJobs.has(j.id) }"
       :draggable="draggable ? 'true' : undefined"
       @dragstart="draggable && onDragStart(j, $event)"
@@ -14,7 +14,7 @@
       @click="emit('open', j)"
       @keydown.enter="emit('open', j)"
     >
-      <code class="job-id">{{ j.id.slice(0, 8) }}</code>
+      <code class="rl-id">{{ j.id.slice(0, 8) }}</code>
       <div class="job-text">
         <JobNote class="job-note" :note="j.name" :description="j.description" :common="common.get(j.project)" />
         <div v-if="showProject || j.description" class="job-sub">
@@ -24,12 +24,12 @@
         </div>
       </div>
       <StatusDot class="job-status" :status="j.status" kind="job" :size="8" :still="isFrozen(j)" />
-      <div class="job-progress">
+      <div class="job-progress rl-progress">
         <SegmentedProgress :counts="j.tasks" :height="3" style="width: 56px" />
         <Transition name="vflash"><span :key="`${j.tasks.completed}/${j.tasks.total}`">{{ j.tasks.completed }}/{{ j.tasks.total }}</span></Transition>
       </div>
-      <span v-if="isFrozen(j)" class="job-time frozen" :title="t('fresh.stale_hint')">◷ {{ t('fresh.stopped_at', { time: relativeTime(j.refreshed_at ?? 0) }) }}</span>
-      <span v-else class="job-time">{{ relativeTime(j.created_at) }}</span>
+      <span v-if="isFrozen(j)" class="rl-time frozen" :title="t('fresh.stale_hint')">◷ {{ t('fresh.stopped_at', { time: relativeTime(j.refreshed_at ?? 0) }) }}</span>
+      <span v-else class="rl-time">{{ relativeTime(j.created_at) }}</span>
     </div>
   </div>
 </template>
@@ -69,26 +69,8 @@ function onDragStart(j: JobSummary, e: DragEvent) {
 </script>
 
 <style scoped>
-.job-list {
-  border: var(--border-hairline) solid rgb(var(--v-theme-outline-variant));
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: rgb(var(--v-theme-surface));
-}
-/* One row per experiment at the density's height (settings → density);
-   rows are separated by a hairline, not spaced as cards. */
-.job-row {
-  position: relative;
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) 12px 92px minmax(64px, auto);
-  align-items: center;
-  column-gap: 12px;
-  min-height: var(--row-h);
-  padding: 0 var(--row-pad-x) 0 calc(var(--row-pad-x) + 4px);
-  cursor: pointer;
-  border-top: var(--border-hairline) solid rgb(var(--v-theme-outline-variant));
-}
-.job-row:first-child { border-top: none; }
+/* Box, grid and hover come from .row-list (main.css), shared with drafts
+   and views. */
 /* Project colour as a bar on the row's left edge — read before the text,
    and kept apart from the status dot on the right. Only where projects mix:
    on a project's own page every bar would be the same colour, just noise. */
@@ -99,11 +81,8 @@ function onDragStart(j: JobSummary, e: DragEvent) {
   width: 4px;
   background: var(--project);
 }
-.job-row:hover { background: rgb(var(--v-theme-on-surface), 0.03); }
-.job-row:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
 .job-row.selected { background: rgb(var(--v-theme-on-surface), 0.07); }
 .job-row[draggable='true'] { cursor: grab; }
-.job-id { font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); background: none; padding: 0; }
 .job-text {
   min-width: 0; display: flex; align-items: baseline; gap: 8px;
   white-space: nowrap; overflow: hidden;
@@ -119,9 +98,4 @@ function onDragStart(j: JobSummary, e: DragEvent) {
 :global(.appearance-density-comfy) .job-note { max-width: none; }
 :global(.appearance-density-comfy) .job-sub { margin-top: 1px; }
 .job-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
-.job-time { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); text-align: right; white-space: nowrap; }
-@media (max-width: 640px) {
-  .job-row { grid-template-columns: minmax(0, 1fr) 12px 52px; }
-  .job-id, .job-progress { display: none; }
-}
 </style>

@@ -252,6 +252,42 @@ th[aria-sort='none'] .th-sort-btn:focus-visible::after {
   outline-offset: -2px;
 }
 
+/* One list look for experiments, drafts and views: a hairline box, rows at
+   the density's height, the same five columns —
+   id/icon · name · status · progress · time — so the three line up. */
+.row-list {
+  border: var(--border-hairline) solid rgb(var(--v-theme-outline-variant));
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: rgb(var(--v-theme-surface));
+}
+.row-list-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) 12px 92px minmax(64px, auto);
+  align-items: center;
+  column-gap: 12px;
+  min-height: var(--row-h);
+  padding: 0 var(--row-pad-x) 0 calc(var(--row-pad-x) + 4px);
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+  border-top: var(--border-hairline) solid rgb(var(--v-theme-outline-variant));
+}
+.row-list-row:first-child { border-top: none; }
+.row-list-row:hover { background: rgb(var(--v-theme-on-surface), 0.03); }
+.row-list-row:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
+.row-list-row .rl-id {
+  font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface-variant));
+  background: none; padding: 0; overflow: hidden; white-space: nowrap;
+}
+.row-list-row .rl-meta { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); white-space: nowrap; }
+.row-list-row .rl-time { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); text-align: right; white-space: nowrap; }
+@media (max-width: 640px) {
+  .row-list-row { grid-template-columns: minmax(0, 1fr) 12px 52px; }
+  .row-list-row .rl-id, .row-list-row .rl-progress { display: none; }
+}
+
 /* Status dots — colors come EXCLUSIVELY from statusGrammar.ts via
    <StatusDot>. Do not add per-status color rules here (philosophy U3). */
 .status-dot {

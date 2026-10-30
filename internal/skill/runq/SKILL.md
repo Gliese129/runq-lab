@@ -55,7 +55,7 @@ start or restart it before looking at the cluster. On a scheduled heartbeat
 | Kill | `runq kill <ex…\|ex…/<cell>[@vN]\|tk…>` |
 | An experiment back as job.yaml | `runq export <ex…> [-o file]` |
 | Rename (ids never change) | `runq rename <ex…\|pj…\|project-name> "<new name>"` |
-| Sections | `runq section ls <project>` · `runq draft job.yaml -s <section>` · `runq section move <section> <ex…>` |
+| Sections | `runq section ls <project>` · `runq draft job.yaml -s <section>` · `runq section move <section> <ex…>` · a view: `runq section move <section> --view <name>` |
 | Register / update a project | `runq project project.yaml` (re-run after editing the file) |
 | Targets / service | `runq target show [name]` · `runq target check <name>` · `runq serve -d` · `runq serve restart` |
 | Delete finished versions | `runq clean --experiment <ex…> --show`, then `-y` |

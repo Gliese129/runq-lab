@@ -201,6 +201,10 @@ func (s *Store) RemoveSection(ctx context.Context, project, name string) (int, e
 		return 0, err
 	}
 	moved, _ := res.RowsAffected()
+	// Its views become project-level rather than pointing at nothing.
+	if _, err := tx.ExecContext(ctx, `UPDATE views SET section_id = NULL WHERE section_id = ?`, id); err != nil {
+		return 0, err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM section_rules WHERE section_id = ?`, id); err != nil {
 		return 0, err
 	}

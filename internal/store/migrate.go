@@ -224,6 +224,10 @@ func (s *Store) addMissingColumns(ctx context.Context) error {
 	if err := addColumnIfMissing(ctx, s.db, "jobs", "section_id", "TEXT"); err != nil {
 		return fmt.Errorf("add jobs.section_id: %w", err)
 	}
+	// Views filed under a project section: NULL = project-level.
+	if err := addColumnIfMissing(ctx, s.db, "views", "section_id", "TEXT"); err != nil {
+		return fmt.Errorf("add views.section_id: %w", err)
+	}
 	// Appends (--into): the batch a task came from, and the rerun that
 	// replaced a failed one.
 	if err := addColumnIfMissing(ctx, s.db, "tasks", "batch_seq", "INTEGER NOT NULL DEFAULT 1"); err != nil {

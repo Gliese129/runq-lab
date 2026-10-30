@@ -98,11 +98,30 @@ var sectionRmCmd = &cobra.Command{
 }
 
 var sectionMoveCmd = &cobra.Command{
-	Use:     "move <section> <jb…> [jb…]",
-	Short:   "File experiments under a section of their project (\"unsorted\" clears it)",
-	Example: `  runq section move smoke jb7817 jbf051`,
-	Args:    cobra.MinimumNArgs(2),
+	Use:   "move <section> <ex…> [ex…] | move <section> --view <name>",
+	Short: "File experiments or a saved view under a section of their project (\"unsorted\" clears it)",
+	Example: `  runq section move smoke ex7817 exf051
+  runq section move ablation --view a1-suite`,
+	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		view, _ := cmd.Flags().GetString("view")
+		if view != "" {
+			if len(args) != 1 {
+				return fmt.Errorf("with --view, give only the section: runq section move <section> --view <name>")
+			}
+			project, _ := cmd.Flags().GetString("project")
+			return withSectioner(cmd, func(sec backend.Sectioner) error {
+				p, err := sec.MoveView(cmd.Context(), project, view, args[0])
+				if err != nil {
+					return err
+				}
+				fmt.Printf("view %s/%s → %s\n", p, view, args[0])
+				return nil
+			})
+		}
+		if len(args) < 2 {
+			return fmt.Errorf("name the experiments to move, or a view with --view")
+		}
 		return withSectioner(cmd, func(sec backend.Sectioner) error {
 			for _, ref := range args[1:] {
 				id, err := sec.MoveJob(cmd.Context(), ref, args[0])
@@ -191,6 +210,8 @@ func init() {
 	sectionLsCmd.Flags().Bool("json", false, "output raw JSON")
 	sectionRuleAddCmd.Flags().String("name", "", "glob on the experiment name")
 	sectionRuleAddCmd.Flags().String("path", "", "glob on the job file path")
+	sectionMoveCmd.Flags().String("view", "", "file this saved view instead of experiments")
+	sectionMoveCmd.Flags().String("project", "", "the view's project, when several projects have a view by that name")
 	sectionRuleCmd.AddCommand(sectionRuleAddCmd, sectionRuleRmCmd)
 	sectionCmd.AddCommand(sectionLsCmd, sectionCreateCmd, sectionRmCmd, sectionMoveCmd, sectionSortCmd, sectionRuleCmd)
 	sectionCmd.GroupID = groupManagement

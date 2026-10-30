@@ -195,6 +195,10 @@ type Sectioner interface {
 	// MoveJob files one job (id or unique prefix) under a section of its
 	// own project ("unsorted" clears it) and returns the resolved job id.
 	MoveJob(ctx context.Context, jobRef, section string) (string, error)
+	// MoveView files a saved view under a section of its project (""/
+	// "unsorted" makes it project-level). projectRef "" finds the one
+	// project that has a view by that name; returns the project name.
+	MoveView(ctx context.Context, projectRef, view, section string) (string, error)
 }
 
 // JobExporter renders a submitted job back as job.yaml `tasks:` rows.

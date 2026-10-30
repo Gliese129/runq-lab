@@ -155,3 +155,26 @@ func (s *Server) handleExportJob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 	_, _ = w.Write(out)
 }
+
+// handleMoveView files a saved view under a project section (body:
+// {project?, section}); "" or "unsorted" makes it project-level.
+func (s *Server) handleMoveView(w http.ResponseWriter, r *http.Request) {
+	sec, ok := s.sectioner(w)
+	if !ok {
+		return
+	}
+	var body struct {
+		Project string `json:"project"`
+		Section string `json:"section"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErrorStatus(w, http.StatusBadRequest, fmt.Errorf("invalid body: %w", err))
+		return
+	}
+	project, err := sec.MoveView(r.Context(), body.Project, r.PathValue("name"), body.Section)
+	if err != nil {
+		writeErrorStatus(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"project": project, "view": r.PathValue("name"), "section": body.Section})
+}
