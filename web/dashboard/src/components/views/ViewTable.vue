@@ -5,7 +5,7 @@
         <tr v-if="groups.length" class="vt-top">
           <th v-for="k in rowKeys" :key="k" rowspan="2" :colspan="keyParts[k]" class="vt-key vt-bottom">{{ keyLabel(k) }}</th>
           <th v-for="g in groups" :key="String(g.label)" :colspan="g.span" class="vt-group">{{ g.label }}</th>
-          <th v-if="rowMeta" rowspan="2" class="vt-src">{{ t('views.source') }}</th>
+          <th v-if="rowMeta" rowspan="2" class="vt-src" :aria-label="t('views.source')" />
           <th v-if="hasState" rowspan="2" />
         </tr>
         <tr :class="groups.length ? 'vt-mid' : 'vt-top vt-mid'">
@@ -18,7 +18,7 @@
               {{ columnLabel(c) }}<span v-if="c.better" class="vt-arrow">{{ c.better === 'higher' ? '↑' : '↓' }}</span>
             </button>
           </th>
-          <th v-if="rowMeta && !groups.length" class="vt-src">{{ t('views.source') }}</th>
+          <th v-if="rowMeta && !groups.length" class="vt-src" :aria-label="t('views.source')" />
           <th v-if="hasState && !groups.length" />
         </tr>
       </thead>
@@ -49,9 +49,15 @@
             >
               <span :class="rankClass(cell)">{{ cell.text }}</span>
               <span v-if="cell.delta_text" class="vt-delta" :class="deltaClass(cell, result.columns[ci])">({{ deltaMark(cell, result.columns[ci]) }}{{ cell.delta_text }})</span>
-              <div v-if="!rowMeta && cellMeta(cell)" class="vt-meta" :class="{ bad: cellMeta(cell)!.bad }">{{ cellMeta(cell)!.text }}</div>
+              <div v-if="!rowMeta && cellMeta(cell) && !cellMeta(cell)!.quiet" class="vt-meta" :title="cellMeta(cell)!.title">
+                <StatusDot v-if="cellMeta(cell)!.dot" :status="cellMeta(cell)!.dot!" :size="10" /><span v-if="cellMeta(cell)!.mark">{{ cellMeta(cell)!.mark }}</span>
+              </div>
             </td>
-            <td v-if="rowMeta" class="vt-src" :class="{ bad: rowMetaOf(row)?.bad }">{{ rowMetaOf(row)?.text ?? '' }}</td>
+            <td v-if="rowMeta" class="vt-src" :title="rowMetaOf(row)?.title">
+              <template v-if="rowMetaOf(row) && !rowMetaOf(row)!.quiet">
+                <StatusDot v-if="rowMetaOf(row)!.dot" :status="rowMetaOf(row)!.dot!" :size="10" /><span v-if="rowMetaOf(row)!.mark">{{ rowMetaOf(row)!.mark }}</span>
+              </template>
+            </td>
             <td v-if="hasState" class="vt-state">{{ row.state ?? '' }}</td>
           </template>
         </tr>
@@ -61,6 +67,7 @@
 </template>
 
 <script setup lang="ts">
+import StatusDot from '@/components/StatusDot.vue'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ViewCell, ViewColumn, ViewResult, ViewRow } from '@/types/views'
@@ -177,30 +184,42 @@ function deltaMark(cell: ViewCell, col?: ViewColumn): string {
   return v === 'better' ? '▲ ' : v === 'worse' ? '▼ ' : ''
 }
 
-// Where a value came from: "status: success; version: latest" (or the
-// pinned version's number). Aggregates over several versions say "mixed"
-// when they differ.
-function cellMeta(cell: ViewCell): { text: string; bad: boolean } | null {
+// Where a value came from, said only when it is not the usual case: the
+// status as its grammar shape (■ killed, ✕ failed, ? unknown…) and a
+// pinned version as "v2"; a succeeded latest value stays blank. Hover
+// gives the full "status: …; version: …". Aggregates over versions that
+// differ say "mixed".
+interface Meta { title: string; quiet: boolean; dot?: string; mark: string }
+function cellMeta(cell: ViewCell): Meta | null {
   const cs = (cell.contributors ?? []).filter((c) => c.status)
   if (!cs.length) return null
   const statuses = new Set(cs.map((c) => c.status))
   const versions = new Set(cs.map((c) => (c.pinned ? String(c.version) : 'latest')))
   const status = statuses.size === 1 ? cs[0].status! : 'mixed'
   const version = versions.size === 1 ? [...versions][0] : 'mixed'
-  return { text: `status: ${status}; version: ${version}`, bad: status !== 'success' }
+  const mark = [status === 'mixed' ? 'mixed' : '', version === 'latest' ? '' : version === 'mixed' ? 'v mixed' : `v${version}`]
+    .filter(Boolean).join(' ')
+  return {
+    title: `status: ${status}; version: ${version}`,
+    quiet: status === 'success' && version === 'latest',
+    dot: status === 'success' || status === 'mixed' ? undefined : status,
+    mark,
+  }
 }
 
 // When every value of a row comes from the same version (the usual case),
 // its source shows once, in its own column; otherwise under each value.
-function rowMetaOf(row: ViewRow): { text: string; bad: boolean } | null {
-  const metas = row.cells.map(cellMeta).filter((m): m is { text: string; bad: boolean } => !!m)
+function rowMetaOf(row: ViewRow): Meta | null {
+  const metas = row.cells.map(cellMeta).filter((m): m is Meta => !!m)
   const first = metas[0]
-  if (!first || metas.some((m) => m.text !== first.text)) return null
+  if (!first || metas.some((m) => m.title !== first.title)) return null
   return first
 }
 const rowMeta = computed(() => {
   const rows = props.result.rows.filter((r) => !r.empty)
-  return rows.some((r) => r.cells.some((c) => cellMeta(c))) && rows.every((r) => !r.cells.some((c) => cellMeta(c)) || rowMetaOf(r))
+  // only worth a column when some row is not the usual succeeded-latest
+  return rows.some((r) => r.cells.some((c) => cellMeta(c) && !cellMeta(c)!.quiet))
+    && rows.every((r) => !r.cells.some((c) => cellMeta(c)) || rowMetaOf(r))
 })
 
 function cellTitle(cell: ViewCell): string {
@@ -241,8 +260,10 @@ function cellTitle(cell: ViewCell): string {
 .vt td.vt-num { font-family: var(--font-mono); font-size: 12.5px; }
 .vt-group { text-align: center; }
 .vt-meta { font-family: var(--font-mono); font-size: 10.5px; color: rgb(var(--v-theme-on-surface-variant)); line-height: 1.3; }
-.vt-meta.bad, .vt-src.bad { color: rgb(var(--v-theme-error)); }
-.vt-src { text-align: left; font-family: var(--font-mono); font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.vt-src { width: 1%; white-space: nowrap; text-align: left; font-family: var(--font-mono); font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.vt-src > *, .vt-meta > * { vertical-align: middle; }
+.vt-src span, .vt-meta span { margin-left: 4px; }
+.vt-meta { font-family: var(--font-mono); font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
 .vt-arrow { margin-left: 2px; color: rgb(var(--v-theme-on-surface-variant)); }
 .vt-bold { font-weight: 700; }
 .vt-under { text-decoration: underline; text-underline-offset: 3px; }
