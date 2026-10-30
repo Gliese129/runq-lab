@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.7.1 — 2026-10-30
+
+### Added
+
+- A saved view can be filed under a project section:
+  `runq section move <section> --view <name>`, or drag it onto a section
+  tab on the dashboard (with Undo). The filing lives in runq, not in
+  view.yaml (whose `section:` still names the result group it reads). A
+  filed view reads every experiment of its section by default, so new
+  experiments and `--into` cells join; `jobs:` adds extras, an explicit
+  pick still wins. Removing a section makes its views project-level.
+- Dashboard: any live version can be killed on its own from the cell
+  panel (versions, failure summary, log tail); drafts are reviewed and
+  submitted on the web; ⌘K jump palette and five more shortcuts (`?`
+  lists them).
+
+### Changes
+
+- Dashboard redesign: the experiment page leads with its cells; three
+  palettes (paper & ink, graphite, print) with status colours ranked by
+  attention (failed is the one saturated colour, killed grey, unknown
+  amber); a density setting (rows 26/34/48 px); stale or offline data says
+  so; logs open at the first error with tracebacks folded; motion only
+  marks change; copy trimmed in three languages.
+- The project page shows a section's own views as tiles, drafts as a
+  dashed list and experiments as rows, so the three never look alike.
+  Result groups read "result table" on the web.
+- View tables mark a value's source only when unusual (a status shape,
+  `v2`, `mixed`), in a narrow column that appears only when needed.
+- The runq skill's SKILL.md is about a third as long (detail moved to
+  references) and asks agents for short reports: the conclusion first,
+  usually 3–5 lines.
+
+### Fixes
+
+- Every file access and scan of a version goes through the lane on the
+  filesystem that version is on; an ssh alias that now resolves to another
+  host no longer settles, probes or kills the old host's versions.
+- A forced refresh answers only after the result files are scanned.
+- Commands compare under the rules their own submission recorded (version
+  changes, `--into` classification, export).
+- A mean curve keeps a gap any line logged.
+- Refreshing or killing an experiment updates the saved views that show it;
+  the view page follows `?jobs` changes.
+
 ## v0.7.0 — 2026-10-29
 
 ### Breaking
