@@ -92,11 +92,11 @@ const exportText = (format: 'latex' | 'markdown' | 'csv') => viewsApi.exportText
 </script>
 
 <style scoped>
-.view-source, .view-extra { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); display: flex; flex-wrap: wrap; gap: 4px; }
+.view-source, .view-extra { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); display: flex; flex-wrap: wrap; gap: 4px; }
 .view-extra { gap: 14px; margin-top: 2px; color: rgb(var(--v-theme-on-surface)); }
-.view-compare-note { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 12px; }
-.view-legend { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); margin-top: 8px; max-width: 760px; }
+.view-compare-note { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 12px; }
+.view-legend { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); margin-top: 8px; max-width: 760px; }
 .view-error { padding: 12px 14px; border-radius: 8px; background: rgb(var(--v-theme-error), 0.06); }
-.view-error code { font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; background: none; }
+.view-error code { font-family: var(--font-mono); font-size: var(--fs-meta); white-space: pre-wrap; background: none; }
 .min-w-0 { min-width: 0; }
 </style>

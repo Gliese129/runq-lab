@@ -101,11 +101,11 @@ async function togglePin(key: string) {
 </script>
 
 <style scoped>
-.curves-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; margin: 6px 0 10px; }
-.curves-head .text-on-surface-variant { font-weight: 400; font-size: 12px; }
+.curves-head { display: flex; align-items: center; gap: 8px; font-size: var(--fs-base); font-weight: 500; margin: 6px 0 10px; }
+.curves-head .text-on-surface-variant { font-weight: 400; font-size: var(--fs-meta); }
 .curves-head.toggle { background: none; border: 0; padding: 4px 0; cursor: pointer; color: inherit; width: 100%; text-align: left; }
 .curves-section { margin-top: 14px; border-top: 0.5px solid rgb(var(--v-theme-outline-variant)); padding-top: 8px; }
 .curves-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 14px; }
 .mono { font-family: var(--font-mono); }
-.curves-unreadable { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); margin-bottom: 8px; }
+.curves-unreadable { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); margin-bottom: 8px; }
 </style>

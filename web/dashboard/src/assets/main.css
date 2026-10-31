@@ -28,26 +28,28 @@
   --font-sans: var(--font-latin), var(--font-cjk), sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, 'Cascadia Code', ui-monospace, monospace;
 
-  /* ── type scale: 12 / 13 / 15 / 20, UI base 13 ── */
-  --fs-meta: 12px;
-  --fs-base: 13px;
-  --fs-heading: 15px;
-  --fs-title: 20px;
+  /* ── type scale: 12 / 14 / 15 / 17 / 24, UI base 15 — every size in the
+     app is one of these (a tag, a meta line, body, a heading, a title) ── */
+  --fs-micro: 12px;
+  --fs-meta: 14px;
+  --fs-base: 15px;
+  --fs-heading: 17px;
+  --fs-title: 24px;
 
   /* ── density: one spacing scale for lists and tables (the density
      lever re-tunes these; regular is the default) ── */
-  --row-h: 34px;
+  --row-h: 38px;
   --row-pad-x: 12px;
   --row-fs: var(--fs-base);
   --row-two-line: 0; /* 1 = show the description on its own line */
 
   /* ── typography.css: mono/data sizes (the density lever re-tunes these) ── */
-  --data-cell-size: 12px;
-  --data-head-size: 11px;
+  --data-cell-size: 14px;
+  --data-head-size: 13px;
   --data-td-pad: 5px 10px;
   --data-th-pad: 6px 10px;
   --code-size: 0.85em;
-  --terminal-size: 12px;
+  --terminal-size: 13px;
   --terminal-lh: 1.6;
 
   /* ── shape.css ── */
@@ -136,6 +138,12 @@ html:lang(ja) {
 .v-application {
   font-size: var(--fs-base);
 }
+/* Vuetify's text classes follow the same scale */
+.v-application .text-caption { font-size: var(--fs-meta) !important; }
+.v-application .text-body-2 { font-size: var(--fs-base) !important; }
+.v-application .text-body-1 { font-size: var(--fs-heading) !important; }
+.v-application .text-subtitle-2 { font-size: var(--fs-base) !important; }
+.v-application .text-h6 { font-size: var(--fs-title) !important; }
 /* Numbers line up in columns wherever they are mono */
 .font-mono,
 code,
@@ -278,7 +286,7 @@ th[aria-sort='none'] .th-sort-btn:focus-visible::after {
 .row-list-row:hover { background: rgb(var(--v-theme-on-surface), 0.03); }
 .row-list-row:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
 .row-list-row .rl-id {
-  font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface-variant));
+  font-family: var(--font-mono); font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant));
   background: none; padding: 0; overflow: hidden; white-space: nowrap;
 }
 .row-list-row .rl-meta { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); white-space: nowrap; }
@@ -452,20 +460,20 @@ code {
 /* ── Density: the data's breathing room (tables + mono rhythm; Vuetify
    component density stays globally compact via plugin defaults) ── */
 .appearance-density-compact {
-  --row-h: 26px;
+  --row-h: 30px;
   --row-pad-x: 10px;
   --row-fs: var(--fs-meta);
-  --data-cell-size: 11px;
-  --data-head-size: 10px;
+  --data-cell-size: 13px;
+  --data-head-size: 12px;
   --data-td-pad: 2px 8px;
   --data-th-pad: 4px 8px;
 }
 .appearance-density-comfy {
-  --row-h: 48px;
+  --row-h: 52px;
   --row-pad-x: 14px;
   --row-two-line: 1;
-  --data-cell-size: 13px;
-  --data-head-size: 11px;
+  --data-cell-size: 15px;
+  --data-head-size: 13px;
   --data-td-pad: 10px 14px;
   --data-th-pad: 10px 14px;
 }

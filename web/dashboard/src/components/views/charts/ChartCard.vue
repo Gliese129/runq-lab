@@ -201,7 +201,7 @@ async function exportPdf() {
 .chart-card { position: relative; border: 0.5px solid rgb(var(--v-theme-outline-variant)); border-radius: 12px; padding: 10px 14px 14px; background: rgb(var(--v-theme-surface)); }
 .chart-tip {
   position: absolute; z-index: 5; pointer-events: none; max-width: 320px; padding: 8px 10px; border-radius: 8px;
-  font-size: 12px; line-height: 1.5; background: color-mix(in srgb, rgb(var(--v-theme-surface)) 90%, rgb(var(--v-theme-on-surface)));
+  font-size: var(--fs-meta); line-height: 1.5; background: color-mix(in srgb, rgb(var(--v-theme-surface)) 90%, rgb(var(--v-theme-on-surface)));
   border: 0.5px solid rgb(var(--v-theme-outline-variant)); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
 }
 .tip-key, .tip-value { display: flex; gap: 10px; justify-content: space-between; white-space: nowrap; }
@@ -212,8 +212,8 @@ async function exportPdf() {
 .chart-bar { display: flex; align-items: center; gap: 2px; margin-bottom: 4px; min-height: 32px; }
 .chart-tool { color: rgb(var(--v-theme-on-surface-variant)); opacity: 0.7; }
 .chart-card:hover .chart-tool, .chart-tool:focus-visible { opacity: 1; }
-.chart-name { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
-.chart-anim { font-size: 12px; color: rgb(var(--v-theme-primary)); margin-bottom: 4px; }
+.chart-name { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); }
+.chart-anim { font-size: var(--fs-meta); color: rgb(var(--v-theme-primary)); margin-bottom: 4px; }
 /* The figure geometry scaled ~1.45×: 13px labels, 2px lines, 8px markers. */
 .chart-screen { overflow-x: auto; }
 .chart-screen :deep(svg) { display: block; max-width: 100%; height: auto; }

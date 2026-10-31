@@ -94,7 +94,7 @@ function fullValue(v: unknown) {
   min-height: 28px;
   padding-top: 0;
   padding-bottom: 0;
-  font-size: 12px;
+  font-size: var(--fs-meta);
 }
 .group-head {
   display: flex;
@@ -119,7 +119,7 @@ function fullValue(v: unknown) {
   align-items: baseline;
   gap: 8px;
   padding: 2px 6px;
-  font-size: 13px;
+  font-size: var(--fs-base);
 }
 .metric-row.nested { padding-left: 22px; }
 .metric-leaf {

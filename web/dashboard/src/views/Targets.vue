@@ -19,8 +19,10 @@
         <StatusDot :status="dotStatus(r)" :size="8" />
         <span class="text-subtitle-1 font-weight-medium">{{ r.name }}</span>
         <v-chip v-if="r.isDefault" size="x-small" variant="tonal" color="primary" label>{{ t('targets.default') }}</v-chip>
-        <span class="text-caption text-on-surface-variant">{{ r.kind }}</span>
-        <code v-if="r.endpoint" class="data-mono text-caption">{{ r.endpoint }}</code>
+        <!-- the template only when it is not the target's own name; the host
+             it reaches, named as such -->
+        <span v-if="r.kind && r.kind !== r.name" class="text-caption text-on-surface-variant">{{ t('targets.template_is', { kind: r.kind }) }}</span>
+        <span v-if="r.endpoint" class="text-caption text-on-surface-variant">{{ t('targets.host_is') }} <code class="data-mono">{{ r.endpoint }}</code></span>
         <v-spacer />
         <v-btn size="small" variant="text" :loading="busy === `refresh:${r.name}`" @click="refresh(r.name)">
           <v-icon start size="16">mdi-refresh</v-icon>{{ t('targets.refresh') }}
@@ -64,7 +66,7 @@
           <template v-else>{{ t('targets.jobs_counts', { running: r.running, pending: r.pending, total: r.jobs }) }}</template>
         </v-col>
         <v-col cols="6" sm="3">
-          <div class="text-caption text-on-surface-variant">max_inflight</div>
+          <div class="text-caption text-on-surface-variant" title="max_inflight">{{ t('targets.max_inflight') }}</div>
           {{ r.maxInflight ?? '—' }}
         </v-col>
         <v-col v-if="r.config.gpus?.length" cols="6" sm="3">

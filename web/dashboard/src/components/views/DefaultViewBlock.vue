@@ -34,7 +34,7 @@ const exportText = (format: 'latex' | 'markdown' | 'csv') => jobsApi.defaultView
 
 <style scoped>
 .dv-block + .dv-block { margin-top: 28px; padding-top: 20px; border-top: 0.5px solid rgb(var(--v-theme-outline-variant)); }
-.dv-source { font-size: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+.dv-source { font-size: var(--fs-meta); display: flex; flex-wrap: wrap; gap: 8px; }
 .dv-charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 500px), 1fr)); gap: 16px; margin-top: 16px; }
 .dv-charts.small { grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); }
 .min-w-0 { min-width: 0; }

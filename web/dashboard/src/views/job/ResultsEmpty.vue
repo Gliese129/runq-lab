@@ -58,9 +58,9 @@ async function copy() {
 
 <style scoped>
 .results-empty { padding: 20px 4px; max-width: 760px; }
-.waiting { list-style: none; padding: 0; margin: 0; font-size: 13px; }
+.waiting { list-style: none; padding: 0; margin: 0; font-size: var(--fs-base); }
 .waiting li { padding: 2px 0; }
-.waiting code, .example code { font-family: var(--font-mono); font-size: 12px; background: none; }
+.waiting code, .example code { font-family: var(--font-mono); font-size: var(--fs-meta); background: none; }
 .example {
   display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 8px;
   background: rgb(var(--v-theme-on-surface), 0.04); overflow-x: auto;

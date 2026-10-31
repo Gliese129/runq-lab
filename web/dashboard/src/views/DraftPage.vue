@@ -193,7 +193,7 @@ async function discard() {
 .draft-page { margin: 0 auto; }
 .title { font-size: var(--fs-title); font-weight: 500; min-width: 0; }
 .tag {
-  flex: none; font-size: 11px; padding: 0 6px; border-radius: var(--radius-sm);
+  flex: none; font-size: var(--fs-micro); padding: 0 6px; border-radius: var(--radius-sm);
   border: var(--border-hairline) dashed rgb(var(--v-theme-on-surface-variant)); color: rgb(var(--v-theme-on-surface-variant));
 }
 .meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); }
@@ -209,5 +209,5 @@ async function discard() {
 .hint { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); }
 .hint code { font-family: var(--font-mono); background: none; padding: 0; }
 .toggle { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-meta); background: none; border: none; cursor: pointer; color: rgb(var(--v-theme-on-surface-variant)); padding: 0; }
-.preview { margin-top: 6px; white-space: pre; overflow-x: auto; font-family: var(--font-mono); font-size: 12px; padding: 10px; border-radius: var(--radius); background: rgb(var(--v-theme-on-surface), 0.04); }
+.preview { margin-top: 6px; white-space: pre; overflow-x: auto; font-family: var(--font-mono); font-size: var(--fs-meta); padding: 10px; border-radius: var(--radius); background: rgb(var(--v-theme-on-surface), 0.04); }
 </style>

@@ -4,7 +4,7 @@
       <thead>
         <tr v-if="groups.length" class="vt-top">
           <th v-for="k in rowKeys" :key="k" rowspan="2" :colspan="keyParts[k]" class="vt-key vt-bottom">{{ keyLabel(k) }}</th>
-          <th v-for="g in groups" :key="String(g.label)" :colspan="g.span" class="vt-group">{{ g.label }}</th>
+          <th v-for="g in groups" :key="String(g.label)" :colspan="g.span" class="vt-group">{{ groupLabel(g.label) }}</th>
           <th v-if="rowMeta" rowspan="2" class="vt-src" :aria-label="t('views.source')" />
           <th v-if="hasState" rowspan="2" />
         </tr>
@@ -131,6 +131,13 @@ const groups = computed(() => {
   return out
 })
 
+// A pivot value alone ("1", "2") does not say what it is: name the axis
+// ("k = 1"). The metric_rows header is already the axis name.
+function groupLabel(label: unknown): string {
+  const axis = props.result.pivot_axis
+  return axis && !byAxis.value ? `${baseKeyLabel(axis)} = ${formatKey(label)}` : String(label)
+}
+
 // Click a value column's header: high → low, low → high, then the view's
 // own order. Rows without a value there go last either way.
 const sort = ref<{ col: number; dir: 'desc' | 'asc' } | null>(null)
@@ -235,10 +242,10 @@ function cellTitle(cell: ViewCell): string {
 /* The dashboard's own table: the paper look (serif, three rules) belongs to
    the exports (LaTeX, Markdown, figures), not the screen. */
 .vt-wrap { overflow-x: auto; }
-.vt { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+.vt { border-collapse: collapse; width: 100%; font-size: var(--fs-base); font-variant-numeric: tabular-nums; }
 .vt th, .vt td { padding: 7px 12px; white-space: nowrap; }
 .vt th {
-  font-weight: 500; font-size: 12px; color: rgb(var(--v-theme-on-surface-variant));
+  font-weight: 500; font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant));
   border-bottom: 0.5px solid rgb(var(--v-theme-outline-variant));
 }
 .vt td { border-bottom: 0.5px solid rgb(var(--v-theme-outline-variant), 0.5); }
@@ -257,18 +264,18 @@ function cellTitle(cell: ViewCell): string {
 }
 .vt-sort:hover, .vt-sort.on { color: rgb(var(--v-theme-on-surface)); }
 .vt-sort-icon { color: rgb(var(--v-theme-primary)); }
-.vt td.vt-num { font-family: var(--font-mono); font-size: 12.5px; }
+.vt td.vt-num { font-family: var(--font-mono); font-size: var(--fs-meta); }
 .vt-group { text-align: center; }
-.vt-meta { font-family: var(--font-mono); font-size: 10.5px; color: rgb(var(--v-theme-on-surface-variant)); line-height: 1.3; }
-.vt-src { width: 1%; white-space: nowrap; text-align: left; font-family: var(--font-mono); font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.vt-meta { font-family: var(--font-mono); font-size: var(--fs-micro); color: rgb(var(--v-theme-on-surface-variant)); line-height: 1.3; }
+.vt-src { width: 1%; white-space: nowrap; text-align: left; font-family: var(--font-mono); font-size: var(--fs-micro); color: rgb(var(--v-theme-on-surface-variant)); }
 .vt-src > *, .vt-meta > * { vertical-align: middle; }
 .vt-src span, .vt-meta span { margin-left: 4px; }
-.vt-meta { font-family: var(--font-mono); font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.vt-meta { font-family: var(--font-mono); font-size: var(--fs-micro); color: rgb(var(--v-theme-on-surface-variant)); }
 .vt-arrow { margin-left: 2px; color: rgb(var(--v-theme-on-surface-variant)); }
 .vt-bold { font-weight: 700; }
 .vt-under { text-decoration: underline; text-underline-offset: 3px; }
-.vt-delta { font-size: 11px; margin-left: 4px; color: rgb(var(--v-theme-on-surface-variant)); }
-.vt-state { font-family: var(--font-mono); font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.vt-delta { font-size: var(--fs-micro); margin-left: 4px; color: rgb(var(--v-theme-on-surface-variant)); }
+.vt-state { font-family: var(--font-mono); font-size: var(--fs-micro); color: rgb(var(--v-theme-on-surface-variant)); }
 .vt-empty td { color: rgb(var(--v-theme-on-surface-variant)); }
-.vt-nodata { font-size: 12px; }
+.vt-nodata { font-size: var(--fs-meta); }
 </style>

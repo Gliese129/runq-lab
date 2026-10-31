@@ -37,7 +37,7 @@ const props = withDefaults(defineProps<{
   kind?: StatusKind
   size?: number
   /** the state may be out of date (stale target, daemon away): no motion,
-   *  and a live state shows as a hollow ring instead of a solid dot */
+   *  (the hollow ring stays "waiting"; staleness is said in text) */
   still?: boolean
 }>(), { kind: 'task', size: 8, still: false })
 
@@ -60,7 +60,7 @@ const iconMode = computed(() => props.size >= 10 && iconPath.value !== '' && !s.
 const dotStyle = computed(() => ({
   width: `${props.size}px`,
   height: `${props.size}px`,
-  ...(s.value.hollow || (props.still && s.value.animated)
+  ...(s.value.hollow
     ? { background: 'transparent', border: `2px solid ${s.value.css}` }
     : { background: s.value.css }),
 }))

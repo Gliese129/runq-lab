@@ -331,7 +331,7 @@ onUnmounted(() => { if (chart) chart.destroy() })
   min-height: 24px;
   padding-top: 0;
   padding-bottom: 0;
-  font-size: 12px;
+  font-size: var(--fs-meta);
 }
 .chart-frame {
   position: relative;

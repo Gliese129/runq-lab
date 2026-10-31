@@ -223,7 +223,7 @@ const xTicks = computed(() =>
   position: relative;
   width: 34px;
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   color: rgb(var(--v-theme-on-surface-variant));
 }
 .y-tick {
@@ -247,7 +247,7 @@ const xTicks = computed(() =>
 .x-axis {
   margin-top: 6px;
   margin-left: 34px;
-  font-size: 10.5px;
+  font-size: var(--fs-micro);
   color: rgb(var(--v-theme-on-surface-variant));
 }
 .seek-band {
@@ -264,7 +264,7 @@ const xTicks = computed(() =>
   border-radius: 4px;
   background: rgb(var(--v-theme-primary));
   color: #fff;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   white-space: nowrap;
 }
 </style>

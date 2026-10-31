@@ -1,67 +1,10 @@
 <template>
+  <!-- The overview answers "what needs me, what is running" across
+       projects; a study's experiments are browsed on its project page. -->
   <div class="overview" :class="{ wide }">
-    <div class="main-col">
-    <StaleStrip :targets="stale" />
+    <div v-if="jobsLoading" class="pa-0"><v-skeleton-loader type="list-item-two-line@6" /></div>
 
-    <!-- Open drafts: one summary line; the rows open on demand -->
-    <section v-if="drafts.length" class="mb-3">
-      <button type="button" class="drafts-toggle" :aria-expanded="draftsOpen" @click="draftsOpen = !draftsOpen">
-        <span>{{ t('drafts.open', { n: drafts.length }) }}</span>
-        <v-icon size="14">{{ draftsOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
-      </button>
-      <DraftRows v-if="draftsOpen" :drafts="drafts" show-project class="mt-1" />
-    </section>
-
-    <!-- Find a job: one search box, then colour chips per project -->
-    <v-text-field
-      ref="searchField"
-      v-model="query"
-      :placeholder="t('overview.search_placeholder')"
-      prepend-inner-icon="mdi-magnify"
-      variant="solo-filled"
-      flat
-      density="comfortable"
-      hide-details
-      clearable
-      class="mb-3"
-      @keydown.esc="query = ''"
-    />
-    <div v-if="projectsWithJobs.length > 1" class="d-flex flex-wrap ga-2 mb-4">
-      <button
-        v-for="p in projectsWithJobs"
-        :key="p.name"
-        type="button"
-        class="project-chip"
-        :class="{ on: picked.has(p.name) }"
-        @click="toggleProject(p.name)"
-      >
-        <ProjectDot :project="p.name" :size="8" />
-        <span>{{ p.name }}</span>
-        <span class="count">{{ p.count }}</span>
-      </button>
-    </div>
-
-    <div v-if="jobsLoading" class="pa-0">
-      <v-skeleton-loader type="list-item-two-line@6" />
-    </div>
-
-    <template v-else-if="groups.length">
-      <section v-for="g in shownGroups" :key="g.bucket" class="mb-4">
-        <div class="bucket-title">{{ t('overview.bucket_' + g.bucket) }}</div>
-        <JobList :jobs="g.jobs" :common="common" :selected-id="wide ? selectedId : ''" @open="openJob" />
-      </section>
-      <div v-if="hiddenCount > 0" class="text-center mb-4">
-        <v-btn variant="text" size="small" @click="showAll = true">
-          {{ t('overview.show_more', { n: hiddenCount }) }}
-        </v-btn>
-      </div>
-    </template>
-
-    <div v-else-if="jobList.length" class="empty text-body-2">
-      {{ t('overview.no_match') }}
-    </div>
-
-    <v-card v-else class="pa-8 text-center" variant="flat">
+    <v-card v-else-if="!jobList.length && !drafts.length" class="pa-8 text-center" variant="flat">
       <ChibiMascot :size="64" mood="happy" class="mb-2" />
       <div class="text-h6 mb-1">{{ t('overview.no_projects') }}</div>
       <div class="text-body-2 text-on-surface-variant">{{ t('overview.no_projects_hint') }}</div>
@@ -70,8 +13,101 @@
       </div>
     </v-card>
 
+    <template v-else>
+      <div class="col">
+        <!-- Needs you: new failures, drafts to review, targets gone quiet.
+             Each leaves once handled (opened, reviewed, back in touch). -->
+        <section v-if="model.attention.length" class="block">
+          <div class="label">{{ t('ov.attention') }}</div>
+          <div v-for="a in shownAttention" :key="attentionKey(a)" class="att">
+            <template v-if="a.kind === 'failed'">
+              <StatusDot :status="a.job.status" kind="job" :size="8" />
+              <router-link class="att-text" :to="jobRoute(a.job)">
+                <div class="t1">{{ a.job.name || a.job.id.slice(0, 8) }} <span class="faint">· {{ a.job.project }}</span></div>
+                <div class="t2" :style="{ color: phrase(a.job)?.css }">{{ phrase(a.job)?.text }}<span class="faint"> · {{ relativeTime(a.job.finished_at ?? 0) }}</span></div>
+              </router-link>
+              <router-link class="act" :to="jobRoute(a.job)">{{ t('ov.see_why') }}</router-link>
+              <button type="button" class="dismiss" :title="t('ov.dismiss')" :aria-label="t('ov.dismiss')" @click="markSeen(a.job.id, a.job.finished_at)">
+                <v-icon size="14">mdi-close</v-icon>
+              </button>
+            </template>
+            <template v-else-if="a.kind === 'drafts'">
+              <v-icon size="14" class="att-icon">mdi-file-document-edit-outline</v-icon>
+              <router-link class="att-text" :to="draftsRoute(a.project, a.drafts)">
+                <div class="t1">{{ t('ov.drafts_waiting', { n: a.drafts.length }, a.drafts.length) }} <span class="faint">· {{ a.project }}</span></div>
+                <div class="t2 faint">{{ a.drafts.map((d) => d.name || d.id).join(' · ') }}</div>
+              </router-link>
+              <router-link class="act" :to="draftsRoute(a.project, a.drafts)">{{ t('ov.review') }}</router-link>
+              <span />
+            </template>
+            <template v-else>
+              <span class="stale-mark" aria-hidden="true">◷</span>
+              <router-link class="att-text" :to="{ name: 'targets' }">
+                <div class="t1">{{ t('ov.stale', { target: a.target, time: relativeTime(a.since) }) }}</div>
+              </router-link>
+              <router-link class="act" :to="{ name: 'targets' }">{{ t('ov.targets') }}</router-link>
+              <span />
+            </template>
+          </div>
+          <div v-if="hiddenFailures.length" class="more">
+            <button type="button" class="link" @click="showAllFailures = true">{{ t('ov.more_failed', { n: hiddenFailures.length }) }}</button>
+            <button type="button" class="link" @click="dismissAll">{{ t('ov.dismiss_all') }}</button>
+          </div>
+        </section>
+
+        <!-- Running: one card per live experiment, a block per cell -->
+        <section class="block">
+          <div class="label">{{ t('ov.running') }}</div>
+          <div v-if="!model.running.length" class="quiet">{{ t('ov.nothing_running') }}</div>
+          <router-link
+            v-for="j in model.running" :key="j.id" class="run" :to="jobRoute(j)"
+            :style="{ '--project': color(j.project) }"
+          >
+            <div class="run-head">
+              <span class="t1">{{ j.name || j.id.slice(0, 8) }} <span class="faint">· {{ j.project }}</span></span>
+              <span v-if="isFrozen(j)" class="faint small" :title="t('fresh.stale_hint')">◷ {{ t('fresh.stopped_at', { time: relativeTime(j.refreshed_at ?? 0) }) }}</span>
+              <span v-else class="faint small">{{ t('ov.submitted', { time: relativeTime(j.created_at) }) }}</span>
+            </div>
+            <CellBlocks :counts="j.tasks" class="blocks" />
+            <div class="t2" :style="{ color: phrase(j)?.css }">{{ phrase(j)?.text }}</div>
+          </router-link>
+        </section>
+      </div>
+
+      <div class="col">
+        <!-- Projects: what each holds right now; a tile opens the project -->
+        <section class="block">
+          <div class="label">{{ t('ov.projects') }}</div>
+          <div class="tiles">
+            <router-link v-for="p in model.projects" :key="p.name" class="tile" :to="{ name: 'project', params: { project: p.name } }">
+              <div class="tile-name"><ProjectDot :project="p.name" :size="8" /><span>{{ p.name }}</span></div>
+              <div class="tile-blocks" aria-hidden="true">
+                <span v-for="j in projectJobs(p.name)" :key="j.id" :style="blockStyle(j.status)" />
+              </div>
+              <div class="small tile-counts">
+                <span v-if="p.running" :style="{ color: statusCss('running') }">{{ t('ov.tile_running', { n: p.running }) }}</span>
+                <span v-if="p.queued">{{ t('ov.tile_queued', { n: p.queued }) }}</span>
+                <span v-if="p.failed" :style="{ color: statusCss('failed') }">{{ t('ov.tile_failed', { n: p.failed }) }}</span>
+                <span v-if="p.drafts" class="faint">{{ t('ov.tile_drafts', { n: p.drafts }, p.drafts) }}</span>
+                <span v-if="!p.running && !p.queued && !p.failed && !p.drafts" class="faint">{{ t('ov.all_settled') }}</span>
+              </div>
+              <div class="small faint">{{ t('ov.n_experiments', { n: p.experiments }, p.experiments) }} · {{ t('ov.last', { time: relativeTime(p.last) }) }}</div>
+            </router-link>
+          </div>
+        </section>
+
+        <!-- Finished recently: one quiet line each -->
+        <section v-if="model.recent.length" class="block">
+          <div class="label">{{ t('ov.recent') }}</div>
+          <router-link v-for="j in model.recent" :key="j.id" class="rec" :to="jobRoute(j)">
+            <StatusDot :status="j.status" kind="job" :size="8" />
+            <span class="t1">{{ j.name || j.id.slice(0, 8) }} <span class="faint">· {{ j.project }}</span></span>
+            <span class="faint small">{{ relativeTime(j.finished_at ?? 0) }}</span>
+          </router-link>
+        </section>
+
     <!-- Archived projects: the way back once a project is archived -->
-    <div class="archived mt-6">
+        <div class="archived mt-2">
       <button type="button" class="archived-toggle" :aria-expanded="archivedOpen" @click="archivedOpen = !archivedOpen">
         <v-icon size="14">mdi-archive-outline</v-icon>
         <span>{{ t('archive.projects_history') }}</span>
@@ -98,123 +134,85 @@
         />
       </div>
     </div>
-    </div>
-    <!-- Wide screens: the picked job stays visible next to the list -->
-    <div v-if="wide" class="side-col">
-      <JobPreview v-if="selectedId" :key="selectedId" :job-id="selectedId" />
-      <div v-else class="side-empty text-body-2">{{ t('preview.pick') }}</div>
-    </div>
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 import { useDraftsQuery } from '@/queries/useDraftQueries'
-import JobPreview from '@/components/JobPreview.vue'
 import { useProjectStore } from '@/stores/projects'
-import { useConnection } from '@/composables/useConnection'
 import { useJobsListQuery } from '@/queries/useJobQueries'
 import { useSnackbar } from '@/composables/useSnackbar'
-import JobList from '@/components/JobList.vue'
+import { useSeenFailures } from '@/composables/useSeenFailures'
+import { useProjectColors } from '@/composables/useProjectColors'
 import ProjectDot from '@/components/ProjectDot.vue'
-import DraftRows from '@/components/DraftRows.vue'
-import StaleStrip from '@/components/StaleStrip.vue'
+import StatusDot from '@/components/StatusDot.vue'
+import CellBlocks from '@/components/CellBlocks.vue'
 import ChibiMascot from '@/components/ChibiMascot.vue'
-import { staleTargets } from '@/utils/freshness'
-import type { JobSummary } from '@/types/api'
-import { commonWordsByProject, filterJobs, groupJobs, SPLIT_MIN_WIDTH } from './jobListView'
-import { useListKeys } from '@/composables/useListKeys'
+import { statusStyle } from '@/components/statusGrammar'
+import { isFrozen } from '@/utils/freshness'
+import { relativeTime } from '@/utils/relativeTime'
+import { statusPhrase } from '@/utils/statusPhrase'
+import { buildOverview, type Attention } from '@/utils/overviewModel'
+import type { DraftView, JobSummary } from '@/types/api'
+import { SPLIT_MIN_WIDTH } from './jobListView'
 
 const { t } = useI18n()
 const router = useRouter()
-const route = useRoute()
 const projectStore = useProjectStore()
-const conn = useConnection()
 const snack = useSnackbar()
+const color = useProjectColors()
+const { seen, markSeen } = useSeenFailures()
 
 const jobsQuery = useJobsListQuery()
 const jobList = computed(() => jobsQuery.data.value ?? [])
 const jobsLoading = computed(() => jobsQuery.isLoading.value)
-const stale = computed(() => staleTargets(jobList.value))
-onMounted(() => { projectStore.fetch() })
-
-// ── Search + project chips (remembered for the session) ──
-// ?q= (e.g. from a target's counts) wins over the remembered search.
-const query = ref(typeof route.query.q === 'string' ? route.query.q : (sessionStorageGet('runq-overview-q') ?? ''))
-const picked = ref(new Set<string>(JSON.parse(sessionStorageGet('runq-overview-p') ?? '[]')))
-watch(query, (q) => sessionStorageSet('runq-overview-q', q ?? ''))
-function toggleProject(name: string) {
-  const next = new Set(picked.value)
-  if (next.has(name)) next.delete(name)
-  else next.add(name)
-  picked.value = next
-  sessionStorageSet('runq-overview-p', JSON.stringify([...next]))
-}
-const projectsWithJobs = computed(() => {
-  const counts = new Map<string, number>()
-  for (const j of jobList.value) counts.set(j.project, (counts.get(j.project) ?? 0) + 1)
-  return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name))
-})
-
-const common = computed(() => commonWordsByProject(jobList.value))
-const filtered = computed(() => filterJobs(jobList.value, query.value ?? '', picked.value))
-const groups = computed(() => groupJobs(filtered.value, new Date()))
-
-// Show running + about 30 recent jobs; the rest behind one click.
-const LIMIT = 30
-const showAll = ref(false)
-watch([query, picked], () => { showAll.value = false })
-const shownGroups = computed(() => {
-  if (showAll.value) return groups.value
-  let left = LIMIT
-  const out: typeof groups.value = []
-  for (const g of groups.value) {
-    if (g.bucket === 'running') { out.push(g); continue }
-    if (left <= 0) break
-    out.push({ ...g, jobs: g.jobs.slice(0, left) })
-    left -= g.jobs.length
-  }
-  return out
-})
-const hiddenCount = computed(() =>
-  filtered.value.length - shownGroups.value.reduce((n, g) => n + g.jobs.length, 0))
-
-// Wide: list + preview side by side (with the nav drawer, three columns);
-// narrower: one column, a click opens the job page. The picked experiment
-// lives in ?exp= so a reload or a shared link keeps it.
-const { width } = useDisplay()
-const wide = computed(() => width.value >= SPLIT_MIN_WIDTH)
-const selectedId = computed({
-  get: () => (typeof route.query.exp === 'string' ? route.query.exp : '') || (jobList.value[0]?.id ?? ''),
-  set: (id: string) => { router.replace({ query: { ...route.query, exp: id || undefined } }) },
-})
-
 const draftsQuery = useDraftsQuery()
 const drafts = computed(() => draftsQuery.data.value ?? [])
-const draftsOpen = ref(false)
+onMounted(() => { projectStore.fetch() })
 
-function openJob(j: JobSummary) {
-  if (wide.value && selectedId.value !== j.id) {
-    selectedId.value = j.id
-    return
-  }
-  router.push({ name: 'job-detail', params: { project: j.project, jobId: j.id } })
+// "Recently" moves with the clock, not only with new data.
+const now = ref(Math.floor(Date.now() / 1000))
+const tick = window.setInterval(() => { now.value = Math.floor(Date.now() / 1000) }, 60_000)
+onBeforeUnmount(() => window.clearInterval(tick))
+
+const model = computed(() => buildOverview(jobList.value, drafts.value, seen.value, now.value))
+// A long run of failures shows its newest few; the rest wait behind one
+// click (or are all marked seen at once).
+const FAILURES_SHOWN = 3
+const showAllFailures = ref(false)
+const failures = computed(() => model.value.attention.filter((a): a is Extract<Attention, { kind: 'failed' }> => a.kind === 'failed'))
+const hiddenFailures = computed<Attention[]>(() => showAllFailures.value ? [] : failures.value.slice(FAILURES_SHOWN))
+const shownAttention = computed(() => model.value.attention.filter((a) => !hiddenFailures.value.includes(a)))
+function dismissAll() {
+  for (const a of failures.value) markSeen(a.job.id, a.job.finished_at)
+}
+const phrase = (j: JobSummary) => statusPhrase(j, t)
+const statusCss = (s: string) => statusStyle('job', s).css
+// A project tile draws a block per experiment, oldest first (the same
+// shape as the section cards on the project page).
+const projectJobs = (name: string) => jobList.value.filter((j) => j.project === name).sort((a, b) => a.created_at - b.created_at)
+function blockStyle(status: string) {
+  const s = statusStyle('job', status)
+  return s.hollow ? { border: `1px solid ${s.css}` } : { background: s.css }
 }
 
-// Keys: / search, ↑↓ pick, ↵ open the picked experiment.
-const searchField = ref<{ focus: () => void } | null>(null)
-useListKeys({
-  ids: () => shownGroups.value.flatMap((g) => g.jobs.map((j) => j.id)),
-  selected: selectedId,
-  open: (id) => {
-    const j = jobList.value.find((x) => x.id === id)
-    if (j) router.push({ name: 'job-detail', params: { project: j.project, jobId: j.id } })
-  },
-  focusSearch: () => searchField.value?.focus(),
-})
+const { width } = useDisplay()
+const wide = computed(() => width.value >= SPLIT_MIN_WIDTH)
+
+const jobRoute = (j: JobSummary) => ({ name: 'job-detail', params: { project: j.project, jobId: j.id } })
+// One draft opens for review; several are listed on their project page.
+const draftsRoute = (project: string, ds: DraftView[]) => ds.length === 1
+  ? { name: 'draft', params: { draftId: ds[0].id } }
+  : { name: 'project', params: { project } }
+function attentionKey(a: Attention): string {
+  return a.kind === 'failed' ? `f:${a.job.id}` : a.kind === 'drafts' ? `d:${a.project}` : `s:${a.target}`
+}
 
 // ── Archived projects ──
 const archivedOpen = ref(false)
@@ -227,46 +225,73 @@ async function unarchiveProject(name: string) {
     snack.success(t('archive.project_back'))
   } catch (e: any) { snack.error(e?.message || t('common.error')) }
 }
-
-function sessionStorageGet(k: string): string | null {
-  try { return sessionStorage.getItem(k) } catch { return null }
-}
-function sessionStorageSet(k: string, v: string) {
-  try { sessionStorage.setItem(k, v) } catch { /* private mode */ }
-}
 </script>
 
 <style scoped>
-.overview { margin: 0 auto; }
-.overview.wide {
-  max-width: none;
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 40%); gap: 20px; align-items: start;
+.overview { margin: 0 auto; max-width: 1080px; }
+.overview.wide { max-width: 1280px; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.col { min-width: 0; }
+.block { margin-bottom: 22px; }
+.label { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); margin: 0 0 6px 2px; }
+.faint { color: rgb(var(--v-theme-on-surface-variant)); }
+.small { font-size: var(--fs-meta); }
+.quiet { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); padding: 4px 2px; }
+.t1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.t2 { font-size: var(--fs-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+a { color: inherit; text-decoration: none; }
+
+.att {
+  display: grid; grid-template-columns: 14px minmax(0, 1fr) auto 22px; gap: 10px; align-items: center;
+  padding: 8px 8px 8px 12px; margin-bottom: 6px; border-radius: var(--radius);
+  border: var(--border-hairline) solid rgb(var(--v-theme-outline-variant)); background: rgb(var(--v-theme-surface));
 }
-.main-col { min-width: 0; }
-.side-empty { color: rgb(var(--v-theme-on-surface-variant)); padding: 24px; }
-.job-id { font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); background: none; padding: 0; }
-.drafts-toggle {
-  display: inline-flex; align-items: center; gap: 4px; background: none; border: none; padding: 2px 0;
-  cursor: pointer; font-size: var(--fs-base); color: rgb(var(--v-theme-on-surface-variant));
+.att-text { min-width: 0; }
+.att-icon, .stale-mark { color: rgb(var(--v-theme-on-surface-variant)); }
+.stale-mark { font-size: var(--fs-base); line-height: 1; }
+.act {
+  font-size: var(--fs-meta); padding: 2px 10px; border-radius: var(--radius); white-space: nowrap;
+  border: var(--border-hairline) solid rgb(var(--v-theme-on-surface), 0.3);
 }
-.drafts-toggle:hover { color: rgb(var(--v-theme-on-surface)); }
-.bucket-title {
-  font-size: 12px;
-  color: rgb(var(--v-theme-on-surface-variant));
-  padding: 0 14px 4px;
+.act:hover { background: rgb(var(--v-theme-on-surface), 0.05); }
+.dismiss {
+  display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 6px;
+  background: none; border: none; cursor: pointer; color: rgb(var(--v-theme-on-surface-variant));
 }
-.project-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 12px; padding: 3px 10px; border-radius: 999px;
-  border: 0.5px solid rgb(var(--v-theme-outline-variant));
-  background: transparent; color: rgb(var(--v-theme-on-surface)); cursor: pointer;
+.dismiss:hover { background: rgb(var(--v-theme-on-surface), 0.06); color: rgb(var(--v-theme-on-surface)); }
+
+.run {
+  display: block; padding: 10px 12px; margin-bottom: 8px; background: rgb(var(--v-theme-surface));
+  border: var(--border-hairline) solid rgb(var(--v-theme-outline-variant)); border-left: 3px solid var(--project);
+  border-radius: 0 var(--radius) var(--radius) 0;
 }
-.project-chip .count { color: rgb(var(--v-theme-on-surface-variant)); }
-.project-chip.on { background: rgb(var(--v-theme-on-surface), 0.08); border-color: rgb(var(--v-theme-on-surface), 0.3); }
-.empty { color: rgb(var(--v-theme-on-surface-variant)); padding: 24px 14px; }
+.run:hover { border-color: rgb(var(--v-theme-on-surface), 0.3); border-left-color: var(--project); }
+.run-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.run-head .small { flex: none; }
+.blocks { margin: 8px 0 4px; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.tile {
+  display: block; padding: 10px 12px; border-radius: var(--radius); background: rgb(var(--v-theme-surface));
+  border: var(--border-hairline) solid rgb(var(--v-theme-outline-variant));
+}
+.tile:hover { border-color: rgb(var(--v-theme-on-surface), 0.3); }
+.tile-name { display: flex; align-items: center; gap: 6px; font-weight: 500; }
+.tile-counts { margin: 6px 0 2px; display: flex; flex-wrap: wrap; gap: 0 10px; }
+.tile-blocks { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 8px; }
+.tile-blocks > span { width: 12px; height: 6px; border-radius: 2px; box-sizing: border-box; }
+
+.more { display: flex; gap: 16px; padding: 0 2px 4px; font-size: var(--fs-meta); }
+.link { background: none; border: none; padding: 0; cursor: pointer; color: rgb(var(--v-theme-on-surface-variant)); font-size: inherit; }
+.link:hover { color: rgb(var(--v-theme-on-surface)); text-decoration: underline; }
+.rec {
+  display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 10px; align-items: center;
+  padding: 6px 2px; border-bottom: var(--border-hairline) solid rgb(var(--v-theme-outline-variant));
+}
+.rec:hover .t1 { text-decoration: underline; }
+
 .archived-toggle {
-  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
-  color: rgb(var(--v-theme-on-surface-variant)); background: none; border: none; cursor: pointer; padding: 4px 14px;
+  display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-meta);
+  color: rgb(var(--v-theme-on-surface-variant)); background: none; border: none; cursor: pointer; padding: 4px 2px;
 }
 .archived-row:hover { background: rgb(var(--v-theme-on-surface), 0.04); }
 </style>

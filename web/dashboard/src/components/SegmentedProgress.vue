@@ -10,8 +10,8 @@
 
 <script setup lang="ts">
 // Segmented job progress — one bar, four truths. Colors come from
-// statusGrammar (single source, U3); no palette of its own. Note the
-// backend folds killed into `failed`, so the red segment covers both.
+// statusGrammar (single source, U3); no palette of its own. The backend
+// folds killed into `failed` and says the killed part apart: killed is grey.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { TaskCountGroup } from '@/types/api'
@@ -25,7 +25,8 @@ const props = withDefaults(defineProps<{ counts: TaskCountGroup; height?: number
 
 const ORDER = [
   { key: 'success', count: (c: TaskCountGroup) => c.completed },
-  { key: 'failed', count: (c: TaskCountGroup) => c.failed },
+  { key: 'failed', count: (c: TaskCountGroup) => c.failed - (c.killed ?? 0) },
+  { key: 'killed', count: (c: TaskCountGroup) => c.killed ?? 0 },
   { key: 'running', count: (c: TaskCountGroup) => c.running },
   // RQ-74: outcome-unknown submissions — rendered between the live and
   // waiting buckets so a job with unknowns never reads as silently done.

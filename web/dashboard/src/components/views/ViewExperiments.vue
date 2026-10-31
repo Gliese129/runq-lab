@@ -1,7 +1,17 @@
 <template>
   <section class="view-exps" :aria-label="t('views.jobs')">
+    <!-- The experiments are the view's input, the table its point: one
+         line says how many and how many have data here; the rows open on
+         "manage" (or by themselves when one has a warning). -->
     <div class="exps-head">
-      <span>{{ t('views.jobs') }}<span v-if="selected.length" class="count">{{ selected.length }}</span></span>
+      <button v-if="selected.length" type="button" class="summary" :aria-expanded="open" @click="open = !open">
+        <v-icon size="14">{{ open ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+        <span>{{ t('views.n_experiments', { n: selected.length }, selected.length) }}</span>
+        <span v-if="empty.length" class="sum-part">· <b>{{ t('views.n_with_data', { n: selected.length - empty.length }) }}</b> · {{ t('views.n_without_data', { n: empty.length }) }}</span>
+        <span v-if="warned" class="sum-part warn">· {{ t('views.n_warnings', { n: warned }) }}</span>
+        <span class="manage">{{ open ? t('views.manage_close') : t('views.manage') }}</span>
+      </button>
+      <span v-else>{{ t('views.jobs') }}</span>
       <v-menu v-model="adding" :close-on-content-click="false" location="bottom end" max-height="420">
         <template #activator="{ props: menu }">
           <v-btn v-bind="menu" size="x-small" variant="text" color="primary"><v-icon start size="14">mdi-plus</v-icon>{{ t('views.add_job') }}</v-btn>
@@ -24,7 +34,7 @@
       </v-menu>
     </div>
 
-    <div v-for="id in selected" :key="id" class="exp-row">
+    <div v-for="id in ordered" v-show="open" :key="id" class="exp-row" :class="{ nodata: empty.includes(id) }">
       <router-link class="mono id" :to="{ name: 'job-detail', params: { project, jobId: id } }">{{ id.slice(0, 8) }}</router-link>
       <span class="name" :title="jobOf(id)?.description || jobOf(id)?.name">{{ jobOf(id)?.name || sourceOf(id)?.note }}</span>
       <span class="status">
@@ -46,12 +56,11 @@
       </button>
       <div v-for="w in sourceOf(id)?.warnings ?? []" :key="w" class="warn-line">{{ w }}</div>
     </div>
-    <div v-if="!selected.length" class="exps-hint">{{ t('views.pick_jobs_hint') }}</div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import StatusDot from '@/components/StatusDot.vue'
 import { relativeTime } from '@/utils/relativeTime'
@@ -77,6 +86,13 @@ const sourceOf = (id: string) => props.sources?.find((s) => s.job_id === id)
 const statusOf = (id: string) => jobOf(id)?.status ?? sourceOf(id)?.status ?? ''
 const statusLabel = (s: string) => (te('status.job.' + s) ? t('status.job.' + s) : s)
 
+const warned = computed(() => props.selected.filter((id) => (sourceOf(id)?.warnings ?? []).length).length)
+const open = ref(false)
+// a warning should not hide behind the fold
+watch(warned, (n) => { if (n) open.value = true }, { immediate: true })
+// experiments with data first, the rest after
+const ordered = computed(() => [...props.selected].sort((a, b) => Number(props.empty.includes(a)) - Number(props.empty.includes(b))))
+
 const adding = ref(false)
 const filter = ref('')
 const addable = computed(() => props.jobs
@@ -94,31 +110,38 @@ function add(id: string) {
 </script>
 
 <style scoped>
-.view-exps { border: 0.5px solid rgb(var(--v-theme-outline-variant)); border-radius: 10px; font-size: 13px; }
+.view-exps { border: 0.5px solid rgb(var(--v-theme-outline-variant)); border-radius: 10px; font-size: var(--fs-base); }
 .exps-head {
   display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 4px 12px;
-  font-size: 12px; color: rgb(var(--v-theme-on-surface-variant));
+  font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant));
 }
-.count { margin-left: 6px; font-variant-numeric: tabular-nums; }
+.summary {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 0; border: none; background: none; cursor: pointer;
+  font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); text-align: left;
+}
+.summary b { font-weight: 500; color: rgb(var(--v-theme-on-surface)); }
+.summary .warn { color: rgb(var(--v-theme-warning)); }
+.summary .manage { margin-left: 8px; text-decoration: underline; }
+.summary:hover .manage { color: rgb(var(--v-theme-on-surface)); }
+.exp-row.nodata { opacity: 0.6; }
 .exp-row {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(120px, auto) 28px;
   align-items: center; column-gap: 14px; padding: 6px 6px 6px 12px;
   border-top: 0.5px solid rgb(var(--v-theme-outline-variant));
 }
-.mono { font-family: var(--font-mono); font-size: 12px; background: none; }
+.mono { font-family: var(--font-mono); font-size: var(--fs-meta); background: none; }
 .id { color: rgb(var(--v-theme-on-surface-variant)); text-decoration: none; }
 .id:hover { color: rgb(var(--v-theme-primary)); text-decoration: underline; }
 .name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.data { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); white-space: nowrap; }
+.data { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); white-space: nowrap; }
 .no-data { color: rgb(var(--v-theme-on-surface)); }
-.warn-line { grid-column: 2 / -1; font-size: 12px; color: rgb(var(--v-theme-warning)); }
+.warn-line { grid-column: 2 / -1; font-size: var(--fs-meta); color: rgb(var(--v-theme-warning)); }
 .remove {
   display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px;
   border: none; background: none; cursor: pointer; color: rgb(var(--v-theme-on-surface-variant));
 }
 .remove:hover { background: rgb(var(--v-theme-on-surface), 0.06); color: rgb(var(--v-theme-on-surface)); }
-.exps-hint { padding: 14px 12px; border-top: 0.5px solid rgb(var(--v-theme-outline-variant)); font-size: 13px; color: rgb(var(--v-theme-on-surface-variant)); }
 @media (max-width: 600px) {
   .exp-row { grid-template-columns: auto minmax(0, 1fr) 28px; row-gap: 2px; }
   .remove { grid-column: 3; grid-row: 1; }

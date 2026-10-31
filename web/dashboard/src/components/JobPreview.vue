@@ -64,8 +64,8 @@ function openTask(i: number) {
   background: rgb(var(--v-theme-surface));
   border: 0.5px solid rgb(var(--v-theme-outline-variant), 0.6);
 }
-.title { font-size: 15px; font-weight: 500; }
-.meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); margin-top: 2px; }
+.title { font-size: var(--fs-heading); font-weight: 500; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); margin-top: 2px; }
 .meta code { font-family: var(--font-mono); background: none; padding: 0; }
-.desc { font-size: 13px; margin-top: 8px; color: rgb(var(--v-theme-on-surface)); }
+.desc { font-size: var(--fs-base); margin-top: 8px; color: rgb(var(--v-theme-on-surface)); }
 </style>

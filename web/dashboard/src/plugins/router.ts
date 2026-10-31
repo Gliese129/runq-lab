@@ -18,7 +18,28 @@ const routes: RouteRecordRaw[] = [
   },
 ]
 
-export default createRouter({
+const router = createRouter({
   history: createWebHashHistory(),
   routes,
 })
+
+// A page opened before runq was upgraded still names the old page chunks;
+// once they are gone, the next navigation would fail silently. Reload into
+// the new build instead (once per minute, so a real outage cannot loop).
+const RELOADED_AT = 'runq-chunk-reload'
+function reloadIntoNewBuild(to?: string) {
+  let last = 0
+  try { last = Number(sessionStorage.getItem(RELOADED_AT) ?? 0) } catch { /* private mode */ }
+  if (Date.now() - last < 60_000) return
+  try { sessionStorage.setItem(RELOADED_AT, String(Date.now())) } catch { /* private mode */ }
+  if (to) window.location.hash = to
+  window.location.reload()
+}
+router.onError((err, to) => {
+  if (/dynamically imported module|Importing a module script failed|Failed to fetch/i.test(String(err?.message ?? err))) {
+    reloadIntoNewBuild(to.fullPath)
+  }
+})
+window.addEventListener('vite:preloadError', () => reloadIntoNewBuild())
+
+export default router

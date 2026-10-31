@@ -425,7 +425,7 @@ onMounted(async () => {
 .proj-marker.running { background: rgb(var(--v-theme-info)); }
 .proj-marker.queued { border: 1.5px solid rgb(var(--v-theme-neutral)); }
 .proj-drafts {
-  font-size: 11px; line-height: 16px; min-width: 16px; padding: 0 4px; text-align: center;
+  font-size: var(--fs-micro); line-height: 16px; min-width: 16px; padding: 0 4px; text-align: center;
   border-radius: 8px; border: var(--border-hairline) dashed rgb(var(--v-theme-on-surface-variant));
   color: rgb(var(--v-theme-on-surface-variant));
 }
@@ -449,5 +449,5 @@ onMounted(async () => {
   background: rgb(var(--v-theme-primary));
   color: rgb(var(--v-theme-on-primary));
 }
-.offline-cmd { font-family: var(--font-mono); font-size: 12px; background: none; color: inherit; opacity: 0.85; }
+.offline-cmd { font-family: var(--font-mono); font-size: var(--fs-meta); background: none; color: inherit; opacity: 0.85; }
 </style>

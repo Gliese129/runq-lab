@@ -107,7 +107,7 @@ watch(
 
 <style scoped>
 .status-bar {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   line-height: 1;
   border-top: 0.5px solid rgb(var(--v-theme-outline-variant));
   color: rgb(var(--v-theme-on-surface-variant));

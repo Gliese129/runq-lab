@@ -1125,7 +1125,7 @@ onUnmounted(() => {
   margin-top: 2px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--fs-meta);
 }
 .last-output.is-quiet .last-output-line { opacity: 0.7; }
 .font-mono { font-family: var(--font-mono); }
@@ -1147,12 +1147,12 @@ onUnmounted(() => {
   list-style: none;
 }
 .exec-summary::-webkit-details-marker { display: none; }
-.exec-summary::before { content: '▸'; font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.exec-summary::before { content: '▸'; font-size: var(--fs-micro); color: rgb(var(--v-theme-on-surface-variant)); }
 .exec[open] .exec-summary::before { content: '▾'; }
 .exec-body { padding: 0 16px 14px; }
 .exec-command {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0;
@@ -1165,14 +1165,14 @@ onUnmounted(() => {
   display: flex;
   gap: 10px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: var(--fs-base);
 }
 .kv-row code { word-break: break-all; }
 .kv-key {
   width: 150px;
   flex-shrink: 0;
   color: rgb(var(--v-theme-on-surface-variant));
-  font-size: 12px;
+  font-size: var(--fs-meta);
 }
 
 /* Live-tail indicator: a breathing dot, the "recording" idiom. */

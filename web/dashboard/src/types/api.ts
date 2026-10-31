@@ -17,6 +17,8 @@ export interface TaskCountGroup {
   completed: number
   /** failed + killed tasks (the backend folds killed in here) */
   failed: number
+  /** the killed part of `failed` (absent when 0) */
+  killed?: number
   /** RQ-74: outcome-unknown submissions awaiting reconcile (absent when 0) */
   unknown?: number
 }
@@ -47,6 +49,8 @@ export interface JobSummary {
   tasks: TaskCountGroup
   /** last reconcile from external sources — poll-model backends only */
   refreshed_at?: number
+  /** when it last reached a terminal status (absent while live) */
+  finished_at?: number
 }
 
 /** Job-level resource overrides (mirrors job.Overrides). */
@@ -531,8 +535,10 @@ export interface PlanModel {
   columns: string[]
   fixed: [string, string][]
   scheduler: [string, string][]
+  /** scheduler params whose value differs between cells (each row's in `sched`) */
+  scheduler_varies?: string[]
   baseline_index: number
-  rows: { run: string; baseline: boolean; needs_code: string[]; cells: { text: string; same: boolean; missing: boolean }[] }[]
+  rows: { run: string; baseline: boolean; needs_code: string[]; cells: { text: string; same: boolean; missing: boolean }[]; sched?: Record<string, string> }[]
 }
 
 export interface DraftView {

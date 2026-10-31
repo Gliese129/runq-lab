@@ -13,8 +13,8 @@
     </div>
 
     <!-- Versions, newest first: the one the cell shows is marked; clicking a
-         row only changes what this panel details (the version picker on the
-         table pins). -->
+         row only changes what this panel details. "Show this one" pins a
+         version (results and views read it); unpinning goes back to latest. -->
     <div class="versions">
       <div
         v-for="v in newestFirst" :key="v.id"
@@ -26,8 +26,12 @@
         <span class="mono se">s{{ v.batch_seq ?? 1 }}</span>
         <StatusDot :status="statusOf(v)" :size="12" />
         <span class="mono se dur">{{ v.elapsed_seconds != null ? formatDuration(v.elapsed_seconds) : '—' }}</span>
-        <span v-if="v.id === cell.selected.id" class="shown">◀</span>
+        <span v-if="v.id === cell.selected.id" class="shown">{{ cell.pinned ? t('cells.shown_pinned') : t('cells.shown') }}</span>
         <v-spacer />
+        <template v-if="cell.versions.length > 1">
+          <button v-if="v.id === cell.selected.id && cell.pinned" type="button" class="pin" @click.stop="emit('pin', '')">{{ t('cells.unpin') }}</button>
+          <button v-else-if="v.id !== cell.selected.id" type="button" class="pin" @click.stop="emit('pin', v.id)">{{ t('cells.pin') }}</button>
+        </template>
         <v-btn
           v-if="killable(v)" size="x-small" variant="text" class="kill"
           :title="t('job.kill')" @click.stop="emit('kill', v.id)"
@@ -49,8 +53,8 @@
       </div>
       <div v-if="changed" class="row mono se">{{ changed }}</div>
       <div v-if="focus.external_id || focus.native_state" class="row se">
-        <span class="mono">{{ focus.external_id }}</span>
-        <span v-if="focus.native_state"> · {{ focus.native_state }}</span>
+        <span v-if="focus.external_id">{{ t('cells.sched_job') }} <span class="mono">{{ focus.external_id }}</span></span>
+        <span v-if="focus.native_state"> · {{ nativeState(focus.native_state) }}</span>
         <span v-if="focus.queue"> · {{ focus.queue }}</span>
       </div>
       <div v-if="focus.last_output_at" class="row se">
@@ -81,8 +85,8 @@ const props = defineProps<{
   /** the status to show for a version (overlays the local cancelling state) */
   statusOf: (v: TaskView) => string
 }>()
-const emit = defineEmits<{ close: []; open: [taskId: string]; kill: [taskId: string] }>()
-const { t } = useI18n()
+const emit = defineEmits<{ close: []; open: [taskId: string]; kill: [taskId: string]; pin: [taskId: string] }>()
+const { t, te } = useI18n()
 
 const TAIL_LINES = 12
 const LIVE = new Set(['pending', 'submitting', 'running', 'unknown'])
@@ -95,6 +99,8 @@ watch(() => [props.cell.name, props.cell.selected.id] as const, () => { focusId.
 const focus = computed(() => props.cell.versions.find((v) => v.id === focusId.value) ?? props.cell.selected)
 
 const killable = (v: TaskView) => LIVE.has(props.statusOf(v))
+// The scheduler's own state words in plain language where runq knows them.
+const nativeState = (s: string) => (te(`cells.native_${s}`) ? t(`cells.native_${s}`) : s)
 const copied = ref(false)
 const changed = computed(() => changesLine(focus.value.changes))
 
@@ -162,7 +168,7 @@ async function copyFailure() {
 .ver:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
 .vn { font-weight: 500; }
 .dur { min-width: 56px; }
-.shown { font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.shown { font-size: var(--fs-micro); color: rgb(var(--v-theme-on-surface-variant)); }
 .kill { color: rgb(var(--v-theme-error)); }
 .mono { font-family: var(--font-mono); font-size: var(--fs-meta); }
 .se { color: rgb(var(--v-theme-on-surface-variant)); }
@@ -172,9 +178,15 @@ async function copyFailure() {
 .exc { color: rgb(var(--v-theme-error)); font-weight: 500; font-size: var(--fs-base); word-break: break-word; }
 .copy { align-self: flex-start; font-size: var(--fs-meta); background: none; border: none; padding: 0; cursor: pointer; color: rgb(var(--v-theme-on-surface-variant)); text-decoration: underline; text-underline-offset: 2px; }
 .tail {
-  margin: 6px 0 0; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.55;
+  margin: 6px 0 0; font-family: var(--font-mono); font-size: var(--fs-micro); line-height: 1.55;
   white-space: pre-wrap; word-break: break-all; max-height: 260px; overflow: auto;
   color: rgb(var(--v-theme-on-surface-variant));
 }
 .tail .err { color: rgb(var(--v-theme-error)); }
+.pin {
+  font-size: var(--fs-micro); padding: 0 6px; border-radius: 4px; background: none; cursor: pointer; visibility: hidden;
+  color: rgb(var(--v-theme-on-surface-variant)); border: 0.5px solid rgb(var(--v-theme-outline-variant));
+}
+.ver:hover .pin, .ver.on .pin, .pin:focus-visible { visibility: visible; }
+.pin:hover { color: rgb(var(--v-theme-on-surface)); }
 </style>

@@ -26,10 +26,18 @@
       </button>
       <button
         v-for="s in sections" :key="s.name" type="button"
-        class="tab target" :class="{ on: picked === s.name, over: dragOver === s.name }"
+        class="tab target"
+        :class="{
+          on: picked === s.name, over: !draggingSection && dragOver === s.name,
+          moving: draggingSection === s.name,
+          'ins-before': insertAt?.name === s.name && !insertAt.after, 'ins-after': insertAt?.name === s.name && insertAt.after,
+        }"
         :title="ruleHint(s)"
+        :draggable="s.name !== 'unsorted' ? 'true' : undefined"
         @click="picked = picked === s.name ? '' : s.name"
-        @dragover.prevent="dragOver = s.name"
+        @dragstart.stop="s.name !== 'unsorted' && onSectionDrag(s.name, $event)"
+        @dragend.stop="draggingSection = ''; insertAt = null"
+        @dragover.prevent="onTabOver(s.name, $event)"
         @dragleave="dragOver = dragOver === s.name ? '' : dragOver"
         @drop.prevent="onDrop(s.name, $event)"
       >
@@ -53,10 +61,15 @@
 
     <StaleStrip :targets="stale" />
 
-    <!-- Section > views: a section tab lists only the views filed there;
-         "all" groups every view by section, project-level last. Drag a
-         view row onto a section tab to file it there. -->
-    <template v-if="viewGroups.length">
+    <!-- "All": the project as its studies — a card per section with its
+         experiments (a block each), drafts and views. A section tab lists
+         only the views filed there. Drag a view onto a tab to file it. -->
+    <SectionCards
+      v-if="!picked && sections.length"
+      :sections="sections" :jobs="projectJobs" :views="projectViews" :drafts="allDrafts"
+      @pick="(s) => (picked = s)" @drag="onViewDrag" @dragend="draggingView = ''"
+    />
+    <template v-else-if="viewGroups.length">
       <section v-for="g in viewGroups" :key="g.key" class="mb-4">
         <div class="bucket-title">{{ g.label }}</div>
         <ViewTiles :views="g.views" @drag="onViewDrag" @dragend="draggingView = ''" />
@@ -83,6 +96,8 @@
       class="mb-4"
       @keydown.esc="searchQuery = ''"
     />
+
+    <StatusLegend v-model="statusPick" :jobs="searched" />
 
     <template v-if="groups.length">
       <section v-for="g in groups" :key="g.bucket" class="mb-4">
@@ -146,6 +161,8 @@ import JobNote from '@/components/JobNote.vue'
 import ProjectDot from '@/components/ProjectDot.vue'
 import DraftRows from '@/components/DraftRows.vue'
 import ViewTiles from '@/components/ViewTiles.vue'
+import SectionCards from '@/components/SectionCards.vue'
+import StatusLegend from '@/components/StatusLegend.vue'
 import StaleStrip from '@/components/StaleStrip.vue'
 import ChibiMascot from '@/components/ChibiMascot.vue'
 import { staleTargets } from '@/utils/freshness'
@@ -215,8 +232,8 @@ async function unarchiveJob(id: string) {
 
 const searchQuery = ref('')
 const draftsQuery = useDraftsQuery()
-const projectDrafts = computed(() => (draftsQuery.data.value ?? []).filter((d) => d.project === props.project && !d.into
-  && (!picked.value || (d.section || 'unsorted') === picked.value)))
+const allDrafts = computed(() => (draftsQuery.data.value ?? []).filter((d) => d.project === props.project && !d.into && d.status === 'open'))
+const projectDrafts = computed(() => allDrafts.value.filter((d) => !picked.value || (d.section || 'unsorted') === picked.value))
 const viewsQuery = useViewsQuery(() => props.project)
 const projectViews = computed(() => (Array.isArray(viewsQuery.data.value) ? viewsQuery.data.value : []))
 // Views under sections: a picked section shows only its own; "all" groups
@@ -266,13 +283,18 @@ const selectedId = computed({
 const qc = useQueryClient()
 const sectionsQuery = useSectionsQuery(() => props.project)
 const sections = computed<Section[]>(() => sectionsQuery.data.value ?? [])
-const picked = ref('')
+// ?section= opens a section's tab (links from a view's rail and crumbs)
+const picked = ref(typeof route.query.section === 'string' ? route.query.section : '')
 const dragging = ref(false)
 const dragOver = ref('')
 const adding = ref(false)
 const newSection = ref('')
 const newInput = ref<HTMLInputElement>()
 watch(() => props.project, () => { picked.value = ''; closeAdding() })
+watch(() => route.query.section, (s) => { picked.value = typeof s === 'string' ? s : '' })
+watch(picked, (s) => {
+  if ((route.query.section ?? '') !== s) router.replace({ query: { ...route.query, section: s || undefined } })
+})
 
 async function openAdding() {
   adding.value = true
@@ -311,8 +333,54 @@ async function dropView(name: string, section: string) {
     })
   } catch (err: any) { snack.error(err?.message || t('common.error')) }
 }
+// ── Section order: a tab drags along the row (unsorted stays first); the
+// side of the tab under the pointer says where it lands. ──
+const draggingSection = ref('')
+const insertAt = ref<{ name: string; after: boolean } | null>(null)
+function onSectionDrag(name: string, e: DragEvent) {
+  draggingSection.value = name
+  e.dataTransfer?.setData('application/x-runq-section', name)
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+function onTabOver(name: string, e: DragEvent) {
+  if (!draggingSection.value) { dragOver.value = name; return }
+  const box = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const after = name === 'unsorted' || e.clientX > box.left + box.width / 2
+  insertAt.value = name === draggingSection.value ? null : { name, after }
+}
+const orderOf = () => sections.value.map((s) => s.name).filter((n) => n !== 'unsorted')
+async function saveOrder(names: string[]) {
+  const key = qk.sections(props.project)
+  const before = qc.getQueryData<Section[]>(key)
+  if (before) {
+    const by = new Map(before.map((s) => [s.name, s]))
+    qc.setQueryData(key, [...before.filter((s) => s.name === 'unsorted'), ...names.map((n) => by.get(n)!).filter(Boolean)])
+  }
+  try {
+    await sectionsApi.order(props.project, names)
+  } finally {
+    void qc.invalidateQueries({ queryKey: key })
+  }
+}
+async function dropSection(target: string, after: boolean) {
+  const moving = draggingSection.value
+  draggingSection.value = ''
+  insertAt.value = null
+  const old = orderOf()
+  const next = old.filter((n) => n !== moving)
+  const at = target === 'unsorted' ? 0 : next.indexOf(target) + (after ? 1 : 0)
+  next.splice(at, 0, moving)
+  if (next.join('\n') === old.join('\n')) return
+  try {
+    await saveOrder(next)
+    snack.undoable(t('sections.reordered'), () => {
+      saveOrder(old).catch((err: any) => snack.error(err?.message || t('common.error')))
+    })
+  } catch (err: any) { snack.error(err?.message || t('common.error')) }
+}
 async function onDrop(section: string, e: DragEvent) {
   dragOver.value = ''
+  if (draggingSection.value) { await dropSection(section, insertAt.value?.after ?? true); return }
   const view = draggingView.value || e.dataTransfer?.getData('application/x-runq-view')
   draggingView.value = ''
   if (view) { await dropView(view, section); return }
@@ -348,7 +416,11 @@ const inSection = computed(() => {
   return projectJobs.value.filter((j) => (j.section || 'unsorted') === picked.value)
 })
 const common = computed(() => commonWordsByProject(projectJobs.value))
-const groups = computed(() => groupJobs(filterJobs(inSection.value, searchQuery.value ?? '', new Set()), new Date()))
+const searched = computed(() => filterJobs(inSection.value, searchQuery.value ?? '', new Set()))
+const statusPick = ref('')
+watch(picked, () => { statusPick.value = '' })
+const groups = computed(() => groupJobs(
+  statusPick.value ? searched.value.filter((j) => j.status === statusPick.value) : searched.value, new Date()))
 
 // Keys: / search, ↑↓ pick, ↵ open the picked experiment.
 const searchField = ref<{ focus: () => void } | null>(null)
@@ -381,32 +453,42 @@ function openJob(j: JobSummary) {
 }
 .section-tabs .tab {
   display: inline-flex; align-items: baseline; gap: 6px; flex: none; padding: 8px 0 7px; margin-bottom: -0.5px;
-  font-size: 13px; white-space: nowrap; background: none; border: none; border-bottom: 2px solid transparent;
+  font-size: var(--fs-base); white-space: nowrap; background: none; border: none; border-bottom: 2px solid transparent;
   color: rgb(var(--v-theme-on-surface-variant)); cursor: pointer; transition: color 0.12s, border-color 0.12s;
 }
 .section-tabs .tab:hover { color: rgb(var(--v-theme-on-surface)); }
 .section-tabs .tab.on { color: rgb(var(--v-theme-on-surface)); font-weight: 500; border-bottom-color: rgb(var(--v-theme-on-surface)); }
-.section-tabs .count { font-size: 11px; font-variant-numeric: tabular-nums; color: rgb(var(--v-theme-on-surface-variant)); font-weight: 400; }
+.section-tabs .count { font-size: var(--fs-micro); font-variant-numeric: tabular-nums; color: rgb(var(--v-theme-on-surface-variant)); font-weight: 400; }
 /* While a job row is dragged, every section tab reads as a drop target. */
 .section-tabs.dragging .tab.target { border-bottom-color: rgb(var(--v-theme-primary), 0.35); }
 .section-tabs .tab.target.over { color: rgb(var(--v-theme-primary)); border-bottom-color: rgb(var(--v-theme-primary)); }
+/* Reordering: the dragged tab fades, a bar marks where it will land. */
+.section-tabs .tab[draggable='true'] { cursor: grab; }
+.section-tabs .tab { position: relative; }
+.section-tabs .tab.moving { opacity: 0.4; }
+.section-tabs .tab.ins-before::before, .section-tabs .tab.ins-after::after {
+  content: ''; position: absolute; top: 6px; bottom: 6px; width: 2px; border-radius: 1px;
+  background: rgb(var(--v-theme-primary));
+}
+.section-tabs .tab.ins-before::before { left: -11px; }
+.section-tabs .tab.ins-after::after { right: -11px; }
 .section-tabs .add {
   display: inline-flex; align-items: center; justify-content: center; flex: none; width: 22px; height: 22px;
   border-radius: 6px; background: none; border: none; cursor: pointer; color: rgb(var(--v-theme-on-surface-variant));
 }
 .section-tabs .add:hover { background: rgb(var(--v-theme-on-surface), 0.06); color: rgb(var(--v-theme-on-surface)); }
 .new-section input {
-  width: 140px; font-size: 13px; padding: 2px 8px; border-radius: 6px; font-family: inherit; outline: none;
+  width: 140px; font-size: var(--fs-base); padding: 2px 8px; border-radius: 6px; font-family: inherit; outline: none;
   border: 0.5px solid rgb(var(--v-theme-primary)); background: transparent; color: rgb(var(--v-theme-on-surface));
 }
-.section-tabs .hint { margin-left: auto; flex: none; font-size: 12px; color: rgb(var(--v-theme-primary)); }
+.section-tabs .hint { margin-left: auto; flex: none; font-size: var(--fs-meta); color: rgb(var(--v-theme-primary)); }
 .side-empty { color: rgb(var(--v-theme-on-surface-variant)); padding: 24px; }
-.bucket-title { font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); padding: 0 14px 4px; }
+.bucket-title { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); padding: 0 14px 4px; }
 .empty { color: rgb(var(--v-theme-on-surface-variant)); padding: 24px 14px; }
 .archived-toggle {
-  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-meta);
   color: rgb(var(--v-theme-on-surface-variant)); background: none; border: none; cursor: pointer; padding: 4px 14px;
 }
 .archived-row:hover { background: rgb(var(--v-theme-on-surface), 0.04); }
-.archived-id { font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); background: none; }
+.archived-id { font-family: var(--font-mono); font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); background: none; }
 </style>

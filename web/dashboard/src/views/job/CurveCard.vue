@@ -34,8 +34,8 @@ const th = useChartTheme()
 <style scoped>
 .curve-card { border: 0.5px solid rgb(var(--v-theme-outline-variant)); border-radius: 12px; padding: 8px 12px 12px; background: rgb(var(--v-theme-surface)); }
 .curve-bar { display: flex; align-items: center; gap: 4px; }
-.curve-name { font-family: var(--font-mono); font-size: 12px; color: rgb(var(--v-theme-on-surface)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.curve-name { font-family: var(--font-mono); font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .curve-card > svg { display: block; width: 100%; height: auto; }
-.curve-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: rgb(var(--v-theme-on-surface-variant)); margin-top: 4px; }
+.curve-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--fs-micro); color: rgb(var(--v-theme-on-surface-variant)); margin-top: 4px; }
 .curve-key { display: inline-flex; align-items: center; gap: 4px; }
 </style>

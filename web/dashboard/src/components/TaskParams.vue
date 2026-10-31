@@ -82,7 +82,7 @@ const summary = computed(() => t('task.params_split', { script: script.value.len
   min-height: 28px;
   padding-top: 0;
   padding-bottom: 0;
-  font-size: 12px;
+  font-size: var(--fs-meta);
 }
 .param-grid {
   display: grid;
@@ -101,19 +101,19 @@ const summary = computed(() => t('task.params_split', { script: script.value.len
 }
 .param-cell.swept .param-val { color: rgb(var(--v-theme-secondary)); font-weight: 600; }
 .param-key {
-  font-size: 11.5px;
+  font-size: var(--fs-micro);
   color: rgb(var(--v-theme-on-surface-variant));
   display: flex;
   align-items: center;
   gap: 6px;
 }
 .param-val {
-  font-size: 13px;
+  font-size: var(--fs-base);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 .param-tag {
-  font-size: 10px;
+  font-size: var(--fs-micro);
   padding: 0 5px;
   border-radius: 6px;
   border: 0.5px solid rgb(var(--v-theme-outline-variant));
@@ -123,7 +123,7 @@ const summary = computed(() => t('task.params_split', { script: script.value.len
   flex-wrap: wrap;
   gap: 4px 12px;
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   color: rgb(var(--v-theme-on-surface-variant));
 }
 .sched-label { font-weight: 500; }

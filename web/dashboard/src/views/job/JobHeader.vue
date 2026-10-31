@@ -43,15 +43,12 @@
     </div>
 
     <StaleStrip :targets="stale" class="mt-3" />
-    <SegmentedProgress :counts="counts" :height="4" class="mt-3" />
+    <CellBlocks :counts="counts" class="mt-3" />
     <div class="job-counts">
       <span v-for="c in countParts" :key="c.key" :style="c.css ? { color: c.css } : undefined">{{ c.text }}</span>
     </div>
 
-    <div v-if="sweepLine || command" class="job-sweep">
-      <span v-if="sweepLine">{{ sweepLine }}</span>
-      <code v-if="command" :title="command">{{ command }}</code>
-    </div>
+    <div v-if="sweepLine" class="job-sweep">{{ sweepLine }}</div>
   </div>
 </template>
 
@@ -61,7 +58,7 @@ import { useI18n } from 'vue-i18n'
 import type { JobDetail, TaskView } from '@/types/api'
 import { useProjectColors } from '@/composables/useProjectColors'
 import { useSnackbar } from '@/composables/useSnackbar'
-import SegmentedProgress from '@/components/SegmentedProgress.vue'
+import CellBlocks from '@/components/CellBlocks.vue'
 import StaleStrip from '@/components/StaleStrip.vue'
 import { isFrozen } from '@/utils/freshness'
 import { statusStyle } from '@/components/statusGrammar'
@@ -133,24 +130,17 @@ const marker = computed(() => {
   return key ? { key, text: key === 'running' ? t('status.task.running') : t('job.marker_queued') } : null
 })
 
-// "model(2) × split(4) = 8 cells": the experiment's shape, read from the
-// version each cell shows.
+// "Compares model × split · 8 cells": what the experiment varies, read from
+// the version each cell shows (× only when the cells are the full product).
 const sweepLine = computed(() => {
   const swept = props.sweptParams ?? []
   if (!swept.length) return ''
   const cells = props.cells ?? props.detail.tasks
-  const parts = swept.map((k) => {
-    const values = new Set(cells.map((task) => JSON.stringify(task.params?.[k])))
-    return `${k}(${values.size})`
-  })
   const n = cells.length
   const product = swept.reduce((p, k) => p * new Set(cells.map((task) => JSON.stringify(task.params?.[k]))).size, 1)
-  // A cross product reads as a formula; zipped lists do not multiply out.
-  return product === n
-    ? `${parts.join(' × ')} = ${t('job.n_tasks', n)}`
-    : `${t('job.n_params_vary', { n: swept.length })} (${swept.join(', ')}) · ${t('job.n_tasks', n)}`
+  return t('job.compares', { params: swept.join(product === n ? ' × ' : ', '), cells: t('job.n_tasks', n) })
 })
-const command = computed(() => props.detail.config?.command ?? '')
+
 </script>
 
 <style scoped>
@@ -170,15 +160,14 @@ const command = computed(() => props.detail.config?.command ?? '')
 .marker.queued .marker-dot { border: 1.5px solid rgb(var(--v-theme-neutral)); }
 .marker.archived { padding: 0 6px; border-radius: var(--radius-sm); border: var(--border-hairline) solid rgb(var(--v-theme-outline-variant)); }
 @media (prefers-reduced-motion: reduce) { .marker-dot { animation: none !important; } }
-.job-desc { font-size: 13px; color: rgb(var(--v-theme-on-surface-variant)); margin-top: 4px; }
+.job-desc { font-size: var(--fs-base); color: rgb(var(--v-theme-on-surface-variant)); margin-top: 4px; }
 .job-meta, .job-counts, .job-sweep {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-  font-size: 12px; color: rgb(var(--v-theme-on-surface-variant));
+  font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant));
 }
 .job-meta { margin-top: 4px; }
-.job-meta code, .job-sweep code { font-family: var(--font-mono); background: none; padding: 0; }
+.job-meta code { font-family: var(--font-mono); background: none; padding: 0; }
 .job-counts { margin-top: 6px; gap: 12px; }
 .job-sweep { margin-top: 4px; gap: 12px; }
-.job-sweep code { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 

@@ -17,9 +17,9 @@
       <code class="rl-id">{{ j.id.slice(0, 8) }}</code>
       <div class="job-text">
         <JobNote class="job-note" :note="j.name" :description="j.description" :common="common.get(j.project)" />
-        <div v-if="showProject || j.description" class="job-sub">
+        <div v-if="phraseOf(j) || showProject || j.description" class="job-sub">
+          <span v-if="phraseOf(j)" class="phrase" :style="{ color: phraseOf(j)!.css }">{{ phraseOf(j)!.text }}</span>
           <span v-if="showProject">{{ j.project }}</span>
-          <span v-if="showProject && j.description"> · </span>
           <span v-if="j.description">{{ j.description }}</span>
         </div>
       </div>
@@ -44,6 +44,7 @@ import SegmentedProgress from './SegmentedProgress.vue'
 import { relativeTime } from '@/utils/relativeTime'
 import { isFrozen } from '@/utils/freshness'
 import { flashingJobs } from '@/composables/useFailureWatch'
+import { statusPhrase } from '@/utils/statusPhrase'
 
 withDefaults(defineProps<{
   jobs: JobSummary[]
@@ -58,6 +59,8 @@ withDefaults(defineProps<{
 const emit = defineEmits<{ open: [job: JobSummary] }>()
 const { t } = useI18n()
 const color = useProjectColors()
+// the dot said in words (line two; compact density leaves it out)
+const phraseOf = (j: JobSummary) => statusPhrase(j, t)
 
 /** MIME type of a dragged job id (sections read it on drop). */
 const JOB_DRAG_TYPE = 'application/x-runq-job'
@@ -83,19 +86,22 @@ function onDragStart(j: JobSummary, e: DragEvent) {
 }
 .job-row.selected { background: rgb(var(--v-theme-on-surface), 0.07); }
 .job-row[draggable='true'] { cursor: grab; }
-.job-text {
-  min-width: 0; display: flex; align-items: baseline; gap: 8px;
-  white-space: nowrap; overflow: hidden;
-}
-.job-note { font-size: var(--row-fs); flex: none; max-width: 70%; overflow: hidden; text-overflow: ellipsis; }
+/* Two lines: the name, then what the dot means and the description.
+   Compact density keeps one line (name · description) and no phrase. */
+.job-row { padding-top: 6px; padding-bottom: 6px; }
+.job-text { min-width: 0; white-space: nowrap; overflow: hidden; }
+.job-note { display: block; font-size: var(--row-fs); overflow: hidden; text-overflow: ellipsis; }
 .job-sub {
-  font-size: var(--fs-meta);
+  margin-top: 1px; font-size: var(--fs-meta);
   color: rgb(var(--v-theme-on-surface-variant));
   min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
-/* Comfy density: the description gets its own line. */
-:global(.appearance-density-comfy) .job-text { display: block; }
-:global(.appearance-density-comfy) .job-note { max-width: none; }
-:global(.appearance-density-comfy) .job-sub { margin-top: 1px; }
-.job-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: rgb(var(--v-theme-on-surface-variant)); }
+.job-sub > span + span::before { content: ' · '; color: rgb(var(--v-theme-on-surface-variant)); }
+.appearance-density-compact .job-row { padding-top: 0; padding-bottom: 0; }
+.appearance-density-compact .job-text { display: flex; align-items: baseline; gap: 8px; }
+.appearance-density-compact .job-note { flex: none; max-width: 70%; }
+.appearance-density-compact .job-sub { margin-top: 0; }
+.appearance-density-compact .phrase { display: none; }
+.appearance-density-compact .phrase + span::before { content: none; }
+.job-progress { display: flex; align-items: center; gap: 8px; font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); }
 </style>

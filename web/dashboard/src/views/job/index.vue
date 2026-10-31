@@ -24,11 +24,37 @@
     </v-tabs>
 
     <!-- Cells: each cell (row name) once, with the version it shows — the
-         pinned one, else latest; the picker switches it. A row opens the
-         cell panel beside the table (?cell=); narrow screens show the panel
-         alone. -->
+         pinned one, else latest (pinning happens in the cell panel). A row
+         opens the cell panel beside the table (?cell=); narrow screens show
+         the panel alone. -->
     <div v-if="tab === 'cells'" class="cells-layout" :class="{ split: !!currentCell && !narrow }">
       <div v-show="!(currentCell && narrow)" class="cells-main">
+        <!-- A logged metric beside the cells (picked here, remembered per
+             experiment); results tables live in the Results tab. -->
+        <div v-if="detail.metric_keys?.length" class="metric-pick">
+          <v-menu v-model="metricMenu" :close-on-content-click="false" location="bottom end" max-height="420">
+            <template #activator="{ props: menu }">
+              <button v-bind="menu" type="button" class="metric-btn">
+                <v-icon size="14">{{ shownMetric ? 'mdi-chart-bar' : 'mdi-plus' }}</v-icon>
+                <span>{{ shownMetric ? t('cells.metric_shown', { name: shownMetric }) : t('cells.show_metric') }}</span>
+              </button>
+            </template>
+            <v-card min-width="320" max-width="460">
+              <v-text-field
+                v-model="metricFilter" :placeholder="t('cells.find_metric')" density="compact" variant="plain"
+                prepend-inner-icon="mdi-magnify" hide-details autofocus class="px-3"
+              />
+              <v-list density="compact">
+                <v-list-item v-if="shownMetric" @click.stop="pickMetric('')">
+                  <v-list-item-title class="text-body-2">{{ t('cells.hide_metric') }}</v-list-item-title>
+                </v-list-item>
+                <v-list-item v-for="k in metricChoices" :key="k" :active="k === shownMetric" @click.stop="pickMetric(k)">
+                  <v-list-item-title class="text-body-2 mono">{{ k }}</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-card>
+          </v-menu>
+        </div>
         <div v-if="pickedCount" class="pick-bar">
           <span>{{ t('cells.selected_n', { n: pickedCount }) }}</span>
           <v-btn v-if="pickedLive.length" size="small" variant="text" class="kill" @click="killPicked">
@@ -40,11 +66,17 @@
           v-if="detail.plan"
           :plan="detail.plan"
           :statuses="cells.map((c) => displayStatus(c.selected))"
+          :status-detail="cells.map((c) => statusDetail(c.selected))"
+          :hint="t('cells.hint')"
+          :command="detail.config?.command"
+          fold-setup
+          :metric="shownMetric ? { name: shownMetric, values: cells.map((c) => c.selected.metrics?.[shownMetric]) } : undefined"
           :row-links="cells.map(() => true)"
           :tags="cellTags"
           :accent="cellAccent"
           :dim="cellDim"
-          :extra-header="t('cells.version')"
+          :extra-header="multiVersion ? t('cells.version') : undefined"
+          :narrow="!!currentCell && !narrow"
           :selected="picked"
           :current="currentIndex"
           :flash="cells.map((c) => cellFlash.flashing.value.has(c.name))"
@@ -52,45 +84,16 @@
           @toggle="(i) => (picked[i] = !picked[i])"
           @toggle-all="(on) => (picked = cells.map(() => on))"
         >
-          <template #extra="{ index }">
-            <select
-              class="version-pick" :value="cells[index].pinned ? cells[index].selected.id : LATEST"
-              :aria-label="t('cells.version_of', { cell: cells[index].name })"
-              :disabled="pinning === cells[index].name"
-              @change="pin(cells[index], ($event.target as HTMLSelectElement).value)"
-            >
-              <option :value="LATEST">{{ t('cells.latest', { v: latestOf(cells[index]) }) }}</option>
-              <option v-for="o in versionOptions(cells[index])" :key="o.id" :value="o.id">{{ o.label }}</option>
-            </select>
-            <div v-if="whyOf(cells[index])" class="ver-why" :title="whyOf(cells[index])">{{ whyOf(cells[index]) }}</div>
+          <template v-if="multiVersion" #extra="{ index }">
+            <span v-if="cells[index].versions.length > 1" class="ver" :title="whyOf(cells[index])">
+              v{{ cells[index].selected.version ?? cells[index].versions.length }}/{{ cells[index].versions.length }}
+              <v-icon v-if="cells[index].pinned" size="13" :title="t('cells.pinned')">mdi-pin-outline</v-icon>
+            </span>
           </template>
         </PlanTable>
         <div v-if="batches.length" class="batches mt-4">
           <div class="text-caption font-weight-medium mb-1">{{ t('plan.batches') }}</div>
-          <div v-for="b in batches" :key="b.seq" class="batch" :class="{ on: focusSeq === b.seq }">
-            <button
-              type="button" class="seq mono" :aria-pressed="focusSeq === b.seq" :title="t('plan.batch_focus')"
-              @click="focusSeq = focusSeq === b.seq ? 0 : b.seq"
-            >s{{ b.seq }}</button>
-            <span>{{ t('plan.batch_tasks', { n: b.task_count }) }}</span>
-            <span class="text-on-surface-variant">{{ new Date(b.submitted_at * 1000).toLocaleString() }}</span>
-            <span v-if="b.note" class="note text-truncate" :title="b.note">{{ b.note }}</span>
-            <span v-else-if="b.name" class="text-truncate">{{ b.name }}</span>
-            <code v-if="b.command" class="cmd text-truncate" :class="{ changed: b.command_changed }" :title="b.command">{{ b.command }}</code>
-            <router-link v-if="b.draft_id" class="draft mono" :to="{ name: 'draft', params: { draftId: b.draft_id } }" :title="t('plan.batch_draft')">{{ b.draft_id }}</router-link>
-          </div>
-          <!-- Appends waiting for review land here as the next submission;
-               clicking one marks the cells it would touch. -->
-          <div v-for="(d, k) in intoDrafts" :key="d.id" class="batch pending" :class="{ on: focusDraft === d.id }">
-            <button
-              type="button" class="seq mono" :aria-pressed="focusDraft === d.id" :title="t('plan.batch_focus')"
-              @click="toggleDraftFocus(d.id)"
-            >s{{ batches.length + 1 + k }}</button>
-            <span class="pending-tag">{{ t('drafts.pending_tag') }}</span>
-            <span>{{ t('drafts.runs', d.rows) }}</span>
-            <span v-if="d.note" class="note text-truncate" :title="d.note">{{ d.note }}</span>
-            <router-link class="draft mono" :to="{ name: 'draft', params: { draftId: d.id } }">{{ d.id }}</router-link>
-          </div>
+          <SubmissionTimeline :stops="stops" @focus="onStop" />
           <div v-if="focusDraft && draftNewCells.length" class="focus-hint text-caption text-on-surface-variant">
             {{ t('drafts.new_cells', { cells: draftNewCells.join(', ') }) }}
           </div>
@@ -115,6 +118,7 @@
         v-if="currentCell"
         :cell="currentCell"
         :status-of="displayStatus"
+        @pin="(id: string) => pin(currentCell!.name, id)"
         @close="closeCell"
         @open="onClickTask"
         @kill="onKillTask"
@@ -206,13 +210,14 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useCancelling } from '@/composables/useCancelling'
 import { useConnection } from '@/composables/useConnection'
 import { useCellFlash } from '@/composables/useFailureWatch'
-import { useJobDetailQuery, useCompareQuery, useJobResultsQuery, useJobActions, useJobDefaultViewsQuery } from '@/queries/useJobQueries'
+import { useJobDetailQuery, useJobResultsQuery, useJobActions, useJobDefaultViewsQuery } from '@/queries/useJobQueries'
 import { jobCells, commandVaries, changesLine, inPlanOrder, type CellView } from '@/utils/jobCells'
 import { useQueryClient } from '@tanstack/vue-query'
 import { qk } from '@/queries/keys'
 import { useTaskActions } from '@/queries/useTaskQueries'
 import JobHeader from './JobHeader.vue'
 import CellPanel from './CellPanel.vue'
+import SubmissionTimeline, { type Stop } from './SubmissionTimeline.vue'
 import JobResultsCard from './JobResultsCard.vue'
 import JobDataCard from './JobDataCard.vue'
 import { ApiError } from '@/apis/client'
@@ -229,6 +234,8 @@ import DefaultViewBlock from '@/components/views/DefaultViewBlock.vue'
 import PlanTable from '@/components/PlanTable.vue'
 import type { TaskView } from '@/types/api'
 import { wandbProjectUrl } from '@/utils/wandbUrl'
+import { formatDuration } from '@/utils/relativeTime'
+import { useSeenFailures } from '@/composables/useSeenFailures'
 
 const props = defineProps<{ project: string; jobId: string }>()
 const router = useRouter()
@@ -282,6 +289,9 @@ const { cancelling, prune, displayStatus } = useCancelling()
 
 // Clear transient cancelling entries as fresh polls land.
 watch(() => detail.value?.tasks, (tasks) => { if (tasks) prune(tasks) })
+// Opening an experiment is looking at it: the overview stops asking.
+const { markSeen } = useSeenFailures()
+watch(() => detail.value?.job, (j) => { if (j) markSeen(j.id, j.finished_at) }, { immediate: true })
 
 // ── Tabs: ?tab= is the shareable truth; replace (not push) so tab flips
 // don't pollute back-button history. Older links (tasks / plan) mean cells. ──
@@ -323,48 +333,52 @@ const cellTags = computed(() => cells.value.map((c) => {
   }
   const made = focusSeq.value ? madeBy(c) : undefined
   if (made) return `s${focusSeq.value} → v${made.version ?? 1}`
-  const parts: string[] = []
-  if (c.versions.length > 1) parts.push(`v${c.selected.version ?? c.versions.length}/${c.versions.length}`)
-  if (commandVaries(c)) parts.push(t('cells.commands_differ'))
-  return parts.join(' · ') || undefined
+  return commandVaries(c) ? t('cells.commands_differ') : undefined
 }))
-// ── Version picker: latest follows the default rule; a number pins. Each
-// version (newest first) says its submission and what it changed against
-// the cell's previous version; under the picker, the shown version's
-// submission note and changes. ──
-const LATEST = '__latest__'
+// ── Versions: the column appears only when some cell ran more than once;
+// it says which version a cell shows (vN/M, a pin when pinned). Pinning is
+// done in the cell panel, where the versions are listed. ──
 const qc = useQueryClient()
-const pinning = ref('')
-function latestOf(c: CellView): string {
-  const newest = c.versions.map((_, i, a) => a[a.length - 1 - i])
-  const best = newest.find((v) => v.status === 'success') ?? newest[0]
-  return `v${best.version ?? c.versions.length} · ${t('status.task.' + best.status)}`
-}
-function versionOptions(c: CellView) {
-  const newest = c.versions.map((_, i, a) => a[a.length - 1 - i])
-  return newest.map((v) => {
-    const changed = changesLine(v.changes)
-    return { id: v.id, label: [`v${v.version ?? ''}`, t('status.task.' + v.status), `s${v.batch_seq ?? 1}`, changed].filter(Boolean).join(' · ') }
-  })
-}
+const multiVersion = computed(() => cells.value.some((c) => c.versions.length > 1))
 function whyOf(c: CellView): string {
   if (c.versions.length < 2) return ''
   const v = c.selected
   const note = batches.value.find((b) => b.seq === (v.batch_seq ?? 1))?.note
   return [`s${v.batch_seq ?? 1}`, note, changesLine(v.changes)].filter(Boolean).join(' · ')
 }
-async function pin(c: CellView, value: string) {
-  pinning.value = c.name
+async function pin(cell: string, taskId: string) {
+  if (offline()) return
   try {
-    await jobsApi.pinVersion(props.jobId, c.name, value === LATEST ? '' : value)
+    await jobsApi.pinVersion(props.jobId, cell, taskId)
     await qc.invalidateQueries({ queryKey: qk.job(props.jobId) })
     void qc.invalidateQueries({ queryKey: ['views'] })
   } catch (e: any) {
     snack.error(e?.message || t('common.error'))
-  } finally {
-    pinning.value = ''
   }
 }
+// How long a cell's version has run or waited, or ran.
+function statusDetail(v: TaskView): string {
+  const s = displayStatus(v)
+  const secs = s === 'pending' ? v.queue_seconds : v.elapsed_seconds
+  return secs != null && secs > 0 ? formatDuration(secs) : ''
+}
+// A submission said in words: which cells it made new and which it ran
+// again ("2 new: a, b · 1 rerun: c").
+function batchWhat(seq: number): string {
+  const fresh: string[] = []
+  const again: string[] = []
+  for (const c of cells.value) {
+    const v = c.versions.find((x) => (x.batch_seq ?? 1) === seq)
+    if (!v) continue
+    ;((v.version ?? 1) === 1 ? fresh : again).push(c.name)
+  }
+  const names = (xs: string[]) => xs.length > 3 ? `${xs.slice(0, 3).join(', ')}…` : xs.join(', ')
+  const parts: string[] = []
+  if (fresh.length) parts.push(t(seq === 1 ? 'plan.batch_new' : 'plan.batch_added', { n: fresh.length, cells: names(fresh) }))
+  if (again.length) parts.push(t('plan.batch_rerun', { n: again.length, cells: names(again) }))
+  return parts.join(' · ')
+}
+const shortDate = (ts: number) => new Date(ts * 1000).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 const initialTab = LEGACY_TABS[String(route.query.tab)] ?? String(route.query.tab)
 const tab = ref(TABS.has(initialTab) ? initialTab : 'cells')
 
@@ -398,7 +412,12 @@ watch(() => [jobViews.value, defaultViews.value, jobViewsQuery.isFetched.value &
 }, { immediate: true })
 
 watch(tab, (v) => {
-  router.replace({ query: { ...route.query, tab: v === 'cells' ? undefined : v } })
+  if ((route.query.tab ?? 'cells') !== v) router.replace({ query: { ...route.query, tab: v === 'cells' ? undefined : v } })
+})
+// A link to another tab of this same experiment (?tab=) switches it too.
+watch(() => route.query.tab, (q) => {
+  const v = LEGACY_TABS[String(q)] ?? String(q ?? 'cells')
+  if (TABS.has(v) && v !== tab.value) tab.value = v
 })
 
 // Results wire is fetched only while its tab shows (heavy ingest), live
@@ -424,15 +443,42 @@ function varying(tasks: TaskView[], skip: Set<string> = new Set()): string[] {
 }
 const comparedParams = computed(() => varying(cells.value.map((c) => c.selected), new Set(detail.value?.scheduler_params ?? [])))
 
-// ── Leaderboard: key selection is declarative; the query re-fetches when
-// the key changes (this replaces the watch that fired /compare per poll).
-const compareKey = computed(() => {
-  const keys = detail.value?.metric_keys ?? []
-  if (keys.length === 0) return ''
-  const preferred = prefs.preferredMetrics.value[props.jobId]
-  return preferred && keys.includes(preferred) ? preferred : keys[0]
+// ── Metric beside the cells: none until picked (the first logged key is
+// rarely the one that matters); the pick is remembered per experiment. ──
+const metricMenu = ref(false)
+const metricFilter = ref('')
+const shownMetric = computed(() => {
+  const k = prefs.preferredMetrics.value[props.jobId]
+  return k && (detail.value?.metric_keys ?? []).includes(k) ? k : ''
 })
-const compareQuery = useCompareQuery(() => props.jobId, compareKey, () => true, isActiveJob)
+const metricChoices = computed(() => {
+  const q = metricFilter.value.trim().toLowerCase()
+  return (detail.value?.metric_keys ?? []).filter((k) => !q || k.toLowerCase().includes(q)).slice(0, 200)
+})
+function pickMetric(k: string) {
+  metricMenu.value = false
+  if (k) prefs.setPreferredMetric(props.jobId, k)
+  else delete prefs.preferredMetrics.value[props.jobId]
+}
+watch(metricMenu, (open) => { if (!open) metricFilter.value = '' })
+
+// ── Submissions as timeline stops (a pending append is the next one) ──
+const stops = computed<Stop[]>(() => [
+  ...batches.value.map((b) => ({
+    key: `s${b.seq}`, seq: b.seq, when: shortDate(b.submitted_at), what: batchWhat(b.seq),
+    title: [b.note || b.name, b.command_changed ? `${t('plan.batch_command_changed')} ${b.command}` : ''].filter(Boolean).join('\n') || t('plan.batch_focus'),
+    draft: b.draft_id, changed: !!b.command_changed, on: focusSeq.value === b.seq,
+  })),
+  ...intoDrafts.value.map((d, k) => ({
+    key: d.id, seq: batches.value.length + 1 + k, when: t('drafts.pending_tag'), what: t('drafts.runs', d.rows),
+    title: d.note || d.id, draft: d.id, pending: true, on: focusDraft.value === d.id,
+  })),
+])
+function onStop(key: string) {
+  const seq = /^s(\d+)$/.exec(key)
+  if (seq) { focusSeq.value = focusSeq.value === Number(seq[1]) ? 0 : Number(seq[1]); return }
+  toggleDraftFocus(key)
+}
 
 // ── Cell panel: ?cell=<name> opens a cell beside the table (shareable,
 // survives reload); ↑↓ move between cells, Esc closes. Narrow screens show
@@ -566,7 +612,7 @@ function onClickTask(id: string) {
 <style scoped>
 .cells-layout.split {
   display: grid; gap: 16px; align-items: start;
-  grid-template-columns: minmax(0, 1fr) minmax(340px, 38%);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 34%);
 }
 .cells-main { min-width: 0; }
 .panel-enter-active { transition: transform var(--dur-panel) ease-out, opacity var(--dur-panel) ease-out; }
@@ -580,36 +626,19 @@ function onClickTask(id: string) {
   font-size: var(--fs-base); color: rgb(var(--v-theme-on-surface-variant));
 }
 .pick-bar .kill { color: rgb(var(--v-theme-error)); }
-.batches { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
-.batch { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
-.batch > * { white-space: nowrap; flex: none; }
-.batch > .note, .batch > .cmd { flex: 0 1 auto; min-width: 0; }
-.batch .mono { font-family: var(--font-mono); }
-.batch .cmd { font-size: 11px; max-width: 420px; color: rgb(var(--v-theme-on-surface-variant)); background: none; }
-.batch .cmd.changed { color: rgb(var(--v-theme-warning)); }
-.batch .seq {
-  font-size: 12px; padding: 0 6px; border-radius: 6px; cursor: pointer; background: none; color: inherit;
-  border: 0.5px solid rgb(var(--v-theme-outline-variant));
-}
-.batch.on .seq { background: rgb(var(--v-theme-primary)); border-color: rgb(var(--v-theme-primary)); color: rgb(var(--v-theme-on-primary)); }
-.batch .note { max-width: 360px; }
-.batch .draft { font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
-.batch .draft:hover { color: rgb(var(--v-theme-primary)); }
+.batches { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-meta); }
 .focus-hint { margin-top: 4px; }
-.batch.pending .seq { border-style: dashed; }
-.pending-tag { font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.metric-pick { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+.metric-btn {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 60%; padding: 2px 8px; border-radius: var(--radius-sm);
+  background: none; border: none; cursor: pointer; font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant));
+}
+.metric-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.metric-btn:hover { color: rgb(var(--v-theme-on-surface)); background: rgb(var(--v-theme-on-surface), 0.05); }
 .focus-hint .link { background: none; border: none; padding: 0 0 0 6px; cursor: pointer; color: rgb(var(--v-theme-primary)); font-size: inherit; }
-.ver-why {
-  font-size: 11px; line-height: 1.3; margin-top: 2px; max-width: 280px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: rgb(var(--v-theme-on-surface-variant));
-}
-.version-pick {
-  font-size: 12px; padding: 1px 6px; border-radius: 6px; cursor: pointer; font-family: inherit;
-  color: rgb(var(--v-theme-on-surface)); background: rgb(var(--v-theme-surface));
-  border: 0.5px solid rgb(var(--v-theme-outline-variant));
-}
+.ver { display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-mono); font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); }
 .view-pick {
-  font-size: 13px; padding: 3px 12px; border-radius: 999px; cursor: pointer; background: none;
+  font-size: var(--fs-base); padding: 3px 12px; border-radius: 999px; cursor: pointer; background: none;
   color: rgb(var(--v-theme-on-surface)); border: 0.5px solid rgb(var(--v-theme-outline-variant));
 }
 .view-pick.on { background: rgb(var(--v-theme-on-surface), 0.08); border-color: rgb(var(--v-theme-on-surface), 0.3); }

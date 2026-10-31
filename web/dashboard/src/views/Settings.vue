@@ -188,7 +188,7 @@ watch(currentLocale, (val) => {
 </script>
 
 <style scoped>
-.font-mono, .font-mono :deep(input), .font-mono :deep(textarea) { font-family: monospace; font-size: 13px; }
+.font-mono, .font-mono :deep(input), .font-mono :deep(textarea) { font-family: monospace; font-size: var(--fs-base); }
 .tmpl-display {
   border: 1px solid rgb(var(--v-theme-outline-variant));
   background: rgb(var(--v-theme-surface-variant), 0.2);

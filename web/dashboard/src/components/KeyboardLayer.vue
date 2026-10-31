@@ -140,13 +140,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   border-radius: var(--radius-sm); cursor: pointer;
 }
 .jump-row.on { background: rgb(var(--v-theme-on-surface), 0.07); }
-.kind { flex: none; width: 52px; font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.kind { flex: none; width: 52px; font-size: var(--fs-micro); color: rgb(var(--v-theme-on-surface-variant)); }
 .label { flex: 1; min-width: 0; font-size: var(--fs-base); }
 .sub { flex: none; max-width: 40%; font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); }
 .jump-empty { padding: 12px; font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); }
 .key-row { display: flex; align-items: center; gap: 12px; height: 30px; font-size: var(--fs-base); }
 kbd {
-  min-width: 44px; text-align: center; font-family: var(--font-mono); font-size: 12px; padding: 2px 6px;
+  min-width: 44px; text-align: center; font-family: var(--font-mono); font-size: var(--fs-meta); padding: 2px 6px;
   border-radius: var(--radius-sm); border: var(--border-hairline) solid rgb(var(--v-theme-outline-variant));
 }
 </style>

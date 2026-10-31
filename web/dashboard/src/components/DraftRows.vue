@@ -39,6 +39,7 @@ const color = useProjectColors()
 .drafts { background: transparent; border: 1px dashed rgb(var(--v-theme-on-surface), 0.22); }
 .drafts .row-list-row { border-top: none; }
 .lead { display: inline-flex; align-items: center; gap: 4px; }
+@media (max-width: 640px) { .lead { display: none; } }
 .with-project::before {
   content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--project);
 }

@@ -309,8 +309,8 @@ watch(() => errorIdx.value.length, (n) => {
 }
 .err-count { font-size: var(--fs-meta); font-weight: 500; color: rgb(var(--v-theme-error)); }
 .fold-text { display: flex; flex-direction: column; min-width: 0; }
-.fold-detail { font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
-.fold-count { font-size: 11px; color: rgb(var(--v-theme-on-surface-variant)); }
+.fold-detail { font-size: var(--fs-micro); color: rgb(var(--v-theme-on-surface-variant)); }
+.fold-count { font-size: var(--fs-micro); color: rgb(var(--v-theme-on-surface-variant)); }
 .fold-traceback { background: rgb(var(--v-theme-error), 0.06); }
 .fold-traceback .drain-fold-summary { font-weight: 500; }
 .log-surface {
