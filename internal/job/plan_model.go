@@ -8,15 +8,19 @@ import (
 // PlanModel is a plan as a table: one row per cell, one column per param
 // that varies, a cell equal to the baseline's left blank — the table reads
 // as "what each cell changes". Params only the scheduler reads (walltime,
-// reservation …) are listed apart and never make a column. It is the one
+// reservation …) are listed apart and never make a param column; one that
+// differs between cells is also named in SchedulerVaries, with each row's
+// value in its Sched, so a table can show which cell asks for what. It is the one
 // layout of a plan: `runq draft` / `runq show` print it (RenderPlan), the
 // dashboard draws it.
 type PlanModel struct {
-	Columns       []string    `json:"columns"`
-	Fixed         [][2]string `json:"fixed"`
-	Scheduler     [][2]string `json:"scheduler"`
-	BaselineIndex int         `json:"baseline_index"`
-	Rows          []PlanRow   `json:"rows"`
+	Columns   []string    `json:"columns"`
+	Fixed     [][2]string `json:"fixed"`
+	Scheduler [][2]string `json:"scheduler"`
+	// scheduler params whose value differs between cells (each row's in Sched)
+	SchedulerVaries []string  `json:"scheduler_varies,omitempty"`
+	BaselineIndex   int       `json:"baseline_index"`
+	Rows            []PlanRow `json:"rows"`
 }
 
 type PlanRow struct {
@@ -24,6 +28,8 @@ type PlanRow struct {
 	Baseline  bool       `json:"baseline"`
 	NeedsCode []string   `json:"needs_code"`
 	Cells     []PlanCell `json:"cells"`
+	// this row's value of each SchedulerVaries param
+	Sched map[string]string `json:"sched,omitempty"`
 }
 
 type PlanCell struct {
@@ -69,6 +75,9 @@ func BuildPlan(rows []Row, baseline string, declared []string, scheduler map[str
 				}
 			}
 			m.Scheduler = append(m.Scheduler, [2]string{k, strings.Join(seen, " / ")})
+			if len(seen) > 1 {
+				m.SchedulerVaries = append(m.SchedulerVaries, k)
+			}
 			continue
 		}
 		if inEveryRow(rows, k) && !varies(rows, k) {
@@ -81,6 +90,12 @@ func BuildPlan(rows []Row, baseline string, declared []string, scheduler map[str
 		row := PlanRow{Run: r.Run, Baseline: i == b, NeedsCode: r.NeedsCode, Cells: []PlanCell{}}
 		if row.NeedsCode == nil {
 			row.NeedsCode = []string{}
+		}
+		for _, k := range m.SchedulerVaries {
+			if row.Sched == nil {
+				row.Sched = map[string]string{}
+			}
+			row.Sched[k] = planCellText(r.Params[k], hasKey(r.Params, k))
 		}
 		for _, k := range m.Columns {
 			v, ok := r.Params[k]
@@ -98,6 +113,11 @@ func planCellText(v any, ok bool) string {
 		return "∅"
 	}
 	return PlanText(v)
+}
+
+func hasKey(m map[string]any, k string) bool {
+	_, ok := m[k]
+	return ok
 }
 
 func contains(list []string, s string) bool {

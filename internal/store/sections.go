@@ -94,13 +94,14 @@ func (s *Store) ListSections(ctx context.Context, project string) ([]Section, er
 	if err := s.ensureSmoke(ctx, pid); err != nil {
 		return nil, err
 	}
+	// counts are of live (unarchived) experiments, as the section tabs list
 	var unsorted int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE project_name = ? AND (section_id IS NULL OR section_id = '')`, project).Scan(&unsorted); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE project_name = ? AND (section_id IS NULL OR section_id = '') AND archived_at IS NULL`, project).Scan(&unsorted); err != nil {
 		return nil, err
 	}
 	out := []Section{{Name: SectionUnsorted, Builtin: true, Jobs: unsorted}}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.id, s.name, s.builtin != '', (SELECT COUNT(*) FROM jobs j WHERE j.section_id = s.id)
+		SELECT s.id, s.name, s.builtin != '', (SELECT COUNT(*) FROM jobs j WHERE j.section_id = s.id AND j.archived_at IS NULL)
 		FROM sections s WHERE s.project_id = ? ORDER BY s.position, s.created_at, s.name`, pid)
 	if err != nil {
 		return nil, err
@@ -177,6 +178,56 @@ func (s *Store) CreateSection(ctx context.Context, project, name string) (*Secti
 		return nil, err
 	}
 	return &Section{ID: id, Name: name}, nil
+}
+
+// OrderSections sets the tab order of a project's sections: names lists
+// every section but "unsorted" (which always comes first), once each.
+func (s *Store) OrderSections(ctx context.Context, project string, names []string) error {
+	pid, err := s.projectID(ctx, project)
+	if err != nil {
+		return err
+	}
+	if err := s.ensureSmoke(ctx, pid); err != nil {
+		return err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name FROM sections WHERE project_id = ?`, pid)
+	if err != nil {
+		return err
+	}
+	ids := map[string]string{}
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			rows.Close()
+			return err
+		}
+		ids[name] = id
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, n := range names {
+		if _, ok := ids[n]; !ok || seen[n] {
+			return fmt.Errorf("section order: %q is not a section of %q, or is named twice", n, project)
+		}
+		seen[n] = true
+	}
+	if len(seen) != len(ids) {
+		return fmt.Errorf("section order: name every section of %q once (%d of %d named)", project, len(seen), len(ids))
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for i, n := range names {
+		if _, err := tx.ExecContext(ctx, `UPDATE sections SET position = ? WHERE id = ?`, i+1, ids[n]); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // RemoveSection deletes a non-built-in section; its jobs become unsorted

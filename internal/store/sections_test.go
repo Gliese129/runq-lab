@@ -101,3 +101,65 @@ func TestSectionMoveSortAndRemove(t *testing.T) {
 		t.Fatalf("job should be unsorted, got %q", j.Section)
 	}
 }
+
+// Section counts are of live experiments: an archived one leaves its tab's
+// number (it is listed under archived, not in the section).
+func TestSectionCountsLeaveArchivedOut(t *testing.T) {
+	s := newSectionStore(t)
+	ctx := context.Background()
+	sec, err := s.CreateSection(ctx, "kl", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addJob(t, s, "jbcount0001", "a", sec.ID)
+	addJob(t, s, "jbcount0002", "b", sec.ID)
+	addJob(t, s, "jbcount0003", "c", "")
+	addJob(t, s, "jbcount0004", "d", "")
+	for _, id := range []string{"jbcount0002", "jbcount0004"} {
+		if err := s.ArchiveJob(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secs, err := s.ListSections(ctx, "kl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, x := range secs {
+		got[x.Name] = x.Jobs
+	}
+	if got["main"] != 1 || got[SectionUnsorted] != 1 {
+		t.Fatalf("counts = %v", got)
+	}
+}
+
+// Sections take the order they are given (unsorted stays first); a list
+// that misses or repeats a section is refused.
+func TestOrderSections(t *testing.T) {
+	s := newSectionStore(t)
+	ctx := context.Background()
+	for _, n := range []string{"a", "b"} {
+		if _, err := s.CreateSection(ctx, "kl", n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.OrderSections(ctx, "kl", []string{"b", "smoke", "a"}); err != nil {
+		t.Fatal(err)
+	}
+	secs, err := s.ListSections(ctx, "kl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, x := range secs {
+		got = append(got, x.Name)
+	}
+	if strings.Join(got, ",") != "unsorted,b,smoke,a" {
+		t.Fatalf("order = %v", got)
+	}
+	for _, bad := range [][]string{{"a", "b"}, {"a", "a", "b", "smoke"}, {"a", "b", "smoke", "nope"}} {
+		if err := s.OrderSections(ctx, "kl", bad); err == nil {
+			t.Errorf("order %v: want an error", bad)
+		}
+	}
+}

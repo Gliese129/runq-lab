@@ -201,6 +201,12 @@ type Sectioner interface {
 	MoveView(ctx context.Context, projectRef, view, section string) (string, error)
 }
 
+// SectionOrderer sets the tab order of a project's sections (the dashboard
+// drags them; unsorted always comes first).
+type SectionOrderer interface {
+	OrderSections(ctx context.Context, projectRef string, names []string) error
+}
+
 // JobExporter renders a submitted job back as job.yaml `tasks:` rows.
 type JobExporter interface {
 	ExportJob(ctx context.Context, jobRef string) ([]byte, error)

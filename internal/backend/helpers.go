@@ -43,8 +43,11 @@ func BuildJobSummary(job store.JobRow, tasks []store.TaskRow) JobSummary {
 			counts.Unknown++
 		case "success":
 			counts.Completed++
-		case "failed", "killed":
+		case "failed":
 			counts.Failed++
+		case "killed":
+			counts.Failed++
+			counts.Killed++
 		}
 	}
 
@@ -52,6 +55,12 @@ func BuildJobSummary(job store.JobRow, tasks []store.TaskRow) JobSummary {
 	if job.RefreshedAt != nil {
 		ts := job.RefreshedAt.Unix()
 		refreshedAt = &ts
+	}
+
+	var finishedAt *int64
+	if job.FinishedAt != nil && store.IsTerminalJobStatus(job.Status) {
+		ts := job.FinishedAt.Unix()
+		finishedAt = &ts
 	}
 
 	var cfg struct {
@@ -73,6 +82,7 @@ func BuildJobSummary(job store.JobRow, tasks []store.TaskRow) JobSummary {
 		CreatedAt:    job.CreatedAt.Unix(),
 		Tasks:        counts,
 		RefreshedAt:  refreshedAt,
+		FinishedAt:   finishedAt,
 	}
 }
 

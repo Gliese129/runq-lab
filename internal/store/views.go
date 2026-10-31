@@ -107,6 +107,7 @@ func (s *Store) ListViews(ctx context.Context, project string) ([]ViewSummary, e
 	}
 	return out, rows.Err()
 }
+
 // SetViewSection files a view under a section of its project; "" or
 // "unsorted" makes it project-level again. An unknown section errors with
 // the existing ones listed (ResolveSection).

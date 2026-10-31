@@ -234,6 +234,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/projects/{name}/sections", s.handleCreateSection)
 	s.mux.HandleFunc("DELETE /api/v1/projects/{name}/sections/{section}", s.handleRemoveSection)
 	s.mux.HandleFunc("POST /api/v1/projects/{name}/sections/sort", s.handleSortSections)
+	s.mux.HandleFunc("PUT /api/v1/projects/{name}/sections/order", s.handleOrderSections)
 	s.mux.HandleFunc("POST /api/v1/projects/{name}/section-rules", s.handleAddSectionRule)
 	s.mux.HandleFunc("DELETE /api/v1/projects/{name}/section-rules/{id}", s.handleRemoveSectionRule)
 	s.mux.HandleFunc("POST /api/v1/jobs/{id}/unarchive", s.handleUnarchiveJob)
@@ -1232,6 +1233,13 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 		path = "index.html"
 	}
 	if _, err := fs.Stat(s.static, path); err != nil {
+		// A missing build file (a page still naming the chunks of a build
+		// that was replaced) is a 404: answered with index.html it would
+		// load as a broken script and leave the page blank.
+		if strings.HasPrefix(path, "assets/") {
+			writeErrorStatus(w, http.StatusNotFound, fmt.Errorf("no such build file: %s", path))
+			return
+		}
 		path = "index.html"
 	}
 	data, err := fs.ReadFile(s.static, path)

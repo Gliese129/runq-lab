@@ -119,6 +119,26 @@ func (s *Server) handleSortSections(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"moved": moved})
 }
 
+func (s *Server) handleOrderSections(w http.ResponseWriter, r *http.Request) {
+	ord, ok := s.backend.(backend.SectionOrderer)
+	if !ok {
+		writeErrorStatus(w, http.StatusNotImplemented, fmt.Errorf("sections are not supported by this backend"))
+		return
+	}
+	var body struct {
+		Names []string `json:"names"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErrorStatus(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := ord.OrderSections(r.Context(), r.PathValue("name"), body.Names); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, backend.ActionResponse{OK: true})
+}
+
 func (s *Server) handleMoveJob(w http.ResponseWriter, r *http.Request) {
 	sec, ok := s.sectioner(w)
 	if !ok {

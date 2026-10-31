@@ -23,6 +23,10 @@ func TestBuildPlan(t *testing.T) {
 	if len(m.Scheduler) != 1 || m.Scheduler[0] != [2]string{"h_rt", "1:00 / 2:00"} {
 		t.Fatalf("scheduler = %v", m.Scheduler)
 	}
+	// h_rt differs between cells: each row says its own value
+	if strings.Join(m.SchedulerVaries, ",") != "h_rt" || m.Rows[0].Sched["h_rt"] != "1:00" || m.Rows[1].Sched["h_rt"] != "2:00" {
+		t.Fatalf("scheduler varies = %v, sched = %v %v", m.SchedulerVaries, m.Rows[0].Sched, m.Rows[1].Sched)
+	}
 	// seed "1" differs from 1; lr null reads ∅ and differs from 0.1
 	if c := m.Rows[1].Cells[1]; c.Same || c.Text != "1" {
 		t.Errorf(`seed "1" vs 1: %+v`, c)

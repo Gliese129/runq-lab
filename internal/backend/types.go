@@ -56,6 +56,9 @@ type JobSummary struct {
 	// RefreshedAt: last reconcile from external sources (poll-model backends
 	// only). Omitted in daemon mode — push state is always current.
 	RefreshedAt *int64 `json:"refreshed_at,omitempty"`
+	// FinishedAt: when it last reached a terminal status (unix s; absent
+	// while live).
+	FinishedAt *int64 `json:"finished_at,omitempty"`
 	// URL is the job's dashboard page. Filled by the CLI from the service's
 	// advertised dashboard URL; omitted when no UI is served.
 	URL string `json:"url,omitempty"`
@@ -66,7 +69,9 @@ type TaskCountGroup struct {
 	Pending   int `json:"pending"`
 	Running   int `json:"running"`
 	Completed int `json:"completed"`
-	Failed    int `json:"failed"`
+	Failed    int `json:"failed"` // failed + killed
+	// the killed part of Failed: a person stopped them, not a fault
+	Killed int `json:"killed,omitempty"`
 	// RQ-74: outcome-unknown submissions awaiting reconcile. Rendered as its
 	// own segment so a job with unknown tasks never looks silently done.
 	Unknown int `json:"unknown,omitempty"`

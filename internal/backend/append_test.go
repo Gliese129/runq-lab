@@ -279,6 +279,19 @@ func TestJobSummaryCountsLiveTasks(t *testing.T) {
 	if err != nil || status != "running" || s.Tasks.Running != 1 || s.Tasks.Completed != 1 {
 		t.Fatalf("status %s counts %+v", status, s.Tasks)
 	}
+	// killed stays inside failed (older clients) and is counted apart
+	s = BuildJobSummary(store.JobRow{ID: "jb3"}, []store.TaskRow{{ID: "k", Status: "killed"}, {ID: "f", Status: "failed"}})
+	if s.Tasks.Failed != 2 || s.Tasks.Killed != 1 {
+		t.Fatalf("killed counts = %+v", s.Tasks)
+	}
+	// finished_at only once terminal
+	done := time.Unix(1700000000, 0)
+	if s = BuildJobSummary(store.JobRow{ID: "jb4", Status: "failed", FinishedAt: &done}, nil); s.FinishedAt == nil || *s.FinishedAt != 1700000000 {
+		t.Fatalf("finished_at = %v", s.FinishedAt)
+	}
+	if s = BuildJobSummary(store.JobRow{ID: "jb5", Status: "running", FinishedAt: &done}, nil); s.FinishedAt != nil {
+		t.Fatal("a live job has no finished_at")
+	}
 }
 
 // Export writes each cell's selected version; a row whose version ran

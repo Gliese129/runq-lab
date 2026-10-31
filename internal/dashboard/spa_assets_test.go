@@ -61,6 +61,12 @@ func TestSPAAssetCachingAndCompression(t *testing.T) {
 		t.Errorf("identity Vary = %q, want Accept-Encoding", vary)
 	}
 
+	// A build file that no longer exists is a 404, never index.html (which a
+	// page would load as a broken module script).
+	if w = get("/assets/ProjectJobs-OLD1.js", ""); w.Code != 404 {
+		t.Errorf("missing build file: status %d, want 404", w.Code)
+	}
+
 	// index.html (SPA fallback route too) revalidates, never immutable.
 	for _, path := range []string{"/", "/projects/deep/link"} {
 		w = get(path, "gzip")

@@ -1987,6 +1987,14 @@ func (m *MultiBackend) SortSections(ctx context.Context, ref string) (int, error
 	return m.store.SortUnsorted(ctx, name)
 }
 
+func (m *MultiBackend) OrderSections(ctx context.Context, ref string, names []string) error {
+	name, err := m.registry.Resolve(ctx, ref)
+	if err != nil {
+		return err
+	}
+	return m.store.OrderSections(ctx, name, names)
+}
+
 func (m *MultiBackend) MoveJob(ctx context.Context, jobRef, section string) (string, error) {
 	ids, err := m.store.SetJobSection(ctx, section, []string{jobRef})
 	if err != nil {
