@@ -106,7 +106,7 @@ runq submit dr… --json      # {"job_id": "ex…", "total_tasks": 6}
 ```bash
 runq ps <job_id> --json                    # task states (cached; add --fresh to probe now)
 runq logs <task_id> --grep 'loss' -n 20    # last matching lines, grepped on the cluster
-runq show <task_id>                        # command, dirs, scheduler id, links
+runq show <task_id>                        # status, times, links (--detail: command, dirs, scheduler id)
 runq view --experiment <job_id>                   # results from runq.result, a view per section
 ```
 

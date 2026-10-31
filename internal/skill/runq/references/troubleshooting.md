@@ -22,7 +22,7 @@ step, then act or report; one retry is usually enough to tell a blip from a faul
 | `unknown command "daemon"` / `"sweep"` / `"best"` … | removed in v0.6 | see `references/migration.md` |
 | `unknown flag: --x` | wrong flag | `runq <cmd> --help` — one call, then use it |
 | `runq logs` never returns / killed with 137 | it follows by default | `--no-follow -n N` or `--grep '<re>' -n N` |
-| `runq logs` times out on HPC | SSH slow | retry once; or `ssh <host> tail -n 200 '<log_path>'` (path from `runq show <task_id>`) |
+| `runq logs` times out on HPC | SSH slow | retry once; or `ssh <host> tail -n 200 '<log_path>'` (`log_path` from `runq show <task_id> --detail`) |
 
 ## State looks wrong
 
@@ -62,7 +62,7 @@ often has several (home vs. bulk storage; `data_path` vs. `working_dir`).
   `~/.runq/logs/runq.log`
 - Service log, socket, data dir, API access log: `runq serve status`
 - Version workspace (log, params.json, run.sh, status.json, metrics, results):
-  `runq show <task_id>` → `task_dir`
+  `runq show <task_id> --detail` → `task_dir`
 - Self-check of this machine's setup: `runq doctor`
 
 ### SSH recovery diagnostics

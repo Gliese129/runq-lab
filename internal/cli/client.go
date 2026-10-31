@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"os"
 	"strconv"
 	"text/tabwriter"
@@ -23,9 +22,7 @@ func getSocketPath() string {
 
 // printJSON prints v as indented JSON to stdout.
 func printJSON(v any) {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	enc.Encode(v)
+	writeJSON(os.Stdout, v)
 }
 
 // newTable creates a tab-aligned writer for CLI table output.

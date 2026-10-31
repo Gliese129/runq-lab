@@ -207,7 +207,7 @@ var sectionRuleRmCmd = &cobra.Command{
 }
 
 func init() {
-	sectionLsCmd.Flags().Bool("json", false, "output raw JSON")
+	addJSONFlags(sectionLsCmd, "output JSON (already compact; --detail adds nothing)")
 	sectionRuleAddCmd.Flags().String("name", "", "glob on the experiment name")
 	sectionRuleAddCmd.Flags().String("path", "", "glob on the job file path")
 	sectionMoveCmd.Flags().String("view", "", "file this saved view instead of experiments")

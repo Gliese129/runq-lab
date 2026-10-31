@@ -144,7 +144,7 @@ func killOnTarget(ctx context.Context, be backend.Backend, id, target string, js
 }
 
 func init() {
-	killCmd.Flags().Bool("json", false, "output raw JSON")
+	addJSONFlags(killCmd, "output JSON ({\"ok\": true}; --detail adds nothing)")
 	killCmd.Flags().StringP("target", "t", "", "Only kill on this target: refuse a version elsewhere, kill only an experiment's versions here")
 
 	killCmd.GroupID = groupCore

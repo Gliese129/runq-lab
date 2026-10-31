@@ -80,8 +80,8 @@ charts:
   - {template: progress, done: Scored, total: Total}
 ```
 
-`runq view progress.yaml` saves/renders; `runq view progress --json` returns the
-same API data. `section:` in a view names the result group it reads (the `section=` of
+`runq view progress.yaml` saves/renders; `runq view progress --json` returns its
+rows, values and sources (`--detail` adds chart specs, formats and per-cell statistics). `section:` in a view names the result group it reads (the `section=` of
 `runq.result`), not where the view is filed.
 
 File a view under the project section of the study it reports on:

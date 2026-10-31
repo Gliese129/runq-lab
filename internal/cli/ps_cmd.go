@@ -23,6 +23,7 @@ var psCmd = &cobra.Command{
 	Example: `  runq ps               # job table
   runq ps 8f2a           # task table for job 8f2a
   runq ps --json
+  runq ps 8f2a --json --detail # every version, with params and scheduler fields
   runq ps -t tsubame --fresh
   runq ps 8f2a --wait --json   # block until a task changes state (max 30m)`,
 	Args:        cobra.MaximumNArgs(1),
@@ -59,7 +60,7 @@ func runPs(cmd *cobra.Command, args []string) error {
 				t.URL = dashboard.TaskURL(base, t.Project, t.JobID, t.ID)
 			}
 			if jsonOut {
-				printJSON(tasks)
+				printJSONOr(cmd, tasks, func() any { return compactTasks(tasks) })
 				wait.print(os.Stderr) // stdout stays the array; tasks carry refreshed_at
 				return nil
 			}
@@ -91,7 +92,7 @@ func runPs(cmd *cobra.Command, args []string) error {
 			jobs[i].URL = dashboard.JobURL(base, jobs[i].Project, jobs[i].ID)
 		}
 		if jsonOut {
-			printJSON(jobs)
+			printJSONOr(cmd, jobs, func() any { return compactJobs(jobs) })
 			wait.print(os.Stderr)
 			return nil
 		}
@@ -110,7 +111,7 @@ func runPs(cmd *cobra.Command, args []string) error {
 }
 
 func init() {
-	psCmd.Flags().Bool("json", false, "output raw JSON")
+	addJSONFlags(psCmd, "output JSON (compact: each cell's selected version, no params)")
 	psCmd.Flags().StringP("target", "t", "", "Filter by compute target")
 
 	psCmd.GroupID = groupCore

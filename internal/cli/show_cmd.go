@@ -23,7 +23,8 @@ var showCmd = &cobra.Command{
 status counts, target, section, draft, and its run table), a task (tk…), a
 draft (dr…), or a project (pj… or its name).`,
 	Example: `  runq show jb7817
-  runq show tk5e6f7a8b --json
+  runq show tk5e6f7a8b
+  runq show tk5e6f7a8b --detail   # with params, command, dirs and scheduler fields
   runq show tij-slime-guru-a1
   runq show jb7817 --wait=2h   # block until the job's state changes or it finishes`,
 	Args:        cobra.ExactArgs(1),
@@ -79,11 +80,13 @@ func showJob(cmd *cobra.Command, be backend.Backend, ref string, jsonOut bool) e
 	if err != nil {
 		return err
 	}
+	base := dashboardBase(ctx, be)
+	detail.Job.URL = dashboard.JobURL(base, detail.Job.Project, detail.Job.ID)
 	if jsonOut {
-		printJSON(struct {
+		printJSONOr(cmd, struct {
 			*backend.JobDetail
 			Wait *waitResult `json:"wait,omitempty"`
-		}{detail, wait})
+		}{detail, wait}, func() any { return compactJobDetail(detail, wait) })
 		return nil
 	}
 	j := detail.Job
@@ -126,7 +129,7 @@ func showJob(cmd *cobra.Command, be backend.Backend, ref string, jsonOut bool) e
 		fmt.Println()
 		fmt.Print(job.RenderPlan(*detail.Plan))
 	}
-	printDashboardLink(os.Stdout, dashboard.JobURL(dashboardBase(ctx, be), j.Project, j.ID))
+	printDashboardLink(os.Stdout, j.URL)
 	wait.print(os.Stdout)
 	return nil
 }
@@ -178,7 +181,7 @@ without a browser the printed URL is the result.`,
 }
 
 func init() {
-	showCmd.Flags().Bool("json", false, "output raw JSON")
+	addJSONFlags(showCmd, "output JSON (a version (tk…) is always JSON)")
 	showCmd.Flags().Bool("yaml", false, "with dr…: the draft's editable YAML")
 	archiveCmd.Flags().Bool("restore", false, "bring it back to the default lists")
 	showCmd.GroupID = groupCore

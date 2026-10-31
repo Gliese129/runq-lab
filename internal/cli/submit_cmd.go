@@ -111,7 +111,7 @@ func init() {
 	submitCmd.Flags().StringArray("rerun", nil, "with --into: run this succeeded cell again (repeatable)")
 	submitCmd.Flags().Bool("rerun-failed", false, "")
 	retireFlag(submitCmd, "rerun-failed", "with --into, failed and killed cells get a new version by default; --rerun <cell> runs a succeeded one again")
-	submitCmd.Flags().Bool("json", false, "output raw JSON")
+	addJSONFlags(submitCmd, "output JSON")
 	submitCmd.Flags().StringP("target", "t", "", "Execution target override (-t > job.target > project.target)")
 
 	submitCmd.GroupID = groupCore

@@ -30,6 +30,13 @@ func runTaskShow(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		view.URL = dashboard.TaskURL(dashboardBase(cmd.Context(), b), view.Project, view.JobID, view.ID)
+		if !wantDetail(cmd) {
+			printJSON(struct {
+				taskJSON
+				Wait *waitResult `json:"wait,omitempty"`
+			}{compactTaskShow(*view), wait})
+			return nil
+		}
 		printJSON(struct {
 			*backend.TaskView
 			Wait *waitResult `json:"wait,omitempty"`

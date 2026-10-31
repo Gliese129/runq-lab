@@ -105,7 +105,7 @@ HPC details (templates, reservations, sync): [docs/hpc.md](./docs/hpc.md)
 ```bash
 runq draft job.yaml · runq submit dr…  # plan / submit
 runq ps [job_id] --json [--fresh]     # jobs, or one job's tasks
-runq show <task_id>                   # command, dirs, status evidence (JSON)
+runq show <task_id>                   # status, failure evidence (JSON; --detail: command, dirs)
 runq logs <task_id> --no-follow -n 200
 runq logs <task_id> --grep '<regex>' -n 20
 runq view --experiment <job_id> --json       # rows written by runq.result

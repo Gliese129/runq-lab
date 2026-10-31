@@ -43,11 +43,12 @@ start or restart it before looking at the cluster. On a scheduled heartbeat
 
 | Goal | Command |
 |---|---|
-| Plan (submits nothing) | `runq draft job.yaml` → draft `dr…` (`--json` for the full plan) |
+| Plan (submits nothing) | `runq draft job.yaml` → draft `dr…` (`--json`: draft, plan table, warnings) |
 | Submit the draft | `runq submit dr… --json` → `{job_id,total_tasks,draft_id}` (repeat-safe). A job file passed to `submit` outside a terminal is refused |
 | Change a draft | `runq show dr… --yaml > plan.yaml`, edit, `runq draft edit dr… -f plan.yaml` · `runq draft ps` |
 | More cells, or a cell again (seeds, a missing row, a failed cell, a re-eval) | `runq draft job.yaml --into <ex…> [--rerun <cell>]` → read new / new_version / skipped, then `runq submit dr…` |
 | Experiments / one experiment's versions | `runq ps --json` · `runq ps <ex…> --json` (`--fresh` probes the scheduler first) |
+| Params, commands, replaced versions, scheduler fields | add `--detail` to any `--json` command (one version: `runq show tk… --detail`) |
 | Wait for a change (instead of sleep loops) | `runq ps <ex…> --wait --json` — returns on a state change or when all finish, at most 30m (`--wait=2h` for longer) |
 | One experiment / version / project | `runq show <ex…\|ex…/<cell>[@vN]\|tk…\|pj…>` |
 | Log tail / matching lines | `runq logs <ex…/<cell>[@vN] \| tk…> -n 200` · `runq logs <ex…/<cell>> --grep 'loss\|step' -n 20` |
@@ -59,6 +60,11 @@ start or restart it before looking at the cluster. On a scheduled heartbeat
 | Register / update a project | `runq project project.yaml` (re-run after editing the file) |
 | Targets / service | `runq target show [name]` · `runq target check <name>` · `runq serve -d` · `runq serve restart` |
 | Delete finished versions | `runq clean --experiment <ex…> --show`, then `-y` |
+
+`--json` is a compact summary: ids, names, statuses, counts, times, metrics, the
+`url`, and each cell's selected version. Add `--detail` when you need the rest
+(params, rendered commands, config, replaced versions, scheduler fields); the
+summary is usually enough to act on and to report from.
 
 `runq logs` follows only at a terminal; from a tool call it prints the tail (add
 `--timeout 2m` for a bounded follow). A command you remember is refused?

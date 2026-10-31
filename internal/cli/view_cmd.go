@@ -153,6 +153,14 @@ var viewCmd = &cobra.Command{Use: "view <file.yaml | name> | view --experiment <
 		if jsonOut {
 			format = "json"
 		}
+		if format == "json" {
+			if wantDetail(cmd) {
+				writeJSON(cmd.OutOrStdout(), r)
+			} else {
+				writeJSON(cmd.OutOrStdout(), compactView(r))
+			}
+			return nil
+		}
 		wide, _ := cmd.Flags().GetBool("wide")
 		color, _ := cmd.Flags().GetBool("latex-color")
 		text, err := views.Export(r, format, wide, color)
@@ -204,7 +212,7 @@ func runJobView(cmd *cobra.Command, ref string) error {
 		}
 		format, _ := cmd.Flags().GetString("format")
 		if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut || format == "json" {
-			printJSON(res)
+			printJSONOr(cmd, res, func() any { return compactJobView(res) })
 			return nil
 		}
 		if len(res.Views) == 0 {
@@ -254,7 +262,7 @@ func init() {
 	viewCmd.Flags().StringArray("experiment", nil, "Use this experiment for this render only (repeatable)")
 	viewCmd.Flags().StringArray("job", nil, "")
 	retireFlag(viewCmd, "job", "use --experiment <ex…> (a job is now an experiment)")
-	viewCmd.Flags().Bool("json", false, "Output the render API response")
+	addJSONFlags(viewCmd, "Output JSON (compact: rows, values, sources; same as --format json)")
 	viewCmd.Flags().Bool("wide", false, "Include source IDs and timestamps")
 	viewCmd.Flags().String("format", "text", "text, json, latex, markdown or csv")
 	viewCmd.Flags().Bool("latex-color", false, "Color baseline deltas (requires xcolor)")
@@ -274,7 +282,7 @@ func init() {
 			}
 			jsonOut, _ := cmd.Flags().GetBool("json")
 			if jsonOut {
-				printJSON(list)
+				printJSONOr(cmd, list, func() any { return compactViewList(list) })
 				return nil
 			}
 			for _, v := range list {
@@ -283,7 +291,7 @@ func init() {
 			return nil
 		})
 	}}
-	ls.Flags().Bool("json", false, "Output JSON")
+	addJSONFlags(ls, "Output JSON")
 	rm := &cobra.Command{Use: "rm <name>", Short: "Delete a saved view", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return withBackend(cmd, func(be backend.Backend) error {
 			p := be.(*api.Proxy)

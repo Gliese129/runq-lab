@@ -79,7 +79,7 @@ flagged.`,
 				return err
 			}
 			if jsonOut {
-				printJSON(res)
+				printJSONOr(cmd, res, func() any { return compactDraftResult(res) })
 				return nil
 			}
 			for _, w := range res.Warnings {
@@ -171,7 +171,7 @@ var draftPsCmd = &cobra.Command{
 				return err
 			}
 			if jsonOut {
-				printJSON(list)
+				printJSONOr(cmd, list, func() any { return compactDrafts(list) })
 				return nil
 			}
 			if len(list) == 0 {
@@ -211,7 +211,7 @@ func showDraft(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if jsonOut {
-			printJSON(res)
+			printJSONOr(cmd, res, func() any { return compactDraftResult(res) })
 			return nil
 		}
 		printDraftLine(res.Draft)
@@ -364,11 +364,22 @@ func submitDraft(cmd *cobra.Command, ref string, opts backend.DraftSubmitOptions
 			url = dashboard.JobURL(dashboardBase(cmd.Context(), be), project, res.JobID)
 		}
 		if jsonOut {
-			printJSON(struct {
+			printJSONOr(cmd, struct {
 				*backend.DraftSubmitResult
 				Target string `json:"target,omitempty"`
 				URL    string `json:"url,omitempty"`
-			}{res, target, url})
+			}{res, target, url}, func() any {
+				return struct {
+					JobID             string                  `json:"job_id"`
+					TotalTasks        int                     `json:"total_tasks"`
+					DraftID           string                  `json:"draft_id"`
+					AlreadySubmitted  bool                    `json:"already_submitted,omitempty"`
+					Append            *appendJSON             `json:"append,omitempty"`
+					PreflightWarnings []preflight.CheckResult `json:"preflight_warnings,omitempty"`
+					Target            string                  `json:"target,omitempty"`
+					URL               string                  `json:"url,omitempty"`
+				}{res.JobID, res.TotalTasks, res.DraftID, res.AlreadySubmitted, compactAppend(res.Append), res.PreflightWarnings, target, url}
+			})
 			return nil
 		}
 		fmt.Println(submittedLine(res))
@@ -390,9 +401,9 @@ func init() {
 	draftCmd.Flags().StringArray("rerun", nil, "with --into: run this succeeded cell again (repeatable)")
 	draftCmd.Flags().Bool("rerun-failed", false, "")
 	retireFlag(draftCmd, "rerun-failed", "with --into, failed and killed cells get a new version by default; --rerun <cell> runs a succeeded one again")
-	draftCmd.Flags().Bool("json", false, "output raw JSON")
+	addJSONFlags(draftCmd, "output JSON (compact: draft, plan table, warnings)")
 	draftPsCmd.Flags().StringP("project", "p", "", "only this project")
-	draftPsCmd.Flags().Bool("json", false, "output raw JSON")
+	addJSONFlags(draftPsCmd, "output JSON")
 	draftEditCmd.Flags().StringP("file", "f", "", "the edited draft YAML ('-' = stdin)")
 	draftCmd.AddCommand(draftPsCmd, draftEditCmd, draftDiscardCmd)
 	draftCmd.GroupID = groupCore
