@@ -1,16 +1,16 @@
 <template>
   <div class="vt-wrap">
-    <table class="vt">
+    <table ref="table" class="vt" :style="{ '--vt-head1': head1 + 'px' }">
       <thead>
         <tr v-if="groups.length" class="vt-top">
-          <th v-for="k in rowKeys" :key="k" rowspan="2" :colspan="keyParts[k]" class="vt-key vt-bottom">{{ keyLabel(k) }}</th>
+          <th v-for="k in rowKeys" :key="k" rowspan="2" :colspan="keyParts[k]" class="vt-key vt-bottom vt-fix" :class="edge(k)" :style="stick(keyStart[k])">{{ keyLabel(k) }}</th>
           <th v-for="g in groups" :key="String(g.label)" :colspan="g.span" class="vt-group">{{ groupLabel(g.label) }}</th>
           <th v-if="rowMeta" rowspan="2" class="vt-src" :aria-label="t('views.source')" />
           <th v-if="hasState" rowspan="2" />
         </tr>
         <tr :class="groups.length ? 'vt-mid' : 'vt-top vt-mid'">
           <template v-if="!groups.length">
-            <th v-for="k in rowKeys" :key="k" :colspan="keyParts[k]" class="vt-key">{{ keyLabel(k) }}</th>
+            <th v-for="k in rowKeys" :key="k" :colspan="keyParts[k]" class="vt-key vt-fix" :class="edge(k)" :style="stick(keyStart[k])">{{ keyLabel(k) }}</th>
           </template>
           <th v-for="(c, i) in result.columns" :key="i" class="vt-num" :aria-sort="ariaSort(i)">
             <button type="button" class="vt-sort" :class="{ on: sort?.col === i }" :title="t('views.sort_hint')" @click="cycleSort(i)">
@@ -25,7 +25,7 @@
       <tbody>
         <tr v-for="({ row, ri }, pos) in ordered" :key="ri" :class="{ 'vt-empty': row.empty, 'vt-last': pos === ordered.length - 1 }">
           <template v-for="(k, ki) in rowKeys" :key="k">
-            <td v-if="keyParts[k] === 1" class="vt-key">
+            <td v-if="keyParts[k] === 1" class="vt-key vt-fix" :class="edge(k)" :style="stick(keyStart[k])">
               <template v-if="!repeated(ri, ki)">
                 <span>{{ formatKey(row.key[k], result.key_formats?.[k]) }}</span>
                 <span v-if="k === 'metric' && rowBetter(row)" class="vt-arrow" :title="t('views.better_' + rowBetter(row))">{{ rowBetter(row) === 'higher' ? '↑' : '↓' }}</span>
@@ -34,7 +34,10 @@
             <!-- a value in parts ("A1 JA-plain | 准确率"): one sub-column
                  per part, so the bars line up down the table -->
             <template v-else>
-              <td v-for="(p, pi) in keyCells(row, ri, ki, k)" :key="pi" class="vt-key vt-part">
+              <td
+                v-for="(p, pi) in keyCells(row, ri, ki, k)" :key="pi" class="vt-key vt-part vt-fix"
+                :class="pi === keyParts[k] - 1 ? edge(k) : ''" :style="stick(keyStart[k] + pi)"
+              >
                 <span v-if="pi > 0 && p !== null" class="vt-bar" aria-hidden="true">|</span>{{ p }}
               </td>
             </template>
@@ -68,7 +71,7 @@
 
 <script setup lang="ts">
 import StatusDot from '@/components/StatusDot.vue'
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ViewCell, ViewColumn, ViewResult, ViewRow } from '@/types/views'
 import { cellNumber, formatKey, keyLabel as baseKeyLabel, keyPartCount, splitKey } from './viewFormat'
@@ -99,6 +102,37 @@ function keyCells(row: ViewRow, ri: number, ki: number, k: string): (string | nu
   const ps = splitKey(keyText(row, k))
   return Array.from({ length: keyParts.value[k] }, (_, i) => ps[i] ?? '')
 }
+
+// The header and the row keys stay in view while the values scroll under
+// them: the key sub-columns stick at their measured left offsets.
+const keyStart = computed<Record<string, number>>(() => {
+  let at = 0
+  return Object.fromEntries(rowKeys.value.map((k) => { const s = at; at += keyParts.value[k]; return [k, s] }))
+})
+const keyCols = computed(() => rowKeys.value.reduce((n, k) => n + keyParts.value[k], 0))
+const table = ref<HTMLTableElement>()
+const lefts = ref<number[]>([])
+const head1 = ref(0)
+function measure() {
+  const el = table.value
+  if (!el) return
+  const tds = [...el.querySelectorAll<HTMLElement>('tbody tr:first-child > td')].slice(0, keyCols.value)
+  const x0 = tds[0]?.offsetLeft ?? 0
+  lefts.value = tds.map((td) => td.offsetLeft - x0)
+  head1.value = groups.value.length ? (el.querySelector<HTMLElement>('thead tr:first-child > th.vt-group')?.offsetHeight ?? 0) : 0
+}
+const stick = (col: number) => ({ left: `${lefts.value[col] ?? 0}px` })
+const edge = (k: string) => (keyStart.value[k] + keyParts.value[k] === keyCols.value ? 'vt-edge' : '')
+let ro: ResizeObserver | undefined
+onMounted(() => {
+  measure()
+  if (typeof ResizeObserver !== 'undefined' && table.value) {
+    ro = new ResizeObserver(measure)
+    ro.observe(table.value)
+  }
+})
+onBeforeUnmount(() => ro?.disconnect())
+watch(() => props.result, () => nextTick(measure))
 
 function keyLabel(k: string): string {
   return k === 'metric' && props.result.row_keys[0] === 'metric' ? t('views.metric') : baseKeyLabel(k)
@@ -241,13 +275,21 @@ function cellTitle(cell: ViewCell): string {
 <style scoped>
 /* The dashboard's own table: the paper look (serif, three rules) belongs to
    the exports (LaTeX, Markdown, figures), not the screen. */
-.vt-wrap { overflow-x: auto; }
-.vt { border-collapse: collapse; width: 100%; font-size: var(--fs-base); font-variant-numeric: tabular-nums; }
+/* Scrolls in both directions itself, so the header (top) and the row keys
+   (left) can stay in view; separate borders so they travel with the cells. */
+.vt-wrap { overflow: auto; max-height: 75vh; --vt-bg: rgb(var(--v-theme-surface)); }
+.vt { border-collapse: separate; border-spacing: 0; width: 100%; font-size: var(--fs-base); font-variant-numeric: tabular-nums; }
 .vt th, .vt td { padding: 7px 12px; white-space: nowrap; }
 .vt th {
   font-weight: 500; font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant));
   border-bottom: 0.5px solid rgb(var(--v-theme-outline-variant));
+  position: sticky; top: 0; z-index: 2; background: var(--vt-bg);
 }
+.vt thead tr.vt-mid:not(.vt-top) th { top: var(--vt-head1); }
+.vt .vt-fix { position: sticky; z-index: 1; background: var(--vt-bg); }
+.vt th.vt-fix { z-index: 3; }
+.vt .vt-edge { box-shadow: inset -1px 0 0 rgb(var(--v-theme-outline-variant)); }
+.vt tbody tr:hover td.vt-fix { background: linear-gradient(rgb(var(--v-theme-on-surface), 0.035), rgb(var(--v-theme-on-surface), 0.035)), var(--vt-bg); }
 .vt td { border-bottom: 0.5px solid rgb(var(--v-theme-outline-variant), 0.5); }
 .vt tbody tr:hover td { background: rgb(var(--v-theme-on-surface), 0.035); }
 .vt tbody td.vt-hot { background: rgb(var(--v-theme-primary), 0.12); box-shadow: inset 0 0 0 1px rgb(var(--v-theme-primary), 0.5); }

@@ -228,8 +228,7 @@ async function unarchiveProject(name: string) {
 </script>
 
 <style scoped>
-.overview { margin: 0 auto; max-width: 1080px; }
-.overview.wide { max-width: 1280px; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.overview.wide { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 28px; align-items: start; }
 .col { min-width: 0; }
 .block { margin-bottom: 22px; }
 .label { font-size: var(--fs-meta); color: rgb(var(--v-theme-on-surface-variant)); margin: 0 0 6px 2px; }

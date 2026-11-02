@@ -244,7 +244,7 @@
           <code v-if="conn.daemonDown.value" class="offline-cmd">runq serve -d</code>
         </div>
       </v-expand-transition>
-      <v-container fluid class="pa-4 pa-md-6" :style="{ maxWidth: route.meta.wide ? '1760px' : '1200px' }">
+      <v-container fluid class="pa-4 pa-md-6">
         <!-- No route transition ON PURPOSE: mode="out-in" delayed the new
              view until the old one's leave finished, and a poll-driven
              re-render inside that window could stall afterLeave — the old
