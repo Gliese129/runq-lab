@@ -469,3 +469,36 @@ func TestRefreshJobReturnsAfterResultScan(t *testing.T) {
 		t.Fatalf("records when refresh returned = %+v, %v", records, err)
 	}
 }
+
+// Each stage of a forced pass has its own budget: a scheduler walk that uses all
+// of its time must not leave the job-files stage with an expired context (seen
+// as "job files: list jobs: context deadline exceeded" on a healthy database).
+func TestForcedSyncStagesHaveTheirOwnBudget(t *testing.T) {
+	prior := sensorPassBudget
+	sensorPassBudget = 300 * time.Millisecond
+	t.Cleanup(func() { sensorPassBudget = prior })
+
+	ctx := context.Background()
+	f := newJobFilesFixture(t)
+	writeScorerResults(t, f.taskDir)
+	if err := f.st.InsertJob(ctx, &store.JobRow{
+		ID: "slow", ProjectName: "project", Name: "slow", ConfigJSON: "{}", Status: "running",
+		TotalTasks: 1, Target: "local", CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.InsertTask(ctx, &store.TaskRow{
+		ID: "live", RunName: "R2", JobID: "slow", ProjectName: "project", Command: "true",
+		ParamsJSON: "{}", Status: "running", Target: "local", BatchSeq: 1, ExternalID: "9",
+		TargetGeneration: f.lane.Generation(), TaskDir: filepath.Join(f.jobDir, "live"), EnqueuedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.lane.backend.Cfg.StatusTemplate = "sleep 5 # {{ext_id}}"
+
+	f.lane.forcedSync(ctx)
+
+	if records, err := f.st.ListResultRecords(ctx, "job"); err != nil || len(records) != 1 {
+		t.Fatalf("result scan starved by the scheduler stage: %+v, %v", records, err)
+	}
+}

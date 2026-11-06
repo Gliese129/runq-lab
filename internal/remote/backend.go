@@ -114,13 +114,18 @@ type Backend struct {
 	// the last complete file-scan pass for a job finished, so probe-free
 	// EnsureFresh calls within localScanTTL can skip the scan entirely —
 	// back-to-back dashboard reads (task GET + job GET) coalesce instead
-	// of serializing on lifecycleMu and repeating the same SFTP reads.
+	// of serializing on passMu and repeating the same SFTP reads.
 	lastLocalScan map[string]time.Time
 
 	// Batch probe TTL: when status_list_template is configured,
 	// SchedulerProbe skips the batch query if the last batch probe
 	// completed within the TTL window.
 	lastBatchProbe time.Time
+
+	// timingRepairTried: hard-final tasks already given their one timing probe
+	// (guarded by probeMu, see claimTimingRepair). In-memory on purpose: a
+	// restart may try again, at the same bounded rate.
+	timingRepairTried map[string]bool
 
 	// orphanStrikes counts consecutive missing-dir observations per task
 	// (guarded by probeMu). See DetectOrphans — two strikes mark, presence
@@ -140,18 +145,23 @@ type Backend struct {
 	contactWroteErr  string
 	contactEverWrote bool
 
-	// lifecycleMu serializes every verdict-producing pass on this lane —
-	// EnsureFresh / SchedulerProbe / HeartbeatProbe / ScanDoneMarkers / Kill — plus manual
-	// retry (via WithLifecycleLock). THE staleness invariant of the remote
-	// lane rests on it: a requeue only ever happens inside a verdict delivery.
+	// passMu serializes whole reconcile passes (EnsureFresh / SchedulerProbe)
+	// so reads coalesce instead of repeating a walk. It guards no task state:
+	// a pass can take a while, and Kill and retry do not wait for it.
+	passMu sync.Mutex
+
+	// lifecycleMu serializes every verdict on this lane: one task's turn in a
+	// reconcile pass, ScanDoneMarkers, Kill, plus manual retry (via
+	// WithLifecycleLock). THE staleness invariant of the remote lane rests on
+	// it: a requeue only ever happens inside a verdict delivery.
 	// Different target generations have different lane locks, so Store's
 	// durable attempt CAS and per-task attempt-file lock fence cross-generation
 	// reads against a retry that starts attempt N+1.
 	//
 	// INVARIANT: any new code path that reads task state and may call
 	// persistDecision/FinishTask, or that resets a task for relaunch, MUST
-	// hold this lock. Per-lane lock: no cross-target contention; these
-	// paths are SSH-bound and effectively serial anyway.
+	// hold this lock, and must re-read a row it loaded before taking it
+	// (ingestLoadedTask does). Per-lane lock: no cross-target contention.
 	lifecycleMu sync.Mutex
 
 	// usage measures finished jobs' directories in the background (see

@@ -438,75 +438,102 @@ func (b *SSHBackend) sensorLoop(ctx context.Context) {
 			// with zero in-flight — the user asked, and a no-op pass is a
 			// cheap honest answer. Completes a sync generation so
 			// ForceRefresh waiters wake.
-			pass, cancel := context.WithTimeout(ctx, 30*time.Second)
-			if !b.forcedSync(pass) {
-				b.reconcileJobFiles(pass, true, true)
+			if !b.forcedSync(ctx) {
+				withPassBudget(ctx, func(pass context.Context) { b.reconcileJobFiles(pass, true, true) })
 			}
 			lastProducerScan = time.Now()
-			cancel()
 		case <-ticker.C:
-			func() {
-				ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				defer cancel()
-
-				if inflight, err := b.backend.HasInFlight(ctx); err != nil || !inflight {
-					return
-				}
-				b.replayKillIntents(ctx)
-
-				if err := b.backend.ScanDoneMarkers(ctx); errors.Is(err, remote.ErrMarkerDetectionDisabled) {
-					// No marker source is configured. This is not an observation and
-					// must not overwrite scheduler-derived freshness every tick.
-				} else if err != nil {
-					b.logger.Warn("marker scan failed", "error", err)
-					b.recordTasksSync(err)
-				} else {
-					// A successful marker scan IS an observation of the remote
-					// world (the primary completion path) — it advances the
-					// photo's timestamp.
-					b.recordTasksSync(nil)
-				}
-
-				// Metrics ingest: long-interval background pass so
-				// running tasks' metrics land in SQLite as a steady trickle —
-				// Collection continues without a browser.
-
-				if time.Since(lastIngest) >= metricsIngestInterval {
-					lastIngest = time.Now()
-					b.ingestRunningMetrics(ctx)
-
-					// Heartbeat (file-stream liveness) rides the same cadence:
-					// ≤3 stats per running task. Silence is only a SUSPICION —
-					// the escalation asks the scheduler, and the etiquette
-					// floor still applies even to suspicions.
-					if silent, herr := b.backend.HeartbeatProbe(ctx, taskSilenceAfter); herr == nil && len(silent) > 0 {
-						b.logger.Info("heartbeat: silent tasks, consulting scheduler", "tasks", silent)
-						if perr := b.backend.SchedulerProbe(ctx, schedProbeFloor); perr != nil {
-							b.logger.Warn("heartbeat escalation probe failed", "error", perr)
-							b.recordTasksSync(perr)
-						} else {
-							b.recordTasksSync(nil)
-						}
-					}
-				}
-
-				// Scheduler alignment returns whenever this lane owns unfinished work.
-				if time.Since(lastAlign) < probeAlignInterval {
-					return
-				}
-				lastAlign = time.Now()
-				if err := b.backend.SchedulerProbe(ctx, DefaultReadTTL); err != nil {
-					b.logger.Warn("probe align failed", "error", err)
-					b.recordTasksSync(err)
-				} else {
-					b.recordTasksSync(nil)
-				}
-				if err := b.backend.DetectOrphans(ctx, false); err != nil {
-					b.logger.Warn("orphan detection failed", "error", err)
-				}
-			}()
+			b.sensorTick(ctx, &lastIngest, &lastAlign)
 		}
 	}
+}
+
+// sensorPassBudget bounds one stage of sensor work. Each stage has its own, so
+// a slow scheduler walk cannot leave the next stage holding a context that has
+// already expired.
+var sensorPassBudget = 30 * time.Second
+
+func withPassBudget(parent context.Context, stage func(context.Context)) {
+	ctx, cancel := context.WithTimeout(parent, sensorPassBudget)
+	defer cancel()
+	stage(ctx)
+}
+
+// sensorTick is one markerScanInterval's work.
+func (b *SSHBackend) sensorTick(parent context.Context, lastIngest, lastAlign *time.Time) {
+	inflight := false
+	withPassBudget(parent, func(ctx context.Context) {
+		var err error
+		if inflight, err = b.backend.HasInFlight(ctx); err == nil && inflight {
+			b.replayKillIntents(ctx)
+		}
+	})
+	if !inflight {
+		return
+	}
+
+	withPassBudget(parent, func(ctx context.Context) {
+		if err := b.backend.ScanDoneMarkers(ctx); errors.Is(err, remote.ErrMarkerDetectionDisabled) {
+			// No marker source is configured. This is not an observation and
+			// must not overwrite scheduler-derived freshness every tick.
+		} else if err != nil {
+			b.logger.Warn("marker scan failed", "error", err)
+			b.recordTasksSync(err)
+		} else {
+			// A successful marker scan IS an observation of the remote
+			// world (the primary completion path) — it advances the
+			// photo's timestamp.
+			b.recordTasksSync(nil)
+		}
+	})
+
+	// Metrics ingest: long-interval background pass so running tasks' metrics
+	// land in SQLite as a steady trickle — Collection continues without a browser.
+	if time.Since(*lastIngest) >= metricsIngestInterval {
+		*lastIngest = time.Now()
+		withPassBudget(parent, b.ingestRunningMetrics)
+
+		// Heartbeat (file-stream liveness) rides the same cadence:
+		// ≤3 stats per running task. Silence is only a SUSPICION —
+		// the escalation asks the scheduler, and the etiquette
+		// floor still applies even to suspicions.
+		var silent []string
+		withPassBudget(parent, func(ctx context.Context) {
+			if found, err := b.backend.HeartbeatProbe(ctx, taskSilenceAfter); err == nil {
+				silent = found
+			}
+		})
+		if len(silent) > 0 {
+			b.logger.Info("heartbeat: silent tasks, consulting scheduler", "tasks", silent)
+			withPassBudget(parent, func(ctx context.Context) {
+				if err := b.backend.SchedulerProbe(ctx, schedProbeFloor); err != nil {
+					b.logger.Warn("heartbeat escalation probe failed", "error", err)
+					b.recordTasksSync(err)
+				} else {
+					b.recordTasksSync(nil)
+				}
+			})
+		}
+	}
+
+	// Scheduler alignment returns whenever this lane owns unfinished work.
+	if time.Since(*lastAlign) < probeAlignInterval {
+		return
+	}
+	*lastAlign = time.Now()
+	withPassBudget(parent, func(ctx context.Context) {
+		if err := b.backend.SchedulerProbe(ctx, DefaultReadTTL); err != nil {
+			b.logger.Warn("probe align failed", "error", err)
+			b.recordTasksSync(err)
+		} else {
+			b.recordTasksSync(nil)
+		}
+	})
+	withPassBudget(parent, func(ctx context.Context) {
+		if err := b.backend.DetectOrphans(ctx, false); err != nil {
+			b.logger.Warn("orphan detection failed", "error", err)
+		}
+	})
 }
 
 // replayKillIntents retries durable cancellations recovered after restart or
@@ -1060,28 +1087,33 @@ func (b *SSHBackend) forcedSync(ctx context.Context) (scannedAll bool) {
 	b.syncMu.Unlock()
 	var refreshErrs []error
 	for id := range jobs {
-		if err := b.backend.EnsureFresh(ctx, id, schedProbeFloor); err != nil {
-			refreshErrs = append(refreshErrs, err)
-		}
+		withPassBudget(ctx, func(stage context.Context) {
+			if err := b.backend.EnsureFresh(stage, id, schedProbeFloor); err != nil {
+				refreshErrs = append(refreshErrs, err)
+			}
+		})
 	}
-	markerErr := b.backend.ScanDoneMarkers(ctx)
-	probeErr := b.backend.SchedulerProbe(ctx, schedProbeFloor)
+	var markerErr, probeErr error
+	withPassBudget(ctx, func(stage context.Context) { markerErr = b.backend.ScanDoneMarkers(stage) })
+	withPassBudget(ctx, func(stage context.Context) { probeErr = b.backend.SchedulerProbe(stage, schedProbeFloor) })
 	err := markerErr
 	if markerErr == nil || errors.Is(markerErr, remote.ErrMarkerDetectionDisabled) {
 		err = probeErr
 	}
 	scannedAll = all || len(jobs) == 0
-	if scannedAll {
-		b.reconcileJobFiles(ctx, true, true)
-	} else {
+	withPassBudget(ctx, func(stage context.Context) {
+		if scannedAll {
+			b.reconcileJobFiles(stage, true, true)
+			return
+		}
 		var rows []store.JobRow
 		for id := range jobs {
-			if j, gerr := b.store.GetJob(ctx, id); gerr == nil && j != nil {
+			if j, gerr := b.store.GetJob(stage, id); gerr == nil && j != nil {
 				rows = append(rows, *j)
 			}
 		}
-		b.jobFilesPass(ctx, rows, true)
-	}
+		b.jobFilesPass(stage, rows, true)
+	})
 	b.recordTasksSync(errors.Join(append(refreshErrs, err)...))
 	b.completeSyncCycle(ticket)
 	return scannedAll

@@ -65,12 +65,12 @@ func readStatusObserved(fsys rfs.FS, taskDir string) (statusFile, error) {
 //
 // The method satisfies backend.Reconciler implicitly (Go structural typing).
 func (b *Backend) EnsureFresh(ctx context.Context, jobID string, ttl time.Duration) error {
-	b.lifecycleMu.Lock()
-	defer b.lifecycleMu.Unlock()
+	b.passMu.Lock()
+	defer b.passMu.Unlock()
 	probe := ttl == 0 || !b.probeIsFresh(jobID, ttl)
 	// Read-path coalescing: a probe-free pass whose local scan completed
 	// within localScanTTL is a no-op. Concurrent dashboard reads of the
-	// same job (task GET + job GET) serialize on lifecycleMu — the second
+	// same job (task GET + job GET) serialize on passMu — the second
 	// caller lands here right after the first finished and skips the
 	// repeat scan. ttl=0 (force) always probes and never lands here.
 	if !probe && b.localScanIsFresh(jobID) {
@@ -91,8 +91,8 @@ func (b *Backend) EnsureFresh(ctx context.Context, jobID string, ttl time.Durati
 // listing-style per-job commands (e.g. SGE/UGE bare `qstat`) across jobs.
 func (b *Backend) SchedulerProbe(ctx context.Context, floor time.Duration) error {
 	ttl := floor
-	b.lifecycleMu.Lock()
-	defer b.lifecycleMu.Unlock()
+	b.passMu.Lock()
+	defer b.passMu.Unlock()
 	jobs, err := b.Store.ListJobs(ctx, "", b.Cfg.Name)
 	if err != nil {
 		return err
@@ -439,7 +439,8 @@ func (b *Backend) reconcile(ctx context.Context, jobID string, probe bool) error
 // not need to worry about this.
 //
 // Terminal handling keys off status_source:
-//   - wrapper / runq terminals are FINAL — skipped (no re-probe).
+//   - wrapper / runq terminals are FINAL — their verdict is never re-probed,
+//     and they are walked last (orderForReconcile).
 //   - scheduler / submit / inferred terminals stay correctable: reconcile
 //     re-probes every cycle so a late wrapper signal can overturn them
 //     ("wrapper terminal wins").
@@ -457,121 +458,31 @@ func (b *Backend) reconcileWith(ctx context.Context, jobID string, probe bool, p
 	if b.Scope != nil && len(tasks) == 0 {
 		return nil
 	}
-	var observationErrs []error
-	var ingestErrs []error
-	for _, tk := range tasks {
-		// Dispatch must publish its identity before files become evidence.
-		if awaitingLaunch(tk) {
-			continue
-		}
-		// Metrics/checkpoints: incremental via the (size,offset) mark —
-		// growth ships only the delta, no growth is one stat. final only
-		// for hard-final terminals (wrapper/runq source): soft terminals
-		// can still be overturned and rerun.
-		hardFinal := isTerminal(tk.Status) && (tk.StatusSource == SourceWrapper || tk.StatusSource == SourceRunq)
-		current, verifyErr, ingestErr := b.ingestLoadedTask(ctx, tk, hardFinal)
-		if verifyErr != nil {
-			return fmt.Errorf("verify task %s attempt before reconcile: %w", tk.ID, verifyErr)
-		}
-		if ingestErr != nil {
-			ingestErrs = append(ingestErrs, fmt.Errorf("ingest task %s: %w", tk.ID, ingestErr))
-		}
-		if !current {
-			continue
-		}
-
-		// Only wrapper and runq terminals are hard-final (skip re-probe).
-		// Scheduler / submit / inferred terminals stay correctable so a late
-		// wrapper signal can overturn them.
-		sf, statusErr := readStatusObserved(rfs.WithContext(b.FS, ctx), tk.TaskDir)
-		if statusErr != nil {
-			observationErrs = append(observationErrs, fmt.Errorf("observe task %s: %w", tk.ID, statusErr))
-		}
-		timeFields := observationTimeFields(tk, sf, ProbeResult{})
-		if hardFinal {
-			// A forced/native observation may repair resource timing while
-			// the verdict remains immutable.
-			if probe && tk.ExternalID != "" {
-				pr, err := b.probeSchedulerObservedWith(ctx, probeRun, tk.ExternalID)
-				if err != nil {
-					observationErrs = append(observationErrs, err)
-				}
-				timeFields = observationTimeFields(tk, sf, pr)
-			}
-			if err := b.applyTimeOnly(ctx, tk, timeFields); err != nil {
-				return err
-			}
-			continue
-		}
-		var pr ProbeResult
-		if probe {
-			var probeErr error
-			pr, probeErr = b.probeSchedulerObservedWith(ctx, probeRun, tk.ExternalID)
-			if probeErr != nil {
-				observationErrs = append(observationErrs, fmt.Errorf("probe task %s: %w", tk.ID, probeErr))
-			}
-		}
-		d := Reconcile(tk.Status, tk.StatusSource, Observed{
-			WrapperStatus: sf.Status,
-			ExitCode:      sf.ExitCode,
-			Scheduler:     pr.Signal,
-			KillRequested: false, // hpc kill writes killed/runq directly; never infer intent from status
-		})
-
-		// Build extra fields. native_state and queue are only written when
-		// a probe ran — local-only reconcile must not overwrite existing values.
-		fields := observationTimeFields(tk, sf, pr)
-		timingChanged := len(fields) > 0
-		fields["status_source"] = d.Source
-		if probe && pr.NativeState != "" {
-			fields["native_state"] = pr.NativeState
-		}
-		if probe && pr.Queue != "" {
-			fields["queue"] = pr.Queue
-		}
-
-		statusChanged := d.Status != tk.Status || d.Source != tk.StatusSource
-		hpcFieldsChanged := (probe && pr.NativeState != "" && pr.NativeState != tk.NativeState) ||
-			(probe && pr.Queue != "" && pr.Queue != tk.Queue)
-		if !statusChanged && !hpcFieldsChanged && !timingChanged {
-			continue // nothing changed
-		}
-
-		switch {
-		case isTerminal(d.Status) && d.Status != tk.Status:
-			// Entering a terminal, or correcting one terminal to another
-			// (inferred→wrapper): (re)stamp finished_at, preferring the wrapper's.
-			if sf.FinishedAt > 0 {
-				fields["finished_at"] = sf.FinishedAt
-			} else {
-				fields["finished_at"] = nowUnix()
-			}
-		case !isTerminal(d.Status) && isTerminal(tk.Status):
-			// Leaving a terminal (an inferred failure the scheduler re-activated):
-			// clear the stamp.
-			fields["finished_at"] = nil
-		}
-
-		if err := b.persistDecision(ctx, tk, d, fields); err != nil {
-			return fmt.Errorf("update task %s: %w", tk.ID, err)
+	var pass reconcilePass
+	for _, tk := range orderForReconcile(tasks) {
+		if err := b.reconcileTask(ctx, tk, probe, probeRun, &pass); err != nil {
+			return err
 		}
 	}
 
-	if err := b.refreshJobStatus(ctx, jobID); err != nil {
+	b.lifecycleMu.Lock()
+	err = b.refreshJobStatus(ctx, jobID)
+	b.lifecycleMu.Unlock()
+	if err != nil {
 		return err
 	}
-	if len(observationErrs) > 0 {
+	if len(pass.observationErrs) > 0 {
 		return fmt.Errorf("reconcile job %s incomplete: %w", jobID,
-			errors.Join(append(observationErrs, ingestErrs...)...))
+			errors.Join(append(pass.observationErrs, pass.ingestErrs...)...))
 	}
-	if len(ingestErrs) > 0 {
+	if len(pass.ingestErrs) > 0 {
 		// The scheduler observation itself succeeded, so its narrow TTL may
 		// be cached. Durable job freshness remains untouched because metrics
 		// ingestion did not complete.
 		if probe {
 			b.markProbed(jobID)
 		}
-		return fmt.Errorf("reconcile job %s incomplete: %w", jobID, errors.Join(ingestErrs...))
+		return fmt.Errorf("reconcile job %s incomplete: %w", jobID, errors.Join(pass.ingestErrs...))
 	}
 	// Record that a reconcile pass completed. This is the honesty contract
 	// of poll-based state: consumers (dashboard "data as of ...") can only
@@ -599,106 +510,289 @@ func (b *Backend) reconcileWithBatch(ctx context.Context, jobID string, signals 
 	if b.Scope != nil && len(tasks) == 0 {
 		return nil
 	}
-	var observationErrs []error
-	var ingestErrs []error
-	for _, tk := range tasks {
-		// Same dispatch fence as the per-task probe variant.
-		if awaitingLaunch(tk) {
-			continue
-		}
-		hardFinal := isTerminal(tk.Status) && (tk.StatusSource == SourceWrapper || tk.StatusSource == SourceRunq)
-		current, verifyErr, ingestErr := b.ingestLoadedTask(ctx, tk, hardFinal)
-		if verifyErr != nil {
-			return fmt.Errorf("verify task %s attempt before batch reconcile: %w", tk.ID, verifyErr)
-		}
-		if ingestErr != nil {
-			ingestErrs = append(ingestErrs, fmt.Errorf("ingest task %s: %w", tk.ID, ingestErr))
-		}
-		if !current {
-			continue
-		}
-
-		sf, statusErr := readStatusObserved(rfs.WithContext(b.FS, ctx), tk.TaskDir)
-		if statusErr != nil {
-			observationErrs = append(observationErrs, fmt.Errorf("observe task %s: %w", tk.ID, statusErr))
-		}
-
-		timeFields := observationTimeFields(tk, sf, signals[tk.ExternalID])
-		if hardFinal {
-			if err := b.applyTimeOnly(ctx, tk, timeFields); err != nil {
-				return err
-			}
-			continue
-		}
-		// Look up pre-computed probe result; absent ext_ids are gone.
-		pr := ProbeResult{Signal: SchedUnknown}
-		if tk.ExternalID != "" {
-			if p, ok := signals[tk.ExternalID]; ok {
-				pr = p
-			} else {
-				pr = ProbeResult{Signal: SchedGone}
-			}
-		}
-
-		d := Reconcile(tk.Status, tk.StatusSource, Observed{
-			WrapperStatus: sf.Status,
-			ExitCode:      sf.ExitCode,
-			Scheduler:     pr.Signal,
-			KillRequested: false,
-		})
-
-		// Build extra fields. Batch probe always counts as probe=true.
-		fields := observationTimeFields(tk, sf, pr)
-		timingChanged := len(fields) > 0
-		fields["status_source"] = d.Source
-		if pr.NativeState != "" {
-			fields["native_state"] = pr.NativeState
-		}
-		if pr.Queue != "" {
-			fields["queue"] = pr.Queue
-		}
-
-		statusChanged := d.Status != tk.Status || d.Source != tk.StatusSource
-		hpcFieldsChanged := (pr.NativeState != "" && pr.NativeState != tk.NativeState) ||
-			(pr.Queue != "" && pr.Queue != tk.Queue)
-		if !statusChanged && !hpcFieldsChanged && !timingChanged {
-			continue
-		}
-
-		switch {
-		case isTerminal(d.Status) && d.Status != tk.Status:
-			if sf.FinishedAt > 0 {
-				fields["finished_at"] = sf.FinishedAt
-			} else {
-				fields["finished_at"] = nowUnix()
-			}
-		case !isTerminal(d.Status) && isTerminal(tk.Status):
-			fields["finished_at"] = nil
-		}
-
-		if err := b.persistDecision(ctx, tk, d, fields); err != nil {
-			return fmt.Errorf("update task %s: %w", tk.ID, err)
+	var pass reconcilePass
+	for _, tk := range orderForReconcile(tasks) {
+		if err := b.reconcileTaskBatch(ctx, tk, signals, &pass); err != nil {
+			return err
 		}
 	}
 
-	if err := b.refreshJobStatus(ctx, jobID); err != nil {
+	b.lifecycleMu.Lock()
+	err = b.refreshJobStatus(ctx, jobID)
+	b.lifecycleMu.Unlock()
+	if err != nil {
 		return err
 	}
-	if len(observationErrs) > 0 {
+	if len(pass.observationErrs) > 0 {
 		return fmt.Errorf("reconcile job %s incomplete: %w", jobID,
-			errors.Join(append(observationErrs, ingestErrs...)...))
+			errors.Join(append(pass.observationErrs, pass.ingestErrs...)...))
 	}
-	if len(ingestErrs) > 0 {
+	if len(pass.ingestErrs) > 0 {
 		// Batch scheduler data succeeded even though local metrics did not.
 		// Cache only the scheduler probe; do not touch durable job freshness.
 		b.markProbed(jobID)
-		return fmt.Errorf("reconcile job %s incomplete: %w", jobID, errors.Join(ingestErrs...))
+		return fmt.Errorf("reconcile job %s incomplete: %w", jobID, errors.Join(pass.ingestErrs...))
 	}
 	if err := b.Store.TouchJobRefreshedAt(ctx, jobID, time.Now()); err != nil {
 		return fmt.Errorf("touch refreshed_at for job %s: %w", jobID, err)
 	}
 	b.markLocalScan(jobID)
 	b.markProbed(jobID)
+	return nil
+}
+
+// reconcilePass is what one reconcile pass carries from task to task.
+type reconcilePass struct {
+	observationErrs []error
+	ingestErrs      []error
+	timingProbes    int // per-task scheduler commands spent on timing repair
+}
+
+// hardFinalTimingProbesPerPass bounds timing repair for hard-final tasks. Each
+// probe can cost a remote command, and a job of a few dozen finished cells would
+// otherwise spend its whole pass on them before reaching the unfinished ones.
+const hardFinalTimingProbesPerPass = 3
+
+func isHardFinal(tk store.TaskRow) bool {
+	return isTerminal(tk.Status) && (tk.StatusSource == SourceWrapper || tk.StatusSource == SourceRunq)
+}
+
+// orderForReconcile puts tasks whose verdict can still change first. A pass that
+// runs out of budget must have spent it on them: they hold scheduler slots and
+// are what the user is waiting on, while a hard-final task's verdict is settled.
+func orderForReconcile(tasks []store.TaskRow) []store.TaskRow {
+	ordered := make([]store.TaskRow, 0, len(tasks))
+	for _, tk := range tasks {
+		if !isHardFinal(tk) {
+			ordered = append(ordered, tk)
+		}
+	}
+	for _, tk := range tasks {
+		if isHardFinal(tk) {
+			ordered = append(ordered, tk)
+		}
+	}
+	return ordered
+}
+
+// claimTimingRepair decides whether a hard-final task gets one scheduler probe
+// for its timing: only without scheduler finish evidence, once per task for this
+// daemon's lifetime (a scheduler that no longer lists the job has nothing more
+// to say), and within the pass's ration. A later pass takes the next few.
+func (b *Backend) claimTimingRepair(tk store.TaskRow, pass *reconcilePass) bool {
+	if tk.ExternalID == "" || b.Cfg.StatusTemplate == "" || pass.timingProbes >= hardFinalTimingProbesPerPass {
+		return false
+	}
+	if _, known := store.CurrentTaskTimes(tk)["scheduler_finished_at"]; known {
+		return false
+	}
+	b.probeMu.Lock()
+	defer b.probeMu.Unlock()
+	key := tk.ID + "/" + tk.ExternalID
+	if b.timingRepairTried[key] {
+		return false
+	}
+	if b.timingRepairTried == nil {
+		b.timingRepairTried = make(map[string]bool)
+	}
+	b.timingRepairTried[key] = true
+	pass.timingProbes++
+	return true
+}
+
+func (b *Backend) forgetTimingRepair(tk store.TaskRow) {
+	b.probeMu.Lock()
+	defer b.probeMu.Unlock()
+	delete(b.timingRepairTried, tk.ID+"/"+tk.ExternalID)
+}
+
+// reconcileTask settles one task from a per-task pass. It holds lifecycleMu for
+// this task only, so a kill or retry waits for one task rather than a whole
+// walk; ingestLoadedTask re-reads the row inside the lock, so a row that changed
+// after the pass listed it is skipped.
+func (b *Backend) reconcileTask(ctx context.Context, tk store.TaskRow, probe bool, probeRun runner, pass *reconcilePass) error {
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
+	// Dispatch must publish its identity before files become evidence.
+	if awaitingLaunch(tk) {
+		return nil
+	}
+	// Metrics/checkpoints: incremental via the (size,offset) mark —
+	// growth ships only the delta, no growth is one stat. final only
+	// for hard-final terminals (wrapper/runq source): soft terminals
+	// can still be overturned and rerun.
+	hardFinal := isHardFinal(tk)
+	current, verifyErr, ingestErr := b.ingestLoadedTask(ctx, tk, hardFinal)
+	if verifyErr != nil {
+		return fmt.Errorf("verify task %s attempt before reconcile: %w", tk.ID, verifyErr)
+	}
+	if ingestErr != nil {
+		pass.ingestErrs = append(pass.ingestErrs, fmt.Errorf("ingest task %s: %w", tk.ID, ingestErr))
+	}
+	if !current {
+		return nil
+	}
+
+	// Only wrapper and runq terminals are hard-final (skip re-probe).
+	// Scheduler / submit / inferred terminals stay correctable so a late
+	// wrapper signal can overturn them.
+	sf, statusErr := readStatusObserved(rfs.WithContext(b.FS, ctx), tk.TaskDir)
+	if statusErr != nil {
+		pass.observationErrs = append(pass.observationErrs, fmt.Errorf("observe task %s: %w", tk.ID, statusErr))
+	}
+	timeFields := observationTimeFields(tk, sf, ProbeResult{})
+	if hardFinal {
+		// A forced/native observation may repair resource timing while
+		// the verdict remains immutable. That is a nicety, so it is rationed.
+		if probe && b.claimTimingRepair(tk, pass) {
+			pr, err := b.probeSchedulerObservedWith(ctx, probeRun, tk.ExternalID)
+			if err != nil {
+				b.forgetTimingRepair(tk) // no answer: this attempt does not count
+				pass.observationErrs = append(pass.observationErrs, err)
+			}
+			timeFields = observationTimeFields(tk, sf, pr)
+		}
+		if err := b.applyTimeOnly(ctx, tk, timeFields); err != nil {
+			return err
+		}
+		return nil
+	}
+	var pr ProbeResult
+	if probe {
+		var probeErr error
+		pr, probeErr = b.probeSchedulerObservedWith(ctx, probeRun, tk.ExternalID)
+		if probeErr != nil {
+			pass.observationErrs = append(pass.observationErrs, fmt.Errorf("probe task %s: %w", tk.ID, probeErr))
+		}
+	}
+	d := Reconcile(tk.Status, tk.StatusSource, Observed{
+		WrapperStatus: sf.Status,
+		ExitCode:      sf.ExitCode,
+		Scheduler:     pr.Signal,
+		KillRequested: false, // hpc kill writes killed/runq directly; never infer intent from status
+	})
+
+	// Build extra fields. native_state and queue are only written when
+	// a probe ran — local-only reconcile must not overwrite existing values.
+	fields := observationTimeFields(tk, sf, pr)
+	timingChanged := len(fields) > 0
+	fields["status_source"] = d.Source
+	if probe && pr.NativeState != "" {
+		fields["native_state"] = pr.NativeState
+	}
+	if probe && pr.Queue != "" {
+		fields["queue"] = pr.Queue
+	}
+
+	statusChanged := d.Status != tk.Status || d.Source != tk.StatusSource
+	hpcFieldsChanged := (probe && pr.NativeState != "" && pr.NativeState != tk.NativeState) ||
+		(probe && pr.Queue != "" && pr.Queue != tk.Queue)
+	if !statusChanged && !hpcFieldsChanged && !timingChanged {
+		return nil // nothing changed
+	}
+
+	switch {
+	case isTerminal(d.Status) && d.Status != tk.Status:
+		// Entering a terminal, or correcting one terminal to another
+		// (inferred→wrapper): (re)stamp finished_at, preferring the wrapper's.
+		if sf.FinishedAt > 0 {
+			fields["finished_at"] = sf.FinishedAt
+		} else {
+			fields["finished_at"] = nowUnix()
+		}
+	case !isTerminal(d.Status) && isTerminal(tk.Status):
+		// Leaving a terminal (an inferred failure the scheduler re-activated):
+		// clear the stamp.
+		fields["finished_at"] = nil
+	}
+
+	if err := b.persistDecision(ctx, tk, d, fields); err != nil {
+		return fmt.Errorf("update task %s: %w", tk.ID, err)
+	}
+	return nil
+}
+
+// reconcileTaskBatch is reconcileTask for a pass with batch probe results.
+func (b *Backend) reconcileTaskBatch(ctx context.Context, tk store.TaskRow, signals map[string]ProbeResult, pass *reconcilePass) error {
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
+	// Same dispatch fence as the per-task probe variant.
+	if awaitingLaunch(tk) {
+		return nil
+	}
+	hardFinal := isHardFinal(tk)
+	current, verifyErr, ingestErr := b.ingestLoadedTask(ctx, tk, hardFinal)
+	if verifyErr != nil {
+		return fmt.Errorf("verify task %s attempt before batch reconcile: %w", tk.ID, verifyErr)
+	}
+	if ingestErr != nil {
+		pass.ingestErrs = append(pass.ingestErrs, fmt.Errorf("ingest task %s: %w", tk.ID, ingestErr))
+	}
+	if !current {
+		return nil
+	}
+
+	sf, statusErr := readStatusObserved(rfs.WithContext(b.FS, ctx), tk.TaskDir)
+	if statusErr != nil {
+		pass.observationErrs = append(pass.observationErrs, fmt.Errorf("observe task %s: %w", tk.ID, statusErr))
+	}
+
+	timeFields := observationTimeFields(tk, sf, signals[tk.ExternalID])
+	if hardFinal {
+		if err := b.applyTimeOnly(ctx, tk, timeFields); err != nil {
+			return err
+		}
+		return nil
+	}
+	// Look up pre-computed probe result; absent ext_ids are gone.
+	pr := ProbeResult{Signal: SchedUnknown}
+	if tk.ExternalID != "" {
+		if p, ok := signals[tk.ExternalID]; ok {
+			pr = p
+		} else {
+			pr = ProbeResult{Signal: SchedGone}
+		}
+	}
+
+	d := Reconcile(tk.Status, tk.StatusSource, Observed{
+		WrapperStatus: sf.Status,
+		ExitCode:      sf.ExitCode,
+		Scheduler:     pr.Signal,
+		KillRequested: false,
+	})
+
+	// Build extra fields. Batch probe always counts as probe=true.
+	fields := observationTimeFields(tk, sf, pr)
+	timingChanged := len(fields) > 0
+	fields["status_source"] = d.Source
+	if pr.NativeState != "" {
+		fields["native_state"] = pr.NativeState
+	}
+	if pr.Queue != "" {
+		fields["queue"] = pr.Queue
+	}
+
+	statusChanged := d.Status != tk.Status || d.Source != tk.StatusSource
+	hpcFieldsChanged := (pr.NativeState != "" && pr.NativeState != tk.NativeState) ||
+		(pr.Queue != "" && pr.Queue != tk.Queue)
+	if !statusChanged && !hpcFieldsChanged && !timingChanged {
+		return nil
+	}
+
+	switch {
+	case isTerminal(d.Status) && d.Status != tk.Status:
+		if sf.FinishedAt > 0 {
+			fields["finished_at"] = sf.FinishedAt
+		} else {
+			fields["finished_at"] = nowUnix()
+		}
+	case !isTerminal(d.Status) && isTerminal(tk.Status):
+		fields["finished_at"] = nil
+	}
+
+	if err := b.persistDecision(ctx, tk, d, fields); err != nil {
+		return fmt.Errorf("update task %s: %w", tk.ID, err)
+	}
 	return nil
 }
 
