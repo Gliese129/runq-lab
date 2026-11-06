@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.7.2 — 2026-11-06
+
+### Changes
+
+- `--json` prints a compact summary by default (ids, names, statuses, counts,
+  times, metrics, `url`, each cell's selected version): `runq ps <ex> --json`
+  went from 6.2KB to 0.5KB. `--detail` prints the full API response as before.
+  The HTTP API and the dashboard are unchanged.
+- Dashboard: status reads without a legend (two-line rows like "2 running · 1
+  queued", killed drawn grey), the overview answers what needs you, and pages
+  lead with their sections and use the full width. View tables keep their header
+  rows and row keys in view while scrolling.
+- API: experiment summaries count killed cells apart (`tasks.killed`, still
+  inside `failed` for older clients) and carry `finished_at`; a plan gives each
+  cell's value of a scheduler param that differs (`scheduler_varies`); sections
+  take an order (`PUT /projects/{name}/sections/order`).
+
+### Fixes
+
+- A submission no longer breaks when a background pass runs out of time. A
+  caller's deadline now ends only its own command or file request; the shared SSH
+  connection closes only on evidence about the connection itself. A connection
+  that hangs is still detected and replaced.
+- Experiments no longer stay "running" after their queue drains. When `qstat`
+  came back empty, every finished version cost one remote command, so a large
+  experiment ran out of time before reaching its unfinished versions, which also
+  kept their `max_inflight` slots. Versions that can still change now go first,
+  and finished ones get at most a few timing probes per pass.
+- `runq kill` and retry wait for one version's turn rather than a whole scheduler
+  pass. Each background stage has its own time budget, so a slow scheduler pass no
+  longer shows up as "list jobs: deadline exceeded".
+- Target reachability is reported honestly: waiting for a local SSH session slot
+  no longer counts as a failed contact, and a late failure from a replaced
+  connection cannot overwrite the new connection's success.
+- A forced refresh reports it when producer results could not be listed or read,
+  rather than answering success. The next good pass clears it.
+- The cell panel's expand icon is no longer blank.
+
 ## v0.7.1 — 2026-10-30
 
 ### Added
