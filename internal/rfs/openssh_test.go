@@ -244,7 +244,7 @@ func TestSystemSSHDeadMasterNeverFallsBack(t *testing.T) {
 	}
 }
 
-func TestSystemSSHFileTimeoutClosesMaster(t *testing.T) {
+func TestSystemSSHFileTimeoutKeepsMaster(t *testing.T) {
 	f := newFaultSSH(t)
 	cfg := systemTestConfig(t, f)
 	f.mode.Store(faultFile)
@@ -262,12 +262,15 @@ func TestSystemSSHFileTimeoutClosesMaster(t *testing.T) {
 	}
 	select {
 	case <-master.done:
-	case <-time.After(time.Second):
-		t.Fatal("timeout did not terminate OpenSSH")
+		t.Fatal("one file timeout terminated the shared OpenSSH master")
+	case <-time.After(200 * time.Millisecond):
 	}
 	f.mode.Store(0)
 	if _, err = fs.Home(); err != nil {
-		t.Fatalf("timeout poisoned reconnect: %v", err)
+		t.Fatalf("timeout poisoned the next operation: %v", err)
+	}
+	if fs.conn.client.system != master {
+		t.Fatal("the next operation should reuse the same master")
 	}
 }
 

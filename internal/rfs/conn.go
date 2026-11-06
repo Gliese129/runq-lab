@@ -73,6 +73,39 @@ const livenessTimeout = 5 * time.Second
 // errClosed is returned for operations on a Close()d connection manager.
 var errClosed = errors.New("ssh connection manager closed")
 
+// ── SFTP channels ───────────────────────────────────────────────────────────
+
+// sftpChannel is one SFTP subsystem on the shared transport. pkg/sftp cannot
+// cancel a single request, so a caller that runs out of time retires the
+// channel instead: new work goes to a fresh channel, requests already in flight
+// finish normally, and the channel closes once the last live holder is done.
+// All fields except client are guarded by sshConn.mu.
+type sftpChannel struct {
+	client  *sftp.Client
+	live    int  // operations and open file handles still being waited on
+	retired bool // takes no new work
+	closed  bool
+}
+
+func (ch *sftpChannel) drainedLocked() bool {
+	if !ch.retired || ch.live != 0 || ch.closed {
+		return false
+	}
+	ch.closed = true
+	return true
+}
+
+// close must not hold up the caller: a channel stuck enough to be retired may
+// also be slow to close.
+func (ch *sftpChannel) close() { go func() { _ = ch.client.Close() }() }
+
+// sftpOpening is one replacement channel being opened; done closes when err is
+// set and sshConn.sftp is published.
+type sftpOpening struct {
+	done chan struct{}
+	err  error
+}
+
 // ── Connection manager ──────────────────────────────────────────────────────
 
 // sshConn is a lazy, reconnecting SSH connection manager.
@@ -81,7 +114,13 @@ var errClosed = errors.New("ssh connection manager closed")
 //   - ONE persistent connection: dial on first use, reuse while healthy.
 //   - Liveness: a reused connection that has been quiet is probed with a
 //     keepalive; a dead one is torn down and redialed transparently.
-//   - sftp.Client rides on the same connection (its own SSH subsystem).
+//   - sftp.Client rides on the same connection (its own SSH subsystem); see
+//     sftpChannel for how one stuck operation is retired without disturbing
+//     its siblings.
+//   - Ownership of cancellation: a caller's deadline ends that caller's own
+//     work. Only the manager closes the shared transport, and only on evidence
+//     about the transport itself: a failed liveness probe, a dead master, or a
+//     cancelled operation the transport never acknowledged (ownCall).
 //   - Session concurrency bounded by sessionSem (cap = MaxSessions);
 //     acquisition respects ctx cancellation and manager shutdown.
 //   - Idle teardown: after IdleTimeout with ZERO in-flight operations
@@ -92,7 +131,8 @@ type sshConn struct {
 	connecting      chan struct{}
 	dialCancel      context.CancelFunc
 	client          *sshTransport
-	sftp            *sftp.Client
+	sftp            *sftpChannel // accepts new work; nil until (re)opened
+	sftpOpening     *sftpOpening // non-nil while a replacement channel opens
 	lastUsed        time.Time
 	active          int // in-flight operations; idle teardown requires active == 0
 	contactObserver func(error)
@@ -195,7 +235,9 @@ func (c *sshConn) getConnContext(parent context.Context) (*sshTransport, error) 
 			client, quiet := c.client, time.Since(c.lastUsed) > livenessCheckAfter
 			c.mu.Unlock()
 			if quiet {
-				probe, stop := context.WithTimeout(ctx, livenessTimeout)
+				// The probe is the manager's own check: the caller leaving early
+				// says nothing about the transport, so it must not end the probe.
+				probe, stop := context.WithTimeout(context.WithoutCancel(ctx), livenessTimeout)
 				_, err := sshCall(probe, client, func() (bool, error) { _, _, e := client.SendRequest("keepalive@runq", true, nil); return true, e })
 				stop()
 				if err != nil {
@@ -245,7 +287,7 @@ func (c *sshConn) getConnContext(parent context.Context) (*sshTransport, error) 
 		}
 		if err == nil {
 			c.client = client
-			c.sftp = sc
+			c.sftp = &sftpChannel{client: sc}
 			c.lastUsed = time.Now()
 			c.startIdleWatcher()
 		}
@@ -269,18 +311,161 @@ func (c *sshConn) invalidate(client *sshTransport) {
 	c.mu.Unlock()
 	_ = client.Close()
 }
-func (c *sshConn) getSFTPContext(ctx context.Context) (*sshTransport, *sftp.Client, error) {
-	client, err := c.getConnContext(ctx)
-	if err != nil {
-		return nil, nil, err
+
+// getSFTPContext returns the channel that accepts new work, counted as held by
+// the caller; every successful return pairs with releaseSFTP. A retired channel
+// is replaced on demand, on the same transport.
+func (c *sshConn) getSFTPContext(ctx context.Context) (*sshTransport, *sftpChannel, error) {
+	for {
+		client, err := c.getConnContext(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		c.mu.Lock()
+		if c.client != client {
+			c.mu.Unlock()
+			continue // replaced meanwhile: take the current transport
+		}
+		if ch := c.sftp; ch != nil {
+			ch.live++
+			c.mu.Unlock()
+			return client, ch, nil
+		}
+		opening := c.sftpOpening
+		if opening == nil {
+			opening = c.openSFTPLocked(client)
+		}
+		c.mu.Unlock()
+		select {
+		case <-opening.done:
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-c.done:
+			return nil, nil, errClosed
+		}
+		c.mu.Lock()
+		same := c.client == client
+		c.mu.Unlock()
+		if opening.err != nil && same {
+			return nil, nil, opening.err
+		}
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.client != client || c.sftp == nil {
-		return nil, nil, errClosed
-	}
-	return client, c.sftp, nil
 }
+
+// openSFTPLocked opens a replacement channel. It belongs to the manager rather
+// than to whichever caller arrived first, so that caller's deadline cannot
+// fail the open for the others.
+func (c *sshConn) openSFTPLocked(client *sshTransport) *sftpOpening {
+	o := &sftpOpening{done: make(chan struct{})}
+	c.sftpOpening = o
+	go func() {
+		setup, stop := context.WithTimeout(context.Background(), c.timeout())
+		defer stop()
+		sc, err := sshCall(setup, client, func() (*sftp.Client, error) { return client.NewSFTP() })
+		if err != nil {
+			// A subsystem that will not open may mean the transport is gone.
+			// Ask before deciding: a live transport keeps its other sessions.
+			probe, stopProbe := context.WithTimeout(context.Background(), livenessTimeout)
+			_, perr := sshCall(probe, client, func() (bool, error) { _, _, e := client.SendRequest("keepalive@runq", true, nil); return true, e })
+			stopProbe()
+			if perr != nil || setup.Err() != nil {
+				c.invalidate(client)
+			}
+		}
+		c.mu.Lock()
+		if c.sftpOpening == o {
+			c.sftpOpening = nil
+		}
+		stale := err == nil && c.client != client
+		if err == nil && !stale {
+			c.sftp = &sftpChannel{client: sc}
+		}
+		o.err = err
+		close(o.done)
+		c.mu.Unlock()
+		if stale {
+			_ = sc.Close()
+		}
+	}()
+	return o
+}
+
+// holdSFTP counts one more holder of ch (an open file handle).
+func (c *sshConn) holdSFTP(ch *sftpChannel) {
+	c.mu.Lock()
+	ch.live++
+	c.mu.Unlock()
+}
+
+// retireSFTP stops new work on ch. What is still in flight on it carries on;
+// the channel closes when the last holder lets go.
+func (c *sshConn) retireSFTP(ch *sftpChannel) {
+	c.mu.Lock()
+	ch.retired = true
+	if c.sftp == ch {
+		c.sftp = nil
+	}
+	drained := ch.drainedLocked()
+	c.mu.Unlock()
+	if drained {
+		ch.close()
+	}
+}
+
+// releaseSFTP ends one hold. Closing a retired channel here is also what stops
+// operations whose callers already gave up on it.
+func (c *sshConn) releaseSFTP(ch *sftpChannel) {
+	c.mu.Lock()
+	ch.live--
+	drained := ch.drainedLocked()
+	c.mu.Unlock()
+	if drained {
+		ch.close()
+	}
+}
+
+// abortGrace is how long cancelled work may take to settle before the manager
+// treats the silence as evidence about the transport.
+func (c *sshConn) abortGrace() time.Duration {
+	return min(c.timeout(), livenessTimeout)
+}
+
+// ownCall runs one caller's work on the shared transport. When ctx ends, abort
+// stops that work alone (nil when there is nothing to stop). Work that still
+// has not settled after abortGrace shows the transport is not responding, and
+// only then does the manager close it. A value produced during the wait is
+// returned beside ctx's error, so the caller can release it.
+func ownCall[T any](ctx context.Context, c *sshConn, client *sshTransport, abort func(), fn func() (T, error)) (T, error) {
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
+	type result struct {
+		value T
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() { v, e := fn(); done <- result{v, e} }()
+	select {
+	case r := <-done:
+		return r.value, r.err
+	case <-ctx.Done():
+	}
+	if abort != nil {
+		abort()
+	}
+	grace := time.NewTimer(c.abortGrace())
+	defer grace.Stop()
+	select {
+	case r := <-done:
+		return r.value, ctx.Err()
+	case <-grace.C:
+		c.invalidate(client)
+		r := <-done
+		return r.value, ctx.Err()
+	}
+}
+
 func (c *sshConn) newSession(parent context.Context) (sess *sshSession, client *sshTransport, release func(), err error) {
 	ctx, cancel := context.WithTimeout(parent, c.timeout())
 	defer cancel()
@@ -300,10 +485,16 @@ func (c *sshConn) newSession(parent context.Context) (sess *sshSession, client *
 	}
 	setup, stop := context.WithTimeout(ctx, c.timeout())
 	defer stop()
-	sess, err = sshCall(setup, client, func() (*sshSession, error) { return client.NewSession() })
+	sess, err = ownCall(setup, c, client, nil, func() (*sshSession, error) { return client.NewSession() })
 	if err != nil {
+		if sess != nil {
+			_ = sess.Close()
+		}
+		// A refused channel is the server answering; running out of time is the
+		// caller's budget (ownCall already judged the transport). Anything else
+		// is the transport failing.
 		var rejection *ssh.OpenChannelError
-		if setup.Err() != nil || !errors.As(err, &rejection) {
+		if setup.Err() == nil && !errors.As(err, &rejection) {
 			c.invalidate(client)
 		}
 		release()

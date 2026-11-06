@@ -52,8 +52,11 @@ func dialSSH(ctx context.Context, cfg SSHConfig) (*sshTransport, error) {
 	return &sshTransport{Client: ssh.NewClient(conn, chans, reqs)}, nil
 }
 
-// Cancellation closes the real connection and joins the operation. SSH/SFTP
-// waits are released by transport shutdown; no orphaned blackhole goroutine.
+// sshCall is for a transport with one owner: a connection still being set up, a
+// forward's private connection, or the manager's own liveness probe. Expiry
+// closes the real connection and joins the operation, so SSH/SFTP waits are
+// released and no blackhole goroutine is orphaned. Work on the shared transport
+// goes through ownCall, which ends only that caller's work.
 func sshCall[T any](ctx context.Context, client *sshTransport, fn func() (T, error)) (T, error) {
 	if err := ctx.Err(); err != nil {
 		var zero T

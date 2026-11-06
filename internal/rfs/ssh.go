@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pkg/sftp"
 )
@@ -75,15 +76,51 @@ func sftpOp[T any](s *SSHFS, fn func(*sftp.Client) (T, error)) (T, error) {
 func sftpOpContext[T any](s *SSHFS, ctx context.Context, fn func(*sftp.Client) (T, error)) (value T, err error) {
 	s.conn.beginOp()
 	defer func() { s.conn.endOpErr(err) }()
-	client, sc, err := s.conn.getSFTPContext(ctx)
+	_, ch, err := s.conn.getSFTPContext(ctx)
 	if err != nil {
 		return value, err
 	}
-	value, err = sshCall(ctx, client, func() (T, error) { return fn(sc) })
-	if ctx.Err() != nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
-		s.conn.invalidate(client)
+	defer s.conn.releaseSFTP(ch)
+	return awaitSFTP(ctx, s.conn, ch, sftpChannelLost, func() (T, error) { return fn(ch.client) })
+}
+
+// awaitSFTP waits for one request on ch. Running out of time retires the channel
+// and returns at once: the request cannot be cancelled alone, so it is left to
+// end with the channel. fn must therefore own whatever it touches. A channel
+// that has died (lost) is retired as well.
+func awaitSFTP[T any](ctx context.Context, c *sshConn, ch *sftpChannel, lost func(error) bool, fn func() (T, error)) (T, error) {
+	var zero T
+	if err := ctx.Err(); err != nil {
+		return zero, err
 	}
-	return value, err
+	type result struct {
+		value T
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() { v, e := fn(); done <- result{v, e} }()
+	select {
+	case r := <-done:
+		if lost(r.err) {
+			c.retireSFTP(ch)
+		}
+		return r.value, r.err
+	case <-ctx.Done():
+		c.retireSFTP(ch)
+		return zero, ctx.Err()
+	}
+}
+
+// sftpChannelLost: the request failed because its channel ended. Whether the
+// transport ended too is settled when the replacement channel opens.
+func sftpChannelLost(err error) bool {
+	return errors.Is(err, io.EOF) || sftpHandleLost(err)
+}
+
+// sftpHandleLost is sftpChannelLost for reads on an open file, where io.EOF is
+// just the end of the file.
+func sftpHandleLost(err error) bool {
+	return errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, sftp.ErrSSHFxConnectionLost)
 }
 func (s *SSHFS) Stat(path string) (fs.FileInfo, error) {
 	return sftpOp(s, func(sc *sftp.Client) (fs.FileInfo, error) { return sc.Stat(path) })
@@ -117,20 +154,19 @@ func (s *SSHFS) Open(path string) (File, error) {
 	s.conn.beginOp()
 	ctx, cancel := s.operationContext()
 	defer cancel()
-	client, sc, err := s.conn.getSFTPContext(ctx)
+	client, ch, err := s.conn.getSFTPContext(ctx)
 	if err != nil {
 		s.conn.endOpErr(err)
 		return nil, err
 	}
-	f, err := sshCall(ctx, client, func() (*sftp.File, error) { return sc.Open(path) })
+	f, err := awaitSFTP(ctx, s.conn, ch, sftpChannelLost, func() (*sftp.File, error) { return ch.client.Open(path) })
 	if err != nil {
-		if ctx.Err() != nil {
-			s.conn.invalidate(client)
-		}
+		s.conn.releaseSFTP(ch)
 		s.conn.endOpErr(err)
 		return nil, err
 	}
-	return &sshFile{f: f, s: s, client: client, release: s.conn.endOpErr}, nil
+	// The hold from getSFTPContext now belongs to the handle, until its Close.
+	return &sshFile{f: f, s: s, client: client, ch: ch, release: s.conn.endOpErr}, nil
 }
 func (s *SSHFS) ReadDir(path string) ([]fs.DirEntry, error) {
 	return sftpOp(s, func(sc *sftp.Client) ([]fs.DirEntry, error) {
@@ -165,11 +201,16 @@ func (s *SSHFS) WriteFileContext(parent context.Context, path string, data []byt
 		if err != nil {
 			return false, err
 		}
-		if _, err = f.ReadFrom(bytes.NewReader(data)); err != nil {
+		// The caller may retry this path once its deadline passes, so stop
+		// sending instead of finishing in the background.
+		if _, err = f.ReadFrom(&ctxReader{ctx: ctx, r: bytes.NewReader(data)}); err != nil {
 			_ = f.Close()
 			return false, err
 		}
 		if err = f.Close(); err != nil {
+			return false, err
+		}
+		if err = ctx.Err(); err != nil {
 			return false, err
 		}
 		return true, sc.Chmod(path, perm)
@@ -199,9 +240,10 @@ func (s *SSHFS) DialUnix(ctx context.Context, path string) (net.Conn, error) {
 	}
 	setup, cancel := context.WithTimeout(ctx, s.conn.timeout())
 	defer cancel()
-	conn, err := sshCall(setup, client, func() (net.Conn, error) { return client.Dial("unix", path) })
-	if setup.Err() != nil {
-		s.conn.invalidate(client)
+	conn, err := ownCall(setup, s.conn, client, nil, func() (net.Conn, error) { return client.Dial("unix", path) })
+	if err != nil && conn != nil {
+		_ = conn.Close() // arrived after the caller gave up
+		conn = nil
 	}
 	return conn, err
 }
@@ -210,7 +252,8 @@ func (s *SSHFS) DialUnix(ctx context.Context, path string) (net.Conn, error) {
 
 // Exec runs a remote command via an SSH session and returns stdout, stderr,
 // and the exit code. A non-zero exit is NOT a Go error; transport failures
-// are. ctx cancellation closes the session (the remote command gets EOF/HUP).
+// are. ctx ending closes this session only (the remote command gets EOF/HUP);
+// other work on the connection is not disturbed.
 func (s *SSHFS) Exec(parent context.Context, cmd string, args ...string) (stdout, stderr []byte, exitCode int, err error) {
 	ctx := parent
 	if _, ok := ctx.Deadline(); !ok {
@@ -234,43 +277,34 @@ func (s *SSHFS) Exec(parent context.Context, cmd string, args ...string) (stdout
 	sess.Stdout = &sob
 	sess.Stderr = &seb
 
-	// ctx watcher with a guaranteed exit path: `finished` is closed when the
-	// command settles, so this goroutine never outlives the call (a bare
-	// <-ctx.Done() wait would leak one goroutine per call under a long-lived
-	// ctx).
-	finished := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			s.conn.invalidate(client)
-		case <-finished:
-		}
-	}()
+	closeSession := func() { _ = sess.Close() }
 
 	// Losing Start acknowledgement can also hide an accepted command. A Wait failure that is not an ExitError means the command DID
 	// start but its verdict was lost (connection dropped mid-flight, session
 	// closed by ctx): callers that submit work must NOT retry on that — the
 	// remote side effect may exist. ErrExecInterrupted marks this class.
 	setup, stop := context.WithTimeout(ctx, s.conn.timeout())
-	_, serr := sshCall(setup, client, func() (bool, error) { return true, sess.Start(buildCmdLine(cmd, args)) })
+	_, serr := ownCall(setup, s.conn, client, closeSession, func() (bool, error) { return true, sess.Start(buildCmdLine(cmd, args)) })
 	stop()
 	if serr != nil {
-		close(finished)
 		return sob.Bytes(), seb.Bytes(), -1, fmt.Errorf("%w: start acknowledgement lost: %v", ErrExecInterrupted, serr)
 	}
-	waitErr := sess.Wait()
-	close(finished)
+	type verdict struct{ err error }
+	v, ctxErr := ownCall(ctx, s.conn, client, closeSession, func() (verdict, error) { return verdict{sess.Wait()}, nil })
 
 	so, se := sob.Bytes(), seb.Bytes()
-	if waitErr != nil {
+	if v.err != nil {
 		var ee interface {
 			error
 			ExitStatus() int
 		}
-		if errors.As(waitErr, &ee) {
+		if errors.As(v.err, &ee) {
 			return so, se, ee.ExitStatus(), nil
 		}
-		return so, se, -1, fmt.Errorf("%w: %v", ErrExecInterrupted, waitErr)
+		if ctxErr != nil {
+			return so, se, -1, fmt.Errorf("%w: %w: %v", ErrExecInterrupted, ctxErr, v.err)
+		}
+		return so, se, -1, fmt.Errorf("%w: %v", ErrExecInterrupted, v.err)
 	}
 	return so, se, 0, nil
 }
@@ -293,7 +327,7 @@ func (s *SSHFS) ExecStream(ctx context.Context, cmd string, args ...string) (io.
 	sess.Stderr = pw
 
 	setup, stop := context.WithTimeout(ctx, s.conn.timeout())
-	_, startErr := sshCall(setup, client, func() (bool, error) { return true, sess.Start(buildCmdLine(cmd, args)) })
+	_, startErr := ownCall(setup, s.conn, client, func() { _ = sess.Close() }, func() (bool, error) { return true, sess.Start(buildCmdLine(cmd, args)) })
 	stop()
 	if err := startErr; err != nil {
 		pr.Close()
@@ -304,11 +338,20 @@ func (s *SSHFS) ExecStream(ctx context.Context, cmd string, args ...string) (io.
 		return nil, err
 	}
 
-	// Same watcher pattern as Exec: exits when the stream finishes.
+	// ctx ending closes this session only. A session that still has not ended
+	// after abortGrace shows the transport is not responding.
 	finished := make(chan struct{})
 	go func() {
 		select {
 		case <-ctx.Done():
+			_ = sess.Close()
+		case <-finished:
+			return
+		}
+		grace := time.NewTimer(s.conn.abortGrace())
+		defer grace.Stop()
+		select {
+		case <-grace.C:
 			s.conn.invalidate(client)
 		case <-finished:
 		}
@@ -334,10 +377,7 @@ func (s *SSHFS) ExecStream(ctx context.Context, cmd string, args ...string) (io.
 	return &sshStream{ReadCloser: pr, closeSession: func() error {
 		closeCtx, cancel := context.WithTimeout(context.Background(), s.conn.timeout())
 		defer cancel()
-		_, err := sshCall(closeCtx, client, func() (bool, error) { return true, sess.Close() })
-		if closeCtx.Err() != nil {
-			s.conn.invalidate(client)
-		}
+		_, err := ownCall(closeCtx, s.conn, client, nil, func() (bool, error) { return true, sess.Close() })
 		return err
 	}}, nil
 }
@@ -398,35 +438,51 @@ type sshFile struct {
 	f        *sftp.File
 	s        *SSHFS
 	client   *sshTransport
+	ch       *sftpChannel
 	release  func(error)
 	once     sync.Once
 	closeErr error
 }
 
-func fileOp[T any](sf *sshFile, fn func() (T, error)) (T, error) {
+func fileOp[T any](sf *sshFile, lost func(error) bool, fn func() (T, error)) (T, error) {
 	ctx, cancel := sf.s.operationContext()
 	defer cancel()
-	v, err := sshCall(ctx, sf.client, fn)
-	if ctx.Err() != nil {
-		sf.s.conn.invalidate(sf.client)
-	}
-	return v, err
+	return awaitSFTP(ctx, sf.s.conn, sf.ch, lost, fn)
 }
+
+// Read goes through a private buffer: a request left behind when its caller
+// runs out of time must not write into p after Read has returned.
 func (sf *sshFile) Read(p []byte) (int, error) {
-	return fileOp(sf, func() (int, error) { return sf.f.Read(p) })
+	buf := make([]byte, len(p))
+	n, err := fileOp(sf, sftpHandleLost, func() (int, error) { return sf.f.Read(buf) })
+	return copy(p, buf[:n]), err
 }
 func (sf *sshFile) Seek(off int64, w int) (int64, error) {
-	return fileOp(sf, func() (int64, error) { return sf.f.Seek(off, w) })
+	return fileOp(sf, sftpHandleLost, func() (int64, error) { return sf.f.Seek(off, w) })
 }
 func (sf *sshFile) Stat() (fs.FileInfo, error) {
-	return fileOp(sf, func() (fs.FileInfo, error) { return sf.f.Stat() })
+	return fileOp(sf, sftpHandleLost, func() (fs.FileInfo, error) { return sf.f.Stat() })
 }
 func (sf *sshFile) Close() error {
 	sf.once.Do(func() {
-		_, sf.closeErr = fileOp(sf, func() (bool, error) { return true, sf.f.Close() })
+		_, sf.closeErr = fileOp(sf, sftpHandleLost, func() (bool, error) { return true, sf.f.Close() })
+		sf.s.conn.releaseSFTP(sf.ch)
 		sf.release(sf.closeErr)
 	})
 	return sf.closeErr
+}
+
+// ctxReader ends a transfer once its context does.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c *ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 // compile-time interface check

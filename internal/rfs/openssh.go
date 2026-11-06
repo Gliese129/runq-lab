@@ -50,7 +50,7 @@ func (c *sshTransport) NewSession() (*sshSession, error) {
 }
 func (c *sshTransport) NewSFTP() (*sftp.Client, error) {
 	if c.system == nil {
-		return sftp.NewClient(c.Client, sftp.UseConcurrentWrites(false))
+		return c.newNativeSFTP()
 	}
 	cmd := c.system.command("-s", c.system.cfg.Host, "sftp")
 	stderr := &errorTail{}
@@ -79,6 +79,49 @@ func (c *sshTransport) NewSFTP() (*sftp.Client, error) {
 	}
 	return client, nil
 }
+
+// newNativeSFTP keeps the session so closing the client closes the channel. A
+// retired channel must end even if the server stopped answering it, while the
+// other sessions on the connection carry on.
+func (c *sshTransport) newNativeSFTP() (*sftp.Client, error) {
+	s, err := c.Client.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	in, err := s.StdinPipe()
+	if err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	out, err := s.StdoutPipe()
+	if err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	if err = s.RequestSubsystem("sftp"); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	pipes := &sftpSession{WriteCloser: in, session: s}
+	client, err := sftp.NewClientPipe(out, pipes, sftp.UseConcurrentWrites(false))
+	if err != nil {
+		_ = pipes.Close()
+		return nil, err
+	}
+	return client, nil
+}
+
+type sftpSession struct {
+	io.WriteCloser
+	session *ssh.Session
+	once    sync.Once
+}
+
+func (p *sftpSession) Close() error {
+	p.once.Do(func() { _ = p.WriteCloser.Close(); _ = p.session.Close() })
+	return nil
+}
+
 func (c *sshTransport) Close() error {
 	if c.system != nil {
 		return c.system.Close()

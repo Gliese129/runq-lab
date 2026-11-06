@@ -38,6 +38,11 @@ type faultSSH struct {
 }
 
 const (
+	testHangCommand = "RUNQ_TEST_HANG"
+	testSlowCommand = "RUNQ_TEST_SLOW"
+)
+
+const (
 	faultHandshake    = 1
 	faultSFTP         = 2
 	faultBind         = 3
@@ -185,6 +190,12 @@ func newFaultSSH(t *testing.T, configure ...func(*ssh.ServerConfig)) *faultSSH {
 								var code uint32
 								var command struct{ Command string }
 								_ = ssh.Unmarshal(r.Payload, &command)
+								if strings.Contains(command.Command, testHangCommand) {
+									continue // runs until the client closes this session
+								}
+								if strings.Contains(command.Command, testSlowCommand) {
+									time.Sleep(400 * time.Millisecond)
+								}
 								if command.Command == "exit 7" {
 									code = 7
 								}
