@@ -600,7 +600,7 @@ func TestFileBrowsingReportsContactAndRecovery(t *testing.T) {
 	defer remote.Close()
 	var calls int
 	var contactErr error
-	remote.SetContactObserver(func(err error) { calls++; contactErr = err })
+	remote.SetContactObserver(func(_ uint64, err error) { calls++; contactErr = err })
 	f.mode.Store(faultSFTP)
 	if _, err := remote.Home(); err == nil || calls != 1 || contactErr == nil {
 		t.Fatalf("failed SFTP contact not reported: calls=%d operation=%v contact=%v", calls, err, contactErr)

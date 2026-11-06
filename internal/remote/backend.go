@@ -138,6 +138,13 @@ type Backend struct {
 	contactMu  sync.Mutex
 	contactAt  time.Time
 	contactErr string // "" = last contact succeeded
+	// contactGeneration is the newest connection generation applied; an
+	// outcome from an older one describes a connection already replaced.
+	contactGeneration uint64
+	// fsObservesContact: FS reports every transport outcome through
+	// observeContact, classified and with its generation, so paths that use FS
+	// add nothing of their own.
+	fsObservesContact bool
 	// Write-through debounce for the sync_state 'contact' row (L4): the
 	// record persists so /health and doctor can say "checked 2h ago"
 	// across daemon restarts instead of the lie "no contact yet".
@@ -183,8 +190,9 @@ func (b *Backend) WithLifecycleLock(fn func() error) error {
 // to inject an rfs.SSHFS for remote cluster operation.
 func NewWithFS(cfg *config.TargetConfig, st *store.Store, storageCfg *config.GlobalConfig, fsys rfs.FS) *Backend {
 	b := &Backend{Cfg: cfg, Store: st, FS: fsys, StorageCfg: storageCfg, usage: newUsageMeasurer()}
-	if observed, ok := fsys.(interface{ SetContactObserver(func(error)) }); ok {
-		observed.SetContactObserver(b.recordContact)
+	if observed, ok := fsys.(rfs.ContactObserved); ok {
+		b.fsObservesContact = true
+		observed.SetContactObserver(b.observeContact)
 	}
 	return b
 }
@@ -193,7 +201,7 @@ func NewWithFS(cfg *config.TargetConfig, st *store.Store, storageCfg *config.Glo
 // preserves the transport-vs-verdict distinction (see runner).
 func (b *Backend) shellRunClassified(ctx context.Context, command string) (string, int, error) {
 	stdout, stderr, code, err := b.FS.Exec(ctx, "sh", "-c", command)
-	b.recordContact(err) // transport outcome only: exit codes are scheduler verdicts, not reachability
+	b.recordFSContact(err) // transport outcome only: exit codes are scheduler verdicts, not reachability
 	return string(stdout) + string(stderr), code, err
 }
 
@@ -203,6 +211,31 @@ func (b *Backend) shellRunClassified(ctx context.Context, command string) (strin
 func (b *Backend) recordContact(transportErr error) {
 	b.contactMu.Lock()
 	defer b.contactMu.Unlock()
+	b.recordContactLocked(transportErr)
+}
+
+// observeContact is the rfs.ContactObserved callback. The generation check and
+// the write share contactMu, so a delayed outcome from a replaced connection
+// cannot overwrite what a newer one reported.
+func (b *Backend) observeContact(generation uint64, transportErr error) {
+	b.contactMu.Lock()
+	defer b.contactMu.Unlock()
+	if generation < b.contactGeneration {
+		return
+	}
+	b.contactGeneration = generation
+	b.recordContactLocked(transportErr)
+}
+
+// recordFSContact records the outcome of an FS call, for a filesystem that does
+// not report its own outcomes.
+func (b *Backend) recordFSContact(transportErr error) {
+	if !b.fsObservesContact {
+		b.recordContact(transportErr)
+	}
+}
+
+func (b *Backend) recordContactLocked(transportErr error) {
 	b.contactAt = time.Now()
 	if transportErr != nil {
 		b.contactErr = transportErr.Error()

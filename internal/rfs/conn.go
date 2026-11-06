@@ -3,6 +3,7 @@ package rfs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"sync"
@@ -73,6 +74,10 @@ const livenessTimeout = 5 * time.Second
 // errClosed is returned for operations on a Close()d connection manager.
 var errClosed = errors.New("ssh connection manager closed")
 
+// errSessionSlotWait marks a caller whose time ran out before it got a session
+// slot. Nothing reached the network, so it says nothing about reachability.
+var errSessionSlotWait = errors.New("waiting for a local SSH session slot")
+
 // ── SFTP channels ───────────────────────────────────────────────────────────
 
 // sftpChannel is one SFTP subsystem on the shared transport. pkg/sftp cannot
@@ -134,8 +139,9 @@ type sshConn struct {
 	sftp            *sftpChannel // accepts new work; nil until (re)opened
 	sftpOpening     *sftpOpening // non-nil while a replacement channel opens
 	lastUsed        time.Time
-	active          int // in-flight operations; idle teardown requires active == 0
-	contactObserver func(error)
+	active          int    // in-flight operations; idle teardown requires active == 0
+	generation      uint64 // of the newest published transport; survives its loss
+	contactObserver func(generation uint64, err error)
 
 	cfg        SSHConfig
 	sessionSem chan struct{} // cap = MaxSessions
@@ -171,18 +177,37 @@ func newSSHConn(cfg SSHConfig) *sshConn {
 // nothing. If beginOp refreshed it, a stream of failing calls against a dead
 // connection would keep resetting the quiet-time clock and the keepalive
 // probe in getConn would never fire — the connection could never self-heal.
-func (c *sshConn) beginOp() {
+func (c *sshConn) beginOp() *contactOp {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.active++
-	c.mu.Unlock()
+	return &contactOp{generation: c.generation}
+}
+
+// contactOp is the generation one operation's outcome speaks for: the newest
+// when it began, then the transport it reached. Owned by that operation.
+type contactOp struct{ generation uint64 }
+
+// usedTransport binds the operation to client (nil: it never reached one). A
+// transport this operation failed to set up was never published and has no
+// generation of its own.
+func (op *contactOp) usedTransport(client *sshTransport) {
+	if client != nil && client.generation > op.generation {
+		op.generation = client.generation
+	}
 }
 
 // endOpErr marks an operation finished. lastUsed is refreshed only when the
-// outcome proves the transport worked: success, or a REMOTE verdict like
+// outcome proves the current transport worked: success, or a REMOTE verdict like
 // not-exist/permission (the server answered — that IS a live round trip).
 // Transport-level failures leave lastUsed alone, letting quiet time
 // accumulate until getConn's keepalive probe fires and heals the connection.
-func (c *sshConn) endOpErr(err error) {
+//
+// An outcome from an older generation than the newest transport is not
+// published: it describes a connection that has already been replaced. One that
+// slips past this check while a newer transport comes up still carries its
+// generation, so the observer can discard it.
+func (c *sshConn) endOpErr(op *contactOp, err error) {
 	// Remote filesystem verdicts prove contact just as successful commands do.
 	var status *sftp.StatusError
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) ||
@@ -191,13 +216,14 @@ func (c *sshConn) endOpErr(err error) {
 	}
 	c.mu.Lock()
 	c.active--
-	if err == nil {
+	current := op.generation == c.generation
+	if err == nil && current {
 		c.lastUsed = time.Now()
 	}
 	observe := c.contactObserver
 	c.mu.Unlock()
-	if observe != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errClosed) {
-		observe(err)
+	if observe != nil && current && !errors.Is(err, context.Canceled) && !errors.Is(err, errClosed) && !errors.Is(err, errSessionSlotWait) {
+		observe(op.generation, err)
 	}
 }
 
@@ -286,6 +312,8 @@ func (c *sshConn) getConnContext(parent context.Context) (*sshTransport, error) 
 		default:
 		}
 		if err == nil {
+			c.generation++
+			client.generation = c.generation
 			c.client = client
 			c.sftp = &sftpChannel{client: sc}
 			c.lastUsed = time.Now()
@@ -314,12 +342,13 @@ func (c *sshConn) invalidate(client *sshTransport) {
 
 // getSFTPContext returns the channel that accepts new work, counted as held by
 // the caller; every successful return pairs with releaseSFTP. A retired channel
-// is replaced on demand, on the same transport.
+// is replaced on demand, on the same transport. On failure the transport is
+// returned when one was reached, so the outcome can be attributed to it.
 func (c *sshConn) getSFTPContext(ctx context.Context) (*sshTransport, *sftpChannel, error) {
 	for {
 		client, err := c.getConnContext(ctx)
 		if err != nil {
-			return nil, nil, err
+			return client, nil, err
 		}
 		c.mu.Lock()
 		if c.client != client {
@@ -339,15 +368,15 @@ func (c *sshConn) getSFTPContext(ctx context.Context) (*sshTransport, *sftpChann
 		select {
 		case <-opening.done:
 		case <-ctx.Done():
-			return nil, nil, ctx.Err()
+			return client, nil, ctx.Err()
 		case <-c.done:
-			return nil, nil, errClosed
+			return client, nil, errClosed
 		}
 		c.mu.Lock()
 		same := c.client == client
 		c.mu.Unlock()
 		if opening.err != nil && same {
-			return nil, nil, opening.err
+			return client, nil, opening.err
 		}
 	}
 }
@@ -466,22 +495,30 @@ func ownCall[T any](ctx context.Context, c *sshConn, client *sshTransport, abort
 	}
 }
 
+// newSession returns a session on the shared transport. On failure client is
+// the transport it reached, if any, so the outcome can be attributed to it.
 func (c *sshConn) newSession(parent context.Context) (sess *sshSession, client *sshTransport, release func(), err error) {
 	ctx, cancel := context.WithTimeout(parent, c.timeout())
 	defer cancel()
 	select {
 	case c.sessionSem <- struct{}{}:
 	case <-ctx.Done():
-		return nil, nil, nil, ctx.Err()
+		return nil, nil, nil, fmt.Errorf("%w: %w", errSessionSlotWait, ctx.Err())
 	case <-c.done:
 		return nil, nil, nil, errClosed
 	}
 	var once sync.Once
 	release = func() { once.Do(func() { <-c.sessionSem }) }
+	// select picks at random when both are ready: a slot won with the deadline
+	// already gone has still reached nothing.
+	if err := ctx.Err(); err != nil {
+		release()
+		return nil, nil, nil, fmt.Errorf("%w: %w", errSessionSlotWait, err)
+	}
 	client, err = c.getConnContext(ctx)
 	if err != nil {
 		release()
-		return nil, nil, nil, err
+		return nil, client, nil, err
 	}
 	setup, stop := context.WithTimeout(ctx, c.timeout())
 	defer stop()
@@ -498,7 +535,7 @@ func (c *sshConn) newSession(parent context.Context) (sess *sshSession, client *
 			c.invalidate(client)
 		}
 		release()
-		return nil, nil, nil, err
+		return nil, client, nil, err
 	}
 	return sess, client, release, nil
 }

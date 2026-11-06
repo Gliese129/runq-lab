@@ -36,10 +36,10 @@ func (b *Backend) ScanDoneMarkers(ctx context.Context) error {
 	}
 	entries, err := rfs.WithContext(b.FS, ctx).ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
-		b.recordContact(nil) // dir absent = successful contact, nothing finished yet
+		b.recordFSContact(nil) // dir absent = successful contact, nothing finished yet
 		return nil
 	}
-	b.recordContact(err) // the 2min marker scan is /health's main heartbeat
+	b.recordFSContact(err) // the 2min marker scan is /health's main heartbeat
 	if err != nil {
 		return fmt.Errorf("scan done markers: %w", err)
 	}

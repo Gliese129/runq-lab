@@ -3,8 +3,11 @@ package backend
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -500,5 +503,150 @@ func TestForcedSyncStagesHaveTheirOwnBudget(t *testing.T) {
 
 	if records, err := f.st.ListResultRecords(ctx, "job"); err != nil || len(records) != 1 {
 		t.Fatalf("result scan starved by the scheduler stage: %+v, %v", records, err)
+	}
+}
+
+// faultyJobFS fails the chosen part of the job-files pass.
+type faultyJobFS struct {
+	rfs.FS
+	listErr, readErr, writeErr error
+	listCalls                  atomic.Int32
+}
+
+func (f *faultyJobFS) Exec(ctx context.Context, cmd string, args ...string) ([]byte, []byte, int, error) {
+	if f.listErr != nil && cmd == "python3" && len(args) > 1 && args[1] == listProducerScript {
+		f.listCalls.Add(1)
+		return nil, nil, -1, f.listErr
+	}
+	return f.FS.Exec(ctx, cmd, args...)
+}
+
+func (f *faultyJobFS) Open(name string) (rfs.File, error) {
+	if f.readErr != nil && strings.Contains(name, "results.") {
+		return nil, f.readErr
+	}
+	return f.FS.Open(name)
+}
+
+func (f *faultyJobFS) WriteFile(name string, data []byte, perm os.FileMode) error {
+	if f.writeErr != nil && strings.Contains(name, "job.json") {
+		return f.writeErr
+	}
+	return f.FS.WriteFile(name, data, perm)
+}
+
+// forcedRefresh runs ForceRefresh against one forced pass and returns its receipt.
+func forcedRefresh(t *testing.T, lane *SSHBackend) *RefreshReceipt {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	lane.syncMu.Lock()
+	lane.lastForced = time.Time{} // these tests refresh back to back
+	lane.syncMu.Unlock()
+	result := make(chan *RefreshReceipt, 1)
+	go func() { receipt, _ := lane.ForceRefresh(ctx); result <- receipt }()
+	select {
+	case <-lane.nudgeCh:
+	case <-ctx.Done():
+		t.Fatal("refresh never started")
+	}
+	lane.forcedSync(ctx)
+	select {
+	case receipt := <-result:
+		return receipt
+	case <-ctx.Done():
+		t.Fatal("refresh never completed")
+	}
+	return nil
+}
+
+// A forced refresh that could not list the producer results says so, in its
+// receipt and in sync_state, keeps the old photo's timestamp, and clears once
+// results can be listed again.
+func TestForcedRefreshReportsProducerListFailure(t *testing.T) {
+	f := newJobFilesFixture(t)
+	ctx := context.Background()
+	f.lane.recordTasksSync(nil)
+	if _, err := f.st.DB().ExecContext(ctx, `UPDATE sync_state SET last_success = 100`); err != nil {
+		t.Fatal(err)
+	}
+	healthy := f.lane.backend.FS
+	broken := &faultyJobFS{FS: healthy, listErr: errors.New("injected producer fetch failure")}
+	f.lane.backend.FS = broken
+
+	receipt := forcedRefresh(t, f.lane)
+	if broken.listCalls.Load() == 0 {
+		t.Fatal("did not exercise producer fetch")
+	}
+	if receipt == nil || receipt.Refreshed || !strings.Contains(receipt.Reason, "injected producer fetch failure") {
+		t.Fatalf("receipt = %+v, want a failure naming the producer fetch", receipt)
+	}
+	if receipt.RefreshedAt != 100 {
+		t.Fatalf("refreshed_at = %d, want the last good photo", receipt.RefreshedAt)
+	}
+	row, err := f.st.GetSyncState(ctx, "local", f.lane.tasksSyncResource())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row == nil || !strings.Contains(row.LastError, "injected producer fetch failure") || row.LastSuccess != 100 {
+		t.Fatalf("sync_state = %+v, want the failure recorded and last_success kept", row)
+	}
+
+	f.lane.backend.FS = healthy
+	receipt = forcedRefresh(t, f.lane)
+	if receipt == nil || !receipt.Refreshed || receipt.Reason != "" {
+		t.Fatalf("receipt after recovery = %+v", receipt)
+	}
+	if row, err = f.st.GetSyncState(ctx, "local", f.lane.tasksSyncResource()); err != nil || row == nil || row.LastError != "" || row.LastSuccess <= 100 {
+		t.Fatalf("sync_state after recovery = %+v, %v", row, err)
+	}
+}
+
+// The one-experiment path reports the same failure to its caller.
+func TestRefreshJobReportsProducerListFailure(t *testing.T) {
+	f := newJobFilesFixture(t)
+	f.lane.backend.FS = &faultyJobFS{FS: f.lane.backend.FS, listErr: errors.New("injected producer fetch failure")}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- f.lane.RefreshJob(ctx, "job") }()
+	select {
+	case <-f.lane.nudgeCh:
+	case <-ctx.Done():
+		t.Fatal("refresh not issued")
+	}
+	f.lane.forcedSync(ctx)
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "injected producer fetch failure") {
+		t.Fatalf("RefreshJob = %v, want the producer failure", err)
+	}
+}
+
+// A listed file that cannot be read is a failed fetch too, and many of them make
+// one short reason rather than a line each.
+func TestForcedRefreshReportsProducerReadFailure(t *testing.T) {
+	f := newJobFilesFixture(t)
+	writeScorerResults(t, f.taskDir)
+	if err := os.WriteFile(filepath.Join(f.taskDir, "results.other.jsonl"),
+		[]byte(`{"ts":1,"section":"eval","axes":{},"metrics":{"acc":0.8}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.lane.backend.FS = &faultyJobFS{FS: f.lane.backend.FS, readErr: errors.New("injected read failure")}
+
+	receipt := forcedRefresh(t, f.lane)
+	if receipt == nil || receipt.Refreshed || !strings.Contains(receipt.Reason, "injected read failure") ||
+		!strings.Contains(receipt.Reason, "and 1 more") || strings.Contains(receipt.Reason, "\n") {
+		t.Fatalf("receipt = %+v, want one line naming the first failure and counting the other", receipt)
+	}
+}
+
+// job.json goes out, not in: failing to write it leaves the refresh's answer
+// alone, so a job whose directory is gone cannot fail every full refresh.
+func TestForcedRefreshIgnoresJobSnapshotWriteFailure(t *testing.T) {
+	f := newJobFilesFixture(t)
+	f.lane.backend.FS = &faultyJobFS{FS: f.lane.backend.FS, writeErr: errors.New("injected write failure")}
+
+	receipt := forcedRefresh(t, f.lane)
+	if receipt == nil || !receipt.Refreshed || receipt.Reason != "" {
+		t.Fatalf("receipt = %+v, want a successful refresh", receipt)
 	}
 }

@@ -33,7 +33,7 @@ var ErrExecInterrupted = errors.New("remote command interrupted: outcome unknown
 // sftp.Client is documented as safe for concurrent use; SSH sessions are
 // bounded by the semaphore in sshConn.
 //
-// Every operation is bracketed by beginOp/endOp so the idle watcher never
+// Every operation is bracketed by beginOp/endOpErr so the idle watcher never
 // tears down a connection with work in flight; for handle-returning calls
 // (Open, ExecStream) the bracket extends until the handle is closed.
 type SSHFS struct {
@@ -46,9 +46,21 @@ func NewSSHFS(cfg SSHConfig) *SSHFS {
 	return &SSHFS{conn: newSSHConn(cfg)}
 }
 
+// ContactObserved is a filesystem that reports its own transport outcomes.
+//
+// generation names the connection an outcome speaks for and grows with each
+// new connection. Callbacks run concurrently and outside the manager's locks,
+// so one can arrive after a newer generation's: an observer keeps the newest
+// generation it has applied and discards anything older.
+type ContactObserved interface {
+	SetContactObserver(observe func(generation uint64, err error))
+}
+
+var _ ContactObserved = (*SSHFS)(nil)
+
 // SetContactObserver reports transport outcomes, including file browsing.
 // Context-scoped views share the observer. The callback runs outside conn.mu.
-func (s *SSHFS) SetContactObserver(observe func(error)) {
+func (s *SSHFS) SetContactObserver(observe func(generation uint64, err error)) {
 	s.conn.mu.Lock()
 	s.conn.contactObserver = observe
 	s.conn.mu.Unlock()
@@ -74,9 +86,10 @@ func sftpOp[T any](s *SSHFS, fn func(*sftp.Client) (T, error)) (T, error) {
 	return sftpOpContext(s, ctx, fn)
 }
 func sftpOpContext[T any](s *SSHFS, ctx context.Context, fn func(*sftp.Client) (T, error)) (value T, err error) {
-	s.conn.beginOp()
-	defer func() { s.conn.endOpErr(err) }()
-	_, ch, err := s.conn.getSFTPContext(ctx)
+	op := s.conn.beginOp()
+	defer func() { s.conn.endOpErr(op, err) }()
+	client, ch, err := s.conn.getSFTPContext(ctx)
+	op.usedTransport(client)
 	if err != nil {
 		return value, err
 	}
@@ -151,22 +164,24 @@ func (s *SSHFS) ReadFile(path string) ([]byte, error) {
 	})
 }
 func (s *SSHFS) Open(path string) (File, error) {
-	s.conn.beginOp()
+	op := s.conn.beginOp()
 	ctx, cancel := s.operationContext()
 	defer cancel()
 	client, ch, err := s.conn.getSFTPContext(ctx)
+	op.usedTransport(client)
 	if err != nil {
-		s.conn.endOpErr(err)
+		s.conn.endOpErr(op, err)
 		return nil, err
 	}
 	f, err := awaitSFTP(ctx, s.conn, ch, sftpChannelLost, func() (*sftp.File, error) { return ch.client.Open(path) })
 	if err != nil {
 		s.conn.releaseSFTP(ch)
-		s.conn.endOpErr(err)
+		s.conn.endOpErr(op, err)
 		return nil, err
 	}
 	// The hold from getSFTPContext now belongs to the handle, until its Close.
-	return &sshFile{f: f, s: s, client: client, ch: ch, release: s.conn.endOpErr}, nil
+	release := func(err error) { s.conn.endOpErr(op, err) }
+	return &sshFile{f: f, s: s, client: client, ch: ch, release: release}, nil
 }
 func (s *SSHFS) ReadDir(path string) ([]fs.DirEntry, error) {
 	return sftpOp(s, func(sc *sftp.Client) ([]fs.DirEntry, error) {
@@ -261,12 +276,13 @@ func (s *SSHFS) Exec(parent context.Context, cmd string, args ...string) (stdout
 		ctx, cancel = context.WithTimeout(ctx, s.conn.timeout())
 		defer cancel()
 	}
-	s.conn.beginOp()
+	op := s.conn.beginOp()
 	// err carries transport failures only (non-zero exits return err == nil),
 	// which is exactly the classification endOpErr wants.
-	defer func() { s.conn.endOpErr(err) }()
+	defer func() { s.conn.endOpErr(op, err) }()
 
 	sess, client, release, err := s.conn.newSession(ctx)
+	op.usedTransport(client)
 	if err != nil {
 		return nil, nil, -1, err
 	}
@@ -314,11 +330,12 @@ func (s *SSHFS) Exec(parent context.Context, cmd string, args ...string) (stdout
 // when the command exits (or ctx is cancelled); the pipe's read side reports
 // the command's exit status via CloseWithError.
 func (s *SSHFS) ExecStream(ctx context.Context, cmd string, args ...string) (io.ReadCloser, error) {
-	s.conn.beginOp()
+	op := s.conn.beginOp()
 
 	sess, client, release, err := s.conn.newSession(ctx)
+	op.usedTransport(client)
 	if err != nil {
-		s.conn.endOpErr(err)
+		s.conn.endOpErr(op, err)
 		return nil, err
 	}
 
@@ -334,7 +351,7 @@ func (s *SSHFS) ExecStream(ctx context.Context, cmd string, args ...string) (io.
 		pw.Close()
 		sess.Close()
 		release()
-		s.conn.endOpErr(err)
+		s.conn.endOpErr(op, err)
 		return nil, err
 	}
 
@@ -372,7 +389,7 @@ func (s *SSHFS) ExecStream(ctx context.Context, cmd string, args ...string) (io.
 		if ctx.Err() != nil {
 			waitErr = ctx.Err()
 		}
-		s.conn.endOpErr(waitErr)
+		s.conn.endOpErr(op, waitErr)
 	}()
 	return &sshStream{ReadCloser: pr, closeSession: func() error {
 		closeCtx, cancel := context.WithTimeout(context.Background(), s.conn.timeout())

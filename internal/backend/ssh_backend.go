@@ -431,7 +431,7 @@ func (b *SSHBackend) sensorLoop(ctx context.Context) {
 			if scan {
 				lastProducerScan = time.Now()
 			}
-			b.reconcileJobFiles(pass, false, scan)
+			_ = b.reconcileJobFiles(pass, false, scan) // logged; the next tick tries again
 			cancel()
 		case <-b.nudgeCh:
 			// Forced full pass (SWR nudge or explicit refresh): runs even
@@ -439,7 +439,8 @@ func (b *SSHBackend) sensorLoop(ctx context.Context) {
 			// cheap honest answer. Completes a sync generation so
 			// ForceRefresh waiters wake.
 			if !b.forcedSync(ctx) {
-				withPassBudget(ctx, func(pass context.Context) { b.reconcileJobFiles(pass, true, true) })
+				// Waiters already have their answer; this scan only catches up.
+				withPassBudget(ctx, func(pass context.Context) { _ = b.reconcileJobFiles(pass, true, true) })
 			}
 			lastProducerScan = time.Now()
 		case <-ticker.C:
@@ -718,7 +719,7 @@ func (b *SSHBackend) StartFileScan(ctx context.Context) {
 func (b *SSHBackend) ScanFiles(ctx context.Context, all bool) {
 	pass, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	b.reconcileJobFiles(pass, all, true)
+	_ = b.reconcileJobFiles(pass, all, true)
 }
 
 // ScanJobFiles is one job-files pass over one experiment.
@@ -729,7 +730,7 @@ func (b *SSHBackend) ScanJobFiles(ctx context.Context, jobID string) {
 	if err != nil || j == nil {
 		return
 	}
-	b.jobFilesPass(pass, []store.JobRow{*j}, true)
+	_ = b.jobFilesPass(pass, []store.JobRow{*j}, true)
 }
 
 func (b *SSHBackend) Close() error {
@@ -1075,8 +1076,9 @@ func (b *SSHBackend) completeSyncCycle(ticket uint64) {
 // respects schedProbeFloor — a forced refresh bypasses the 15min ALIGNMENT
 // cadence, never the qstat etiquette floor), then the job-files scan, records
 // the outcome, and completes a generation — so a waiter that wakes reads the
-// results the pass found. Only the experiments RefreshJob asked for are
-// scanned before waking when no waiter asked for every job; scannedAll says
+// results the pass found, and learns if some could not be collected. Only the
+// experiments RefreshJob asked for are scanned before waking when no waiter
+// asked for every job; scannedAll says
 // whether the full scan already ran. Runs on the sensor goroutine —
 // serialized with regular ticks by construction.
 func (b *SSHBackend) forcedSync(ctx context.Context) (scannedAll bool) {
@@ -1101,20 +1103,24 @@ func (b *SSHBackend) forcedSync(ctx context.Context) (scannedAll bool) {
 		err = probeErr
 	}
 	scannedAll = all || len(jobs) == 0
+	var filesErr error
 	withPassBudget(ctx, func(stage context.Context) {
 		if scannedAll {
-			b.reconcileJobFiles(stage, true, true)
+			filesErr = b.reconcileJobFiles(stage, true, true)
 			return
 		}
 		var rows []store.JobRow
 		for id := range jobs {
-			if j, gerr := b.store.GetJob(stage, id); gerr == nil && j != nil {
+			j, gerr := b.store.GetJob(stage, id)
+			if gerr != nil {
+				refreshErrs = append(refreshErrs, fmt.Errorf("job files: read job %s: %w", id, gerr))
+			} else if j != nil {
 				rows = append(rows, *j)
 			}
 		}
-		b.jobFilesPass(stage, rows, true)
+		filesErr = b.jobFilesPass(stage, rows, true)
 	})
-	b.recordTasksSync(errors.Join(append(refreshErrs, err)...))
+	b.recordTasksSync(errors.Join(append(refreshErrs, err, filesErr)...))
 	b.completeSyncCycle(ticket)
 	return scannedAll
 }

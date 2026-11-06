@@ -188,33 +188,40 @@ func (b *SSHBackend) publishJobSnapshot(ctx context.Context, jobID string) error
 
 func (b *SSHBackend) publishJob(ctx context.Context, j store.JobRow) (JobSnapshot, error) {
 	snap, dirs, err := jobSnapshot(ctx, b.store, j, b.scope, b.scansFiles)
-	if err != nil || len(dirs) == 0 {
+	if err != nil {
 		return snap, err
+	}
+	return snap, b.writeJobSnapshot(ctx, j, snap, dirs)
+}
+
+func (b *SSHBackend) writeJobSnapshot(ctx context.Context, j store.JobRow, snap JobSnapshot, dirs []string) error {
+	if len(dirs) == 0 {
+		return nil
 	}
 	h := snap.hash()
 	if prev, err := b.store.JobSnapshotHash(ctx, j.ID, b.scope.Target, b.scope.Generation); err != nil || prev == h {
-		return snap, err
+		return err
 	}
 	snap.UpdatedAt = time.Now().Unix()
 	raw, _ := json.Marshal(snap)
 	for _, dir := range dirs {
 		if err := atomicRemote(ctx, rfs.WithContext(b.backend.FS, ctx), path.Join(dir, "job.json"), raw); err != nil {
-			return snap, err
+			return err
 		}
 	}
-	return snap, b.store.SetJobSnapshotHash(ctx, j.ID, b.scope.Target, b.scope.Generation, h)
+	return b.store.SetJobSnapshotHash(ctx, j.ID, b.scope.Target, b.scope.Generation, h)
 }
 
 // reconcileJobFiles is one job-files pass: publish changed job.json files,
 // then (scan) ingest grown producer results. all widens the pass from recent
 // jobs to every unarchived job (forced refresh). Every lane runs it for the
 // versions whose files it reads (scansFiles): active, retiring and kept
-// generations alike.
-func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
+// generations alike. The error is jobFilesPass's.
+func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) error {
 	jobs, err := b.store.ListJobs(ctx, "", b.targetName)
 	if err != nil {
 		b.logger.Warn("job files: list jobs", "error", err)
-		return
+		return fmt.Errorf("job files: list jobs: %w", err)
 	}
 	cutoff := time.Now().Add(-recentJobWindow)
 	picked := jobs[:0]
@@ -224,16 +231,31 @@ func (b *SSHBackend) reconcileJobFiles(ctx context.Context, all, scan bool) {
 			picked = append(picked, j)
 		}
 	}
-	b.jobFilesPass(ctx, picked, scan)
+	return b.jobFilesPass(ctx, picked, scan)
 }
 
-// jobFilesPass is reconcileJobFiles over the given jobs.
-func (b *SSHBackend) jobFilesPass(ctx context.Context, jobs []store.JobRow, scan bool) {
+// jobFilesPass is reconcileJobFiles over the given jobs. A non-nil error means
+// some results could not be collected; it names the first failure and counts the
+// rest. A job.json that could not be written does not count: it sends runq's view
+// out rather than bringing the target's in, and a job whose directory has gone
+// would otherwise fail every full refresh.
+func (b *SSHBackend) jobFilesPass(ctx context.Context, jobs []store.JobRow, scan bool) error {
+	var firstErr error
+	failed := 0
+	fail := func(err error) {
+		if failed++; firstErr == nil {
+			firstErr = err
+		}
+	}
 	dirs := map[string]map[string]string{} // job dir → task dir → task id
 	order := []string{}
 	for _, j := range jobs {
-		snap, err := b.publishJob(ctx, j)
+		snap, taskDirs, err := jobSnapshot(ctx, b.store, j, b.scope, b.scansFiles)
 		if err != nil {
+			// Its versions may be missing below, so their results go unread.
+			b.logger.Debug("job files: read job", "job", j.ID, "error", err)
+			fail(fmt.Errorf("job files: read job %s: %w", j.ID, err))
+		} else if err := b.writeJobSnapshot(ctx, j, snap, taskDirs); err != nil {
 			b.logger.Debug("job files: publish job.json", "job", j.ID, "error", err)
 		}
 		foreign := 0
@@ -257,14 +279,23 @@ func (b *SSHBackend) jobFilesPass(ctx context.Context, jobs []store.JobRow, scan
 				"job", j.ID, "versions", foreign, "generation", b.scope.Generation)
 		}
 	}
-	if !scan {
-		return
+	if scan {
+		b.ingestProducerResults(ctx, rfs.WithContext(b.backend.FS, ctx), order, dirs, fail)
 	}
-	fsys := rfs.WithContext(b.backend.FS, ctx)
+	if failed > 1 {
+		return fmt.Errorf("%w (and %d more)", firstErr, failed-1)
+	}
+	return firstErr
+}
+
+// ingestProducerResults lists and reads the producer files under the given job
+// dirs, handing each failure to fail.
+func (b *SSHBackend) ingestProducerResults(ctx context.Context, fsys rfs.FS, order []string, dirs map[string]map[string]string, fail func(error)) {
 	for start := 0; start < len(order); start += jobFilesChunk {
 		files, err := listProducerFiles(ctx, fsys, order[start:min(start+jobFilesChunk, len(order))])
 		if err != nil {
 			b.logger.Debug("job files: list producer results", "error", err)
+			fail(fmt.Errorf("job files: list producer results: %w", err))
 			continue
 		}
 		for _, f := range files {
@@ -285,6 +316,7 @@ func (b *SSHBackend) jobFilesPass(ctx context.Context, jobs []store.JobRow, scan
 			})
 			if err != nil {
 				b.logger.Debug("job files: ingest producer results", "task", taskID, "producer", f.Producer, "error", err)
+				fail(fmt.Errorf("job files: ingest %s results of task %s: %w", f.Producer, taskID, err))
 			}
 		}
 	}

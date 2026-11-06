@@ -31,6 +31,9 @@ type OpenSSHConfig struct {
 type sshTransport struct {
 	*ssh.Client
 	system *openSSHClient
+	// generation is set once, before the manager publishes the transport; 0
+	// means it was never published.
+	generation uint64
 }
 
 func (c *sshTransport) NewSession() (*sshSession, error) {
