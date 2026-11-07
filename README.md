@@ -46,7 +46,7 @@ web dashboard, verifies checksums, and replaces only the `runq` binary.
 | `RUNQ_START_DAEMON=1` | Start (or restart) the runq service after install |
 | `RUNQ_AUTOSTART=0\|1` | Start the runq service when you log in (asked at a terminal, default yes); `0` removes it |
 | `RUNQ_INSTALL_DIR=…` | Custom install path |
-| `RUNQ_VERSION=v…` | Pin a release, e.g. `v0.7.2` |
+| `RUNQ_VERSION=v…` | Pin a release, e.g. `v0.7.3` |
 
 Starting at login uses a LaunchAgent on macOS
 (`~/Library/LaunchAgents/io.github.gliese129.runq.plist`) and a systemd user
