@@ -393,3 +393,58 @@ func TestFailureRetainsExecutionTimes(t *testing.T) {
 		t.Fatalf("failure timing evidence lost: %+v", row)
 	}
 }
+
+// A submit receipt proved the command never started: the task leaves unknown
+// for the queue and gives its slot back. Anything else is left alone.
+func TestRequeueUnknownOnlyMovesUnknownTasks(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		queued    TaskStatus
+		wantDB    string
+		wantQueue TaskStatus
+		wantFree  int
+	}{
+		{"unknown", StatusUnknown, "pending", StatusPending, 1},
+		{"running", StatusRunning, "unknown", StatusRunning, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			q := NewQueue()
+			st := testStore(t)
+			pool := testPool(1)
+			task := &Task{ID: "t-" + c.name, JobID: "j-" + c.name, ProjectName: "test", Command: "submit", GPUsNeeded: 1}
+			seedJob(t, st, task.JobID, task.ProjectName, 1)
+			seedTask(t, st, task)
+			q.Push(task)
+			if err := q.MarkRunning(task.ID); err != nil {
+				t.Fatal(err)
+			}
+			if c.queued == StatusUnknown {
+				if err := q.MarkUnknown(task.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := st.UpdateTaskStatus(context.Background(), task.ID, "unknown", nil); err != nil {
+				t.Fatal(err)
+			}
+			pool.Reserve(task.ID)
+			s := New(DefaultConfig(), q, pool, &observingRemoteLauncher{}, st, testLogger())
+
+			s.RequeueUnknown(task.ID)
+
+			if got := taskStatus(t, s, task.ID); got != c.wantDB {
+				t.Fatalf("durable status = %q, want %q", got, c.wantDB)
+			}
+			if got := q.StatusOf(task.ID); got != c.wantQueue {
+				t.Fatalf("queue status = %q, want %q", got, c.wantQueue)
+			}
+			if pool.FreeCount() != c.wantFree {
+				t.Fatalf("free slots = %d, want %d", pool.FreeCount(), c.wantFree)
+			}
+			// The check repeats under finishMu, so a verdict that lands
+			// between the first look and the requeue still wins.
+			if c.queued != StatusUnknown && s.requeueIf(task, StatusUnknown) {
+				t.Fatal("requeueIf moved a task that is not unknown")
+			}
+		})
+	}
+}

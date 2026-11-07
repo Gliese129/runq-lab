@@ -617,6 +617,11 @@ func (b *Backend) reconcileTask(ctx context.Context, tk store.TaskRow, probe boo
 	if awaitingLaunch(tk) {
 		return nil
 	}
+	if settled, err := b.settleFromReceipt(ctx, tk); err != nil {
+		pass.observationErrs = append(pass.observationErrs, err)
+	} else if settled {
+		return nil
+	}
 	// Metrics/checkpoints: incremental via the (size,offset) mark —
 	// growth ships only the delta, no growth is one stat. final only
 	// for hard-final terminals (wrapper/runq source): soft terminals
@@ -718,6 +723,11 @@ func (b *Backend) reconcileTaskBatch(ctx context.Context, tk store.TaskRow, sign
 	defer b.lifecycleMu.Unlock()
 	// Same dispatch fence as the per-task probe variant.
 	if awaitingLaunch(tk) {
+		return nil
+	}
+	if settled, err := b.settleFromReceipt(ctx, tk); err != nil {
+		pass.observationErrs = append(pass.observationErrs, err)
+	} else if settled {
 		return nil
 	}
 	hardFinal := isHardFinal(tk)

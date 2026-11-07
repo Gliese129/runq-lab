@@ -62,9 +62,14 @@ func (l *Launcher) Launch(ctx context.Context, t *scheduler.Task) error {
 	// The task ID is the durable, idempotent submission handle. A transport
 	// recovery may confirm this execution, but never reset its evidence.
 	handle := submitHandle(t.ID)
-	cmd := "export RUNQ_SUBMIT_HANDLE=" + utils.ShellQuote(handle) + "\n" + string(cmdBytes)
 
-	out, exitCode, rerr := l.b.shellRunClassified(ctx, cmd)
+	// The submit command has side effects, so it gets its own budget rather
+	// than the default for reads: a slow scheduler is fine, a killed submission
+	// is an unknown outcome someone has to untangle. It also leaves a receipt
+	// (receipt.go) that settles that outcome if the session is lost anyway.
+	ctx, cancel := context.WithTimeout(ctx, submitBudget)
+	defer cancel()
+	out, exitCode, rerr := l.b.shellRunClassified(ctx, receiptScript(t.TaskDir, cmdFile, handle))
 	if rerr != nil {
 		// Two transport classes, split on FACTS not heuristics (RQ-74):
 		//   - the command never started (session/dial failure) → TRANSIENT,
@@ -76,8 +81,8 @@ func (l *Launcher) Launch(ctx context.Context, t *scheduler.Task) error {
 		if errors.Is(rerr, rfs.ErrExecInterrupted) {
 			opLog("SUBMIT INTERRUPTED task=%s job=%s err=%v\npartial output: %s", t.ID, t.JobID, rerr, out)
 			return fmt.Errorf(
-				"%w: submit command interrupted mid-flight — a cluster job may exist: %v\npartial output:\n%s",
-				scheduler.ErrLaunchUntracked, rerr, strings.TrimSpace(out))
+				"%w: submit command interrupted mid-flight — a cluster job may exist: %v\n%s%s\npartial output:\n%s",
+				scheduler.ErrLaunchUntracked, rerr, launchReceiptMarker, receiptBase(t.TaskDir), strings.TrimSpace(out))
 		}
 		opLog("SUBMIT TRANSPORT task=%s job=%s err=%v", t.ID, t.JobID, rerr)
 		return fmt.Errorf("%w: %v", scheduler.ErrLaunchTransient, rerr)

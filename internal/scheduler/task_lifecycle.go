@@ -219,13 +219,40 @@ func (s *Scheduler) killViaLauncher(taskID string) error {
 	return s.launcher.Kill(taskID)
 }
 
+// RequeueUnknown returns an outcome-unknown task to the queue. Reconcile calls
+// it once the task's submit receipt proves the submit command never started,
+// so no cluster job can exist: this is the transient path, reached late. A task
+// that has meanwhile left unknown is left alone.
+func (s *Scheduler) RequeueUnknown(taskID string) {
+	task := s.queue.Get(taskID)
+	if task == nil || s.queue.StatusOf(taskID) != StatusUnknown {
+		return
+	}
+	if s.settleKilled(task, "submit never started — no remote job") {
+		return
+	}
+	if s.requeueIf(task, StatusUnknown) {
+		s.logger.Info("submit never started, task returned to queue", "task", taskID)
+	}
+}
+
 // requeueTransient puts a remote task back to pending after a launch
 // that provably never reached the scheduler. Persistence precedes queue
 // publication and lease release; on a failed write the durable submitting
 // intent remains active and restart will conservatively recover it as unknown.
 func (s *Scheduler) requeueTransient(task *Task) bool {
+	return s.requeueIf(task, "")
+}
+
+// requeueIf is requeueTransient for a task still in the given queue status
+// ("" accepts any): the check and the requeue share finishMu, so a verdict
+// that lands first wins.
+func (s *Scheduler) requeueIf(task *Task, want TaskStatus) bool {
 	s.finishMu.Lock()
 	defer s.finishMu.Unlock()
+	if want != "" && s.queue.StatusOf(task.ID) != want {
+		return false
+	}
 	dbCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 	defer cancel()
 	if err := s.store.UpdateTaskStatus(dbCtx, task.ID, string(StatusPending), map[string]any{

@@ -244,6 +244,16 @@ func (q *Queue) RequeueTransient(taskID string) error {
 // RetryExisting updates an existing terminal task in-place for manual retry.
 // Returns false if the task is not currently in the queue.
 
+// StatusOf returns a task's status, or "" when it is not in the queue.
+func (q *Queue) StatusOf(taskID string) TaskStatus {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if t := q.findLocked(taskID); t != nil {
+		return t.Status
+	}
+	return ""
+}
+
 // Get returns a task by ID. Returns nil if not found.
 func (q *Queue) Get(taskID string) *Task {
 	q.mu.Lock()

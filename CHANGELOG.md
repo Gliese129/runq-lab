@@ -11,6 +11,14 @@
 
 ### Fixes
 
+- A slow submit no longer turns into an unknown outcome you have to untangle.
+  The submit command gets its own 2-minute budget instead of the 10 seconds
+  meant for reads, and runs under `nohup` on the target, leaving a receipt next
+  to run.sh (`.submit.started`, `.submit.out`, `.submit.rc`). When a submission's
+  session is lost anyway, reconcile reads the receipt: a job id is adopted, a
+  rejection fails the version, and a command that never started goes back to the
+  queue. One that started without finishing stays unknown. Versions left unknown
+  by earlier runq versions have no receipt and are never resubmitted from it.
 - `RUNQ_START_DAEMON=1` restarts a running service again. The installer checked
   for it with `runq status`, which no longer exists, so it tried to start a
   second copy and failed.
