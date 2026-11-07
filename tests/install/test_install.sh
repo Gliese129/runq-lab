@@ -110,4 +110,159 @@ if RUNQ_DOWNLOAD_BASE="file://${tmp_dir}/releases" \
   exit 1
 fi
 
+# ── The service: restart a running one, start a stopped one ─────────────────
+daemon_release="${tmp_dir}/releases/vdaemon"
+mkdir -p "$daemon_release"
+cat > "${daemon_release}/runq-linux-amd64" <<'FAKE'
+#!/bin/sh
+state=${FAKE_RUNQ_STATE:?}
+printf '%s\n' "$*" >> "${state}/calls"
+case "$*" in
+  "serve status") [ -e "${state}/running" ] ;;
+  "serve restart"|"serve -d") : > "${state}/running" ;;
+  *) printf 'daemon-fake\n' ;;
+esac
+FAKE
+chmod +x "${daemon_release}/runq-linux-amd64"
+write_checksum "${daemon_release}/runq-linux-amd64" "${daemon_release}/runq-linux-amd64.sha256"
+
+daemon_install() {
+  RUNQ_DOWNLOAD_BASE="file://${tmp_dir}/releases" \
+  RUNQ_VERSION=vdaemon \
+  RUNQ_OS=linux \
+  RUNQ_ARCH=amd64 \
+  RUNQ_INSTALL_DIR="$1" \
+  RUNQ_WITH_UI=0 \
+  RUNQ_START_DAEMON=1 \
+  RUNQ_DATA_DIR="${tmp_dir}/daemon-data" \
+  FAKE_RUNQ_STATE="$2" \
+    sh "${repo_root}/install.sh" > "${2}/install.log" 2>&1 < /dev/null
+}
+
+running_state="${tmp_dir}/running-state"
+mkdir -p "$running_state"
+: > "${running_state}/running"
+daemon_install "${tmp_dir}/running-bin" "$running_state" \
+  || { printf 'install with a running service failed:\n' >&2; cat "${running_state}/install.log" >&2; exit 1; }
+grep -qx 'serve restart' "${running_state}/calls" \
+  || { printf 'a running service was not restarted:\n' >&2; cat "${running_state}/install.log" >&2; exit 1; }
+if grep -qx 'serve -d' "${running_state}/calls"; then
+  printf 'a running service got a second copy started\n' >&2
+  exit 1
+fi
+grep -q 'runq daemon is ready' "${running_state}/install.log"
+
+stopped_state="${tmp_dir}/stopped-state"
+mkdir -p "$stopped_state"
+daemon_install "${tmp_dir}/stopped-bin" "$stopped_state"
+grep -qx 'serve -d' "${stopped_state}/calls"
+grep -q 'runq daemon is ready' "${stopped_state}/install.log"
+
+# ── Start at login ──────────────────────────────────────────────────────────
+# Login items are per user: as root the installer skips them, and so do we.
+if [ "$(id -u)" -eq 0 ]; then
+  printf 'installer smoke tests passed (login items skipped as root)\n'
+  exit 0
+fi
+make_asset runq-linux-arm64 core-linux-arm64
+fake_bin="${tmp_dir}/fake-bin"
+mkdir -p "$fake_bin"
+fake_log="${tmp_dir}/fake-calls"
+
+autostart_install() { # os home wsl-distro autostart
+  if [ -n "$3" ]; then
+    WSL_DISTRO_NAME=$3
+    export WSL_DISTRO_NAME
+  else
+    unset WSL_DISTRO_NAME
+  fi
+  HOME="$2" \
+  PATH="${fake_bin}:${PATH}" \
+  FAKE_LOG="$fake_log" \
+  RUNQ_DOWNLOAD_BASE="file://${tmp_dir}/releases" \
+  RUNQ_VERSION=vtest \
+  RUNQ_OS="$1" \
+  RUNQ_ARCH=arm64 \
+  RUNQ_INSTALL_DIR="${2}/bin" \
+  RUNQ_WITH_UI=0 \
+  RUNQ_AUTOSTART="$4" \
+    sh "${repo_root}/install.sh" < /dev/null
+  unset WSL_DISTRO_NAME
+}
+
+# macOS: a LaunchAgent that runs `runq serve` at login, removed again with 0.
+mac_home="${tmp_dir}/mac-home"
+autostart_install darwin "$mac_home" "" 1 > /dev/null
+plist="${mac_home}/Library/LaunchAgents/io.github.gliese129.runq.plist"
+grep -q "<string>${mac_home}/bin/runq</string>" "$plist"
+grep -q '<string>serve</string>' "$plist"
+grep -q "<string>${mac_home}/.local/share/runq/daemon.log</string>" "$plist"
+grep -q '<key>RunAtLoad</key><true/>' "$plist"
+if grep -q 'KeepAlive' "$plist"; then
+  printf 'the login item must not restart a service that exits\n' >&2
+  exit 1
+fi
+if command -v plutil >/dev/null 2>&1; then
+  plutil -lint "$plist" > /dev/null
+fi
+autostart_install darwin "$mac_home" "" 0 > /dev/null
+[ ! -e "$plist" ]
+
+# Linux with systemd: a user unit, enabled for the next login, not started now.
+cat > "${fake_bin}/systemctl" <<'FAKE'
+#!/bin/sh
+printf 'systemctl %s\n' "$*" >> "${FAKE_LOG:?}"
+FAKE
+chmod +x "${fake_bin}/systemctl"
+linux_home="${tmp_dir}/linux-home"
+autostart_install linux "$linux_home" "" 1 > /dev/null
+unit="${linux_home}/.config/systemd/user/runq.service"
+grep -qx "ExecStart=\"${linux_home}/bin/runq\" serve" "$unit"
+grep -qx "StandardError=append:${linux_home}/.local/share/runq/daemon.log" "$unit"
+grep -qx 'systemctl --user enable runq.service' "$fake_log"
+if grep -q -- '--now' "$fake_log"; then
+  printf 'the installer must not start a second service through systemd\n' >&2
+  exit 1
+fi
+autostart_install linux "$linux_home" "" 0 > /dev/null
+[ ! -e "$unit" ]
+grep -qx 'systemctl --user disable runq.service' "$fake_log"
+rm -f "${fake_bin}/systemctl" "$fake_log"
+
+# WSL: a Windows Startup shortcut that runs runq in a headless console.
+cat > "${fake_bin}/powershell.exe" <<'FAKE'
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-EncodedCommand" ]; then
+    printf '%s' "$2" | base64 -d | iconv -f UTF-16LE -t UTF-8 >> "${FAKE_LOG:?}"
+    printf '\n' >> "${FAKE_LOG:?}"
+  fi
+  shift
+done
+printf 'C:\\Users\\r\\Startup\\runq (Ubuntu).lnk\r\n'
+FAKE
+chmod +x "${fake_bin}/powershell.exe"
+wsl_home="${tmp_dir}/wsl-home"
+autostart_install linux "$wsl_home" Ubuntu 1 > "${tmp_dir}/wsl.log"
+grep -q 'conhost.exe' "$fake_log"
+grep -q -- '--headless wsl.exe -d "Ubuntu" --exec ' "$fake_log"
+grep -q "exec ''${wsl_home}/bin/runq'' serve >>''${wsl_home}/.local/share/runq/daemon.log'' 2>&1" "$fake_log"
+grep -q 'runq (Ubuntu).lnk' "$fake_log"
+grep -q 'start when you log in to Windows' "${tmp_dir}/wsl.log"
+autostart_install linux "$wsl_home" Ubuntu 0 > /dev/null
+grep -q 'Remove-Item' "$fake_log"
+rm -f "${fake_bin}/powershell.exe" "$fake_log"
+
+# Without a terminal and without RUNQ_AUTOSTART, an existing login item stays.
+autostart_install darwin "$mac_home" "" 1 > /dev/null
+HOME="$mac_home" \
+RUNQ_DOWNLOAD_BASE="file://${tmp_dir}/releases" \
+RUNQ_VERSION=vtest \
+RUNQ_OS=darwin \
+RUNQ_ARCH=arm64 \
+RUNQ_INSTALL_DIR="${mac_home}/bin" \
+RUNQ_WITH_UI=0 \
+  sh "${repo_root}/install.sh" > /dev/null < /dev/null
+[ -e "$plist" ]
+
 printf 'installer smoke tests passed\n'

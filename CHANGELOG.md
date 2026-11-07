@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- The installer can start the runq service when you log in (`RUNQ_AUTOSTART`,
+  asked at a terminal): a LaunchAgent on macOS, a systemd user service on Linux,
+  and a hidden Windows Startup item on WSL, so the service comes back after
+  Windows restarts.
+
+### Fixes
+
+- `RUNQ_START_DAEMON=1` restarts a running service again. The installer checked
+  for it with `runq status`, which no longer exists, so it tried to start a
+  second copy and failed.
+
 ## v0.7.2 — 2026-11-06
 
 ### Changes

@@ -44,8 +44,18 @@ web dashboard, verifies checksums, and replaces only the `runq` binary.
 |---|---|
 | `RUNQ_WITH_UI=0\|1` | Skip the dashboard prompt |
 | `RUNQ_START_DAEMON=1` | Start (or restart) the runq service after install |
+| `RUNQ_AUTOSTART=0\|1` | Start the runq service when you log in (asked at a terminal, default yes); `0` removes it |
 | `RUNQ_INSTALL_DIR=…` | Custom install path |
 | `RUNQ_VERSION=v…` | Pin a release, e.g. `v0.7.2` |
+
+Starting at login uses a LaunchAgent on macOS
+(`~/Library/LaunchAgents/io.github.gliese129.runq.plist`) and a systemd user
+service on Linux (`runq.service`; add `loginctl enable-linger` to start it at
+boot). On WSL it puts a shortcut in the Windows Startup folder that runs
+`runq serve` in a hidden console: WSL stops a distro once nothing on Windows is
+attached to it, so the service keeps running only while that console does. A
+`runq serve restart` from a WSL terminal ties the service to that terminal until
+the next Windows login.
 
 Python SDK: `pip install runq-sdk`.
 
