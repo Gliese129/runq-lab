@@ -177,6 +177,7 @@ autostart_install() { # os home wsl-distro autostart
     unset WSL_DISTRO_NAME
   fi
   HOME="$2" \
+  XDG_CONFIG_HOME="${2}/.config" \
   PATH="${fake_bin}:${PATH}" \
   FAKE_LOG="$fake_log" \
   RUNQ_DOWNLOAD_BASE="file://${tmp_dir}/releases" \
