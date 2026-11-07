@@ -419,13 +419,6 @@ func (c *sshConn) openSFTPLocked(client *sshTransport) *sftpOpening {
 	return o
 }
 
-// holdSFTP counts one more holder of ch (an open file handle).
-func (c *sshConn) holdSFTP(ch *sftpChannel) {
-	c.mu.Lock()
-	ch.live++
-	c.mu.Unlock()
-}
-
 // retireSFTP stops new work on ch. What is still in flight on it carries on;
 // the channel closes when the last holder lets go.
 func (c *sshConn) retireSFTP(ch *sftpChannel) {
